@@ -12,6 +12,7 @@ Rather than treating reports as static outputs, the platform treats reports as *
 ## The Problem Being Solved
 Traditional reporting approaches:
 - store full copies of tickets per snapshot,
+- unflexable field schemas,
 - tightly couple reports to export formats,
 - and require bespoke logic per report type.
 
@@ -47,5 +48,6 @@ Reports are **highly extensible**: new report types and output formats can be ad
 - Not a real-time analytics engine  
 - Not a BI cube or dashboarding tool  
 - Not focused on heavy caching upfront  
+
 
 The emphasis is on **correctness, flexibility, and reuse**, with performance optimised only when needed.
