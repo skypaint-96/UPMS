@@ -1,0 +1,134 @@
+# Build Stages & Instructions
+
+## Stage 1 — Database Foundation
+**Goal:** establish the historical data model.
+
+Steps:
+1. Create tables:
+   - RawSnapshot
+   - SnapshotTicket
+   - FieldChange
+2. Add indexes for:
+   - ticket reconstruction,
+   - snapshot lookup,
+   - company scoping.
+3. Create stored procedures for:
+   - tickets as of time,
+   - fields for ticket as of time,
+   - batch reconstruction.
+
+Acceptance:
+- Stored procedures return correct results.
+- SnapshotTicket enables fast snapshot queries.
+
+---
+
+## Stage 2 — Snapshot Ingest
+**Goal:** reliably ingest snapshot exports.
+
+Steps:
+1. Implement upload endpoint (CSV/XLSX).
+2. Parse rows and normalize ticket keys.
+3. Insert:
+   - RawSnapshot
+   - SnapshotTicket entries
+   - FieldChange entries (one per field).
+4. Keep ingest append-only.
+
+Acceptance:
+- Snapshot upload produces expected DB rows.
+- Re-ingest does not corrupt state.
+
+---
+
+## Stage 3 — Data Access Layer
+**Goal:** isolate DB access.
+
+Steps:
+1. Implement SQL-backed data provider.
+2. Use stored procedures exclusively for reads.
+3. Page ticket keys in batches.
+4. Stream reconstructed rows.
+
+Acceptance:
+- Can stream reconstructed data without table scans.
+
+---
+
+## Stage 4 — Reporting Core
+**Goal:** define reusable report orchestration.
+
+Steps:
+1. Define report request & parameter models.
+2. Implement report runner:
+   - validates input,
+   - calls data provider,
+   - streams logical rows.
+3. Keep format-agnostic.
+
+Acceptance:
+- Reports run without knowledge of output format.
+
+---
+
+## Stage 5 — Rendering Plugins
+**Goal:** support multiple output formats.
+
+Steps:
+1. Implement CSV/Excel renderer.
+2. Implement PowerPoint renderer:
+   - clone template slides,
+   - replace placeholders,
+   - preserve formatting.
+3. Implement email renderer.
+
+Acceptance:
+- Same report can output CSV and PPTX.
+
+---
+
+## Stage 6 — Template Management
+**Goal:** decouple presentation from code.
+
+Steps:
+1. Implement template upload & storage.
+2. Scan templates for placeholders.
+3. Bind templates to reports and roles.
+4. Version templates.
+
+Acceptance:
+- Templates can be updated without redeploying code.
+
+---
+
+## Stage 7 — Web UI
+**Goal:** allow users to run reports.
+
+Steps:
+1. Report selector dropdown.
+2. Dynamic parameter form.
+3. Generate actions driven by plugin metadata.
+4. Handle downloads and async jobs.
+
+Acceptance:
+- User can generate reports end-to-end.
+
+---
+
+## Stage 8 — Validation & Optimisation
+**Goal:** ensure correctness and performance.
+
+Steps:
+1. Validate reconstructed snapshots against source exports.
+2. Use EXPLAIN ANALYZE to confirm index usage.
+3. Tune batch sizes.
+4. Add async workers if needed.
+
+Acceptance:
+- Month-end reports are accurate and timely.
+
+---
+
+## Final Build Philosophy
+> Build for correctness and reuse first.  
+> Optimise only when measurement proves it necessary.
