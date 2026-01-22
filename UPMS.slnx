@@ -4,6 +4,7 @@
     <File Path="Docs/Envionment.md" />
     <File Path="Docs/Project Overview.md" />
     <File Path="Docs/Technical Architecture.md" />
+    <File Path="Docs/UPMS_DATA_CONSUMER_GUIDE.md" />
   </Folder>
   <Folder Name="/SQL/">
     <File Path="sql/migrations/001_initial_schema.sql" />
