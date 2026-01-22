@@ -13,5 +13,5 @@
     <File Path="sql/stored-procedures/get_ticket_at_time.sql" />
   </Folder>
   <Project Path="src/UPMS.Data/UPMS.Data.csproj" />
-  <Project Path="UPMS.Data.Tests/UPMS.Data.Tests.csproj" Id="f646b49d-dff0-431b-b606-52ccbb182723" />
+  <Project Path="tests/UPMS.Data.Tests/UPMS.Data.Tests.csproj" Id="f646b49d-dff0-431b-b606-52ccbb182723" />
 </Solution>

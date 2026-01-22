@@ -20,6 +20,6 @@
     <Using Include="NUnit.Framework" />
   </ItemGroup>
     <ItemGroup>
-        <ProjectReference Include="..\src\UPMS.Data\UPMS.Data.csproj" />
+        <ProjectReference Include="..\..\src\UPMS.Data\UPMS.Data.csproj" />
     </ItemGroup>
 </Project>
