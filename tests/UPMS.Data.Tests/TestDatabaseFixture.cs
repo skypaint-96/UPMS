@@ -9,7 +9,7 @@ using UPMS.Data;
 public class TestDatabaseFixture
 {
     private static readonly string TestDatabasePath = Path.Combine(
-        "/writable", // Use a writable directory in Docker
+        Path.GetTempPath(), // Use system temp directory for test DB
         $"upms_test_db_{Guid.NewGuid()}.sqlite"
     );
     private static bool _initialized = false;
