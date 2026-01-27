@@ -1,0 +1,92 @@
+@page "/upload-snapshot"
+
+@using UPMS.Data
+@using System.ComponentModel.DataAnnotations
+
+<PageTitle>Upload Snapshot</PageTitle>
+
+<h3>Upload Snapshot</h3>
+
+<EditForm Model="@model" OnValidSubmit="UploadSnapshotAsync" FormName="UploadSnapshotForm">
+    <DataAnnotationsValidator />
+    <ValidationSummary />
+    <div>
+        <label>ITSM Source:</label>
+        <InputText @bind-Value="model.ItsmSource" />
+    </div>
+    <div>
+        <label>Snapshot Date:</label>
+        <InputDate @bind-Value="model.SnapshotDate" />
+    </div>
+    <div>
+        <label>Upload Metadata (optional):</label>
+        <InputText @bind-Value="model.UploadMetadata" />
+    </div>
+    <div>
+        <label>Tickets (CSV: TicketKey,CompanyName):</label>
+        <InputTextArea @bind-Value="model.TicketsCsv" rows="5" />
+    </div>
+    <button type="submit">Upload</button>
+</EditForm>
+
+@if (!string.IsNullOrEmpty(statusMessage))
+{
+    <p>@statusMessage</p>
+}
+
+@code {
+    private UploadSnapshotModel model = new();
+    private string? statusMessage;
+
+    [Inject]
+    private TicketDataServiceInstance DataService { get; set; } = default!;
+
+    private async Task UploadSnapshotAsync()
+    {
+        try
+        {
+            var snapshotId = await DataService.CreateSnapshotAsync(
+                model.ItsmSource,
+                model.SnapshotDate,
+                "user", // TODO: Replace with actual user
+                model.UploadMetadata);
+
+            var tickets = ParseTicketsCsv(model.TicketsCsv);
+            if (tickets.Count > 0)
+            {
+                await DataService.AddTicketsToSnapshotAsync(snapshotId, tickets);
+            }
+            statusMessage = $"Snapshot uploaded. ID: {snapshotId}";
+        }
+        catch (Exception ex)
+        {
+            statusMessage = $"Error: {ex.Message}";
+        }
+    }
+
+    private static List<(string TicketKey, string CompanyName)> ParseTicketsCsv(string? csv)
+    {
+        if (string.IsNullOrWhiteSpace(csv)) return new();
+        var lines = csv.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var tickets = new List<(string, string)>(lines.Length);
+        foreach (var line in lines)
+        {
+            var parts = line.Split(',', 2);
+            if (parts.Length == 2 && !string.IsNullOrWhiteSpace(parts[0]) && !string.IsNullOrWhiteSpace(parts[1]))
+            {
+                tickets.Add((parts[0].Trim(), parts[1].Trim()));
+            }
+        }
+        return tickets;
+    }
+
+    public class UploadSnapshotModel
+    {
+        [Required]
+        public string ItsmSource { get; set; } = string.Empty;
+        [Required]
+        public DateTime SnapshotDate { get; set; } = DateTime.UtcNow;
+        public string? UploadMetadata { get; set; }
+        public string? TicketsCsv { get; set; }
+    }
+}

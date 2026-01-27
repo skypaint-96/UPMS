@@ -3,7 +3,7 @@ namespace UPMS.Data;
 /// <summary>
 /// DTO for field change query results from the database.
 /// </summary>
-internal class FieldChangeQueryResult
+public class FieldChangeQueryResult
 {
     public long Id { get; set; }
     public string CompanyName { get; set; } = string.Empty;

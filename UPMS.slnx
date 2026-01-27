@@ -1,10 +1,12 @@
 <Solution>
   <Folder Name="/Docs/">
+    <File Path="DOCKER.md" />
     <File Path="Docs/Build Stages.md" />
     <File Path="Docs/Envionment.md" />
     <File Path="Docs/Project Overview.md" />
     <File Path="Docs/Technical Architecture.md" />
     <File Path="Docs/UPMS_DATA_CONSUMER_GUIDE.md" />
+    <File Path="README.md" />
   </Folder>
   <Folder Name="/SQL/">
     <File Path="sql/migrations/001_initial_schema.sql" />
@@ -13,6 +15,10 @@
     <File Path="sql/stored-procedures/get_tickets_for_snapshot.sql" />
     <File Path="sql/stored-procedures/get_ticket_at_time.sql" />
   </Folder>
+  <Project Path="docker-compose.dcproj">
+    <Build />
+  </Project>
   <Project Path="src/UPMS.Data/UPMS.Data.csproj" />
+  <Project Path="src/UPMS.Web/UPMS.Web.csproj" Id="01e42bce-319c-41e7-9cbc-100a5338834a" />
   <Project Path="tests/UPMS.Data.Tests/UPMS.Data.Tests.csproj" Id="f646b49d-dff0-431b-b606-52ccbb182723" />
 </Solution>

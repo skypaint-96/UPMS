@@ -1,0 +1,19 @@
+services:
+  upms.web:
+    image: ${DOCKER_REGISTRY-}upmsweb
+    build:
+      context: .
+      dockerfile: src/UPMS.Web/Dockerfile
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: upms
+      POSTGRES_PASSWORD: upms
+      POSTGRES_DB: upms
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:

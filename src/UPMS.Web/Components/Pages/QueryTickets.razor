@@ -1,0 +1,105 @@
+@page "/query-tickets"
+
+@using UPMS.Data
+@using System.ComponentModel.DataAnnotations
+
+<PageTitle>Query Tickets</PageTitle>
+
+<h3>Query Tickets</h3>
+
+<EditForm Model="@model" OnValidSubmit="QueryTicketsAsync">
+    <DataAnnotationsValidator />
+    <ValidationSummary />
+    <div>
+        <label>ITSM Source:</label>
+        <InputText @bind-Value="model.ItsmSource" />
+    </div>
+    <div>
+        <label>Company Name:</label>
+        <InputText @bind-Value="model.CompanyName" />
+    </div>
+    <div>
+        <label>As Of Date:</label>
+        <InputDate @bind-Value="model.AsOfDate" />
+    </div>
+    <button type="submit">Query</button>
+</EditForm>
+
+@if (tickets is not null)
+{
+    <h4>Results</h4>
+    @if (!tickets.Any())
+    {
+        <p>No tickets found.</p>
+    }
+    else
+    {
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Ticket Key</th>
+                    <th>Company</th>
+                    <th>ITSM Source</th>
+                    <th>Observed At</th>
+                    <th>Snapshot Date</th>
+                    <th>Fields</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var ticket in tickets)
+                {
+                    <tr>
+                        <td>@ticket.TicketKey</td>
+                        <td>@ticket.CompanyName</td>
+                        <td>@ticket.ItsmSource</td>
+                        <td>@ticket.ObservedAt</td>
+                        <td>@ticket.SnapshotDate</td>
+                        <td>
+                            @foreach (var field in ticket.Fields)
+                            {
+                                <div><b>@field.Key</b>: @field.Value</div>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+}
+@if (!string.IsNullOrEmpty(statusMessage))
+{
+    <p>@statusMessage</p>
+}
+
+@code {
+    private QueryTicketsModel model = new() { AsOfDate = DateTime.UtcNow };
+    private IEnumerable<Ticket>? tickets;
+    private string? statusMessage;
+
+    [Inject]
+    private TicketDataServiceInstance DataService { get; set; } = default!;
+
+    private async Task QueryTicketsAsync()
+    {
+        try
+        {
+            tickets = await DataService.GetTicketsAsync(model.ItsmSource, model.CompanyName, model.AsOfDate) ?? Array.Empty<Ticket>();
+            statusMessage = null;
+        }
+        catch (Exception ex)
+        {
+            tickets = Array.Empty<Ticket>();
+            statusMessage = $"Error: {ex.Message}";
+        }
+    }
+
+    public class QueryTicketsModel
+    {
+        [Required]
+        public string ItsmSource { get; set; } = string.Empty;
+        [Required]
+        public string CompanyName { get; set; } = string.Empty;
+        [Required]
+        public DateTime AsOfDate { get; set; }
+    }
+}
