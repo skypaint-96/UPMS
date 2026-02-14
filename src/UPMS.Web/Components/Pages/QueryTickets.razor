@@ -12,15 +12,15 @@
     <ValidationSummary />
     <div>
         <label>ITSM Source:</label>
-        <InputText @bind-Value="model.ItsmSource" />
+        <InputText @bind-Value="model.ItsmSource" name="ItsmSource" />
     </div>
     <div>
         <label>Company Name:</label>
-        <InputText @bind-Value="model.CompanyName" />
+        <InputText @bind-Value="model.CompanyName" name="CompanyName" />
     </div>
     <div>
         <label>As Of Date:</label>
-        <InputDate @bind-Value="model.AsOfDate" />
+        <InputDate @bind-Value="model.AsOfDate" name="AsOfDate" />
     </div>
     <button type="submit">Query</button>
 </EditForm>

@@ -21,4 +21,5 @@
   <Project Path="src/UPMS.Data/UPMS.Data.csproj" />
   <Project Path="src/UPMS.Web/UPMS.Web.csproj" Id="01e42bce-319c-41e7-9cbc-100a5338834a" />
   <Project Path="tests/UPMS.Data.Tests/UPMS.Data.Tests.csproj" Id="f646b49d-dff0-431b-b606-52ccbb182723" />
+  <Project Path="tests/UPMS.Web.Tests/UPMS.Web.Tests.csproj" Id="54c1e2ae-4537-4557-abbb-4903efd5c612" />
 </Solution>
