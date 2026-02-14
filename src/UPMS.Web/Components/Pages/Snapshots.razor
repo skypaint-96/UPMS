@@ -1,0 +1,72 @@
+@page "/snapshots"
+
+<PageTitle>Snapshots - UPMS</PageTitle>
+
+<h1>Snapshots</h1>
+
+<div>
+    <select data-testid="snapshot-itsm-filter" @bind="selectedItsmSource" @bind:after="LoadSnapshotsAsync">
+        <option value="">All ITSM Sources</option>
+        @foreach (string source in itsmSources)
+        {
+            <option value="@source">@source</option>
+        }
+    </select>
+</div>
+
+<table data-testid="snapshot-table">
+    <thead>
+        <tr>
+            <th>ITSM Source</th>
+            <th>Snapshot Date</th>
+            <th>Uploaded By</th>
+        </tr>
+    </thead>
+    <tbody>
+        @if (snapshots.Count == 0)
+        {
+            <tr data-testid="snapshot-table-empty">
+                <td colspan="3">No snapshots found.</td>
+            </tr>
+        }
+        else
+        {
+            @foreach (Snapshot snapshot in snapshots)
+            {
+                <tr>
+                    <td><a href="/snapshots/@snapshot.Id">@snapshot.ItsmSource</a></td>
+                    <td>@snapshot.SnapshotDate.ToString("yyyy-MM-dd HH:mm:ss")</td>
+                    <td>@snapshot.UploadedBy</td>
+                </tr>
+            }
+        }
+    </tbody>
+</table>
+
+@code {
+    [Inject]
+    private TicketDataServiceInstance DataService { get; set; } = default!;
+
+    private List<Snapshot> snapshots = [];
+    private List<string> itsmSources = [];
+    private string selectedItsmSource = string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadSnapshotsAsync();
+    }
+
+    private async Task LoadSnapshotsAsync()
+    {
+        try
+        {
+            string? filter = string.IsNullOrEmpty(selectedItsmSource) ? null : selectedItsmSource;
+            IEnumerable<Snapshot> results = await DataService.GetSnapshotsAsync(filter);
+            snapshots = results.ToList();
+        }
+        catch
+        {
+            snapshots = [];
+        }
+    }
+}

@@ -434,6 +434,47 @@ public static class TicketDataService
         return results;
     }
 
+    /// <summary>
+    /// Retrieves all snapshots, optionally filtered by ITSM source.
+    /// Results are ordered by snapshot date descending (most recent first).
+    /// </summary>
+    public static async Task<IEnumerable<Snapshot>> GetSnapshotsAsync(string? itsmSource = null)
+    {
+        string sql = """
+            SELECT 
+                id as Id,
+                itsm_source as ItsmSource,
+                snapshot_date as SnapshotDate,
+                uploaded_by as UploadedBy,
+                uploaded_at as UploadedAt,
+                upload_metadata as UploadMetadata
+            FROM raw_snapshot
+            """;
+
+        if (!string.IsNullOrWhiteSpace(itsmSource))
+        {
+            sql += " WHERE itsm_source = @ItsmSource";
+        }
+
+        sql += " ORDER BY snapshot_date DESC";
+
+        using IDbConnection connection = GetConnection();
+        IEnumerable<SnapshotQueryResult> rows = await connection.QueryAsync<SnapshotQueryResult>(
+            sql,
+            new { ItsmSource = itsmSource }
+        );
+
+        return rows.Select(row => new Snapshot
+        {
+            Id = Guid.Parse(row.Id),
+            ItsmSource = row.ItsmSource,
+            SnapshotDate = ParseDateTime(row.SnapshotDate),
+            UploadedBy = row.UploadedBy,
+            UploadedAt = ParseDateTime(row.UploadedAt),
+            UploadMetadata = row.UploadMetadata
+        }).ToList();
+    }
+
     private static async Task<IDictionary<string, string?>> GetTicketFieldsAsOfDateAsync(
         string companyName,
         string ticketKey,

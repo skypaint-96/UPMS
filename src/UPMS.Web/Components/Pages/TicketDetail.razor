@@ -1,0 +1,107 @@
+@page "/tickets/{Company}/{TicketKey}"
+
+<PageTitle>@TicketKey - UPMS</PageTitle>
+
+<h1>@TicketKey</h1>
+
+<p data-testid="ticket-company">Company: @Company</p>
+<p data-testid="ticket-itsm-source">ITSM Source: @itsmSource</p>
+
+<a href="/tickets">Back to Tickets</a>
+
+<section data-testid="ticket-fields">
+    <h2>Fields</h2>
+    @if (fields.Count > 0)
+    {
+        <dl>
+            @foreach (KeyValuePair<string, string?> field in fields)
+            {
+                <dt>@field.Key</dt>
+                <dd>@(field.Value ?? "—")</dd>
+            }
+        </dl>
+    }
+    else
+    {
+        <p>No field data available.</p>
+    }
+</section>
+
+<section data-testid="field-history">
+    <h2>Field Change History</h2>
+    @if (fieldChanges.Count > 0)
+    {
+        <table>
+            <thead>
+                <tr>
+                    <th>Field</th>
+                    <th>Value</th>
+                    <th>Observed At</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (FieldChange change in fieldChanges)
+                {
+                    <tr>
+                        <td>@change.FieldName</td>
+                        <td>@(change.FieldValue ?? "—")</td>
+                        <td>@change.ObservedAt.ToString("yyyy-MM-dd HH:mm:ss")</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+    else
+    {
+        <p>No change history available.</p>
+    }
+</section>
+
+@code {
+    [Parameter]
+    public string Company { get; set; } = string.Empty;
+
+    [Parameter]
+    public string TicketKey { get; set; } = string.Empty;
+
+    [Inject]
+    private TicketDataServiceInstance DataService { get; set; } = default!;
+
+    private string itsmSource = string.Empty;
+    private Dictionary<string, string?> fields = [];
+    private List<FieldChange> fieldChanges = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            string decodedCompany = Uri.UnescapeDataString(Company);
+            string decodedTicketKey = Uri.UnescapeDataString(TicketKey);
+
+            IEnumerable<Ticket> tickets = await DataService.GetTicketsAsync(
+                "servicenow",
+                decodedCompany,
+                DateTime.UtcNow);
+
+            Ticket? ticket = tickets.FirstOrDefault(t => t.TicketKey == decodedTicketKey);
+            if (ticket is not null)
+            {
+                itsmSource = ticket.ItsmSource;
+                fields = new Dictionary<string, string?>(ticket.Fields);
+
+                foreach (string fieldName in ticket.Fields.Keys)
+                {
+                    IEnumerable<FieldChange> history = await DataService.GetTicketFieldHistoryAsync(
+                        decodedCompany,
+                        decodedTicketKey,
+                        fieldName);
+                    fieldChanges.AddRange(history);
+                }
+            }
+        }
+        catch
+        {
+            // Gracefully handle missing database connection
+        }
+    }
+}

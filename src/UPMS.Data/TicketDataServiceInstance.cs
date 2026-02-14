@@ -81,4 +81,12 @@ public class TicketDataServiceInstance
     {
         return await TicketDataService.GetTicketFieldHistoryAsync(companyName, ticketKey, fieldName);
     }
+
+    /// <summary>
+    /// Gets all snapshots, optionally filtered by ITSM source.
+    /// </summary>
+    public async Task<IEnumerable<Snapshot>> GetSnapshotsAsync(string? itsmSource = null)
+    {
+        return await TicketDataService.GetSnapshotsAsync(itsmSource);
+    }
 }

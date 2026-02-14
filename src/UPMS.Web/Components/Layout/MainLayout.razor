@@ -1,6 +1,14 @@
 ﻿@inherits LayoutComponentBase
 
-@Body
+<nav>
+    <NavLink href="/" Match="NavLinkMatch.All">Home</NavLink>
+    <NavLink href="/tickets">Tickets</NavLink>
+    <NavLink href="/snapshots">Snapshots</NavLink>
+</nav>
+
+<main>
+    @Body
+</main>
 
 <div id="blazor-error-ui" data-nosnippet>
     An unhandled error has occurred.
