@@ -1,17 +1,33 @@
 namespace UPMS.Data.Tests;
 
 using Microsoft.Data.Sqlite;
+using Npgsql;
 using System;
+using System.Data;
 using System.IO;
 using System.Threading.Tasks;
 using UPMS.Data;
 
 public class TestDatabaseFixture
 {
-    private static readonly string TestDatabasePath = Path.Combine(
-        Path.GetTempPath(), // Use system temp directory for test DB
+    // Default fallback for local SQLite-based tests (no env var set)
+    private static readonly string SqliteTestDatabasePath = Path.Combine(
+        Path.GetTempPath(),
         $"upms_test_db_{Guid.NewGuid()}.sqlite"
     );
+
+    // Connection string resolved once at startup
+    private static readonly string ResolvedConnectionString =
+        Environment.GetEnvironmentVariable("UPMS_TEST_CONNECTION_STRING")
+        ?? string.Empty; // empty → use SQLite
+
+    private static readonly bool UsePostgres = !string.IsNullOrWhiteSpace(ResolvedConnectionString);
+
+    private static readonly string DefaultTestConnectionString =
+        UsePostgres
+            ? ResolvedConnectionString
+            : $"Data Source={SqliteTestDatabasePath}";
+
     private static bool _initialized = false;
 
     // Expose snapshot ids for tests
@@ -27,16 +43,22 @@ public class TestDatabaseFixture
             return;
         }
 
-        // No need to delete - using unique file name
-        
-        // Initialize TicketDataService with a function that creates new connections to the test database
-        TicketDataService.Initialize(() => new SqliteConnection($"Data Source={TestDatabasePath}"));
-
-        // Set up schema and test data
-        using (SqliteConnection connection = new SqliteConnection($"Data Source={TestDatabasePath}"))
+        if (UsePostgres)
         {
+            TicketDataService.Initialize(() => new NpgsqlConnection(DefaultTestConnectionString));
+
+            using IDbConnection connection = new NpgsqlConnection(DefaultTestConnectionString);
+            connection.Open();
+            await CreatePostgresTablesAsync(connection);
+            await SeedTestDataAsync(connection);
+        }
+        else
+        {
+            TicketDataService.Initialize(() => new SqliteConnection(DefaultTestConnectionString));
+
+            using SqliteConnection connection = new SqliteConnection(DefaultTestConnectionString);
             await connection.OpenAsync();
-            await CreateTablesAsync(connection);
+            await CreateSqliteTablesAsync(connection);
             await SeedTestDataAsync(connection);
         }
 
@@ -45,11 +67,11 @@ public class TestDatabaseFixture
 
     public static async Task CleanupAsync()
     {
-        if (File.Exists(TestDatabasePath))
+        if (!UsePostgres && File.Exists(SqliteTestDatabasePath))
         {
             try
             {
-                File.Delete(TestDatabasePath);
+                File.Delete(SqliteTestDatabasePath);
             }
             catch
             {
@@ -60,9 +82,95 @@ public class TestDatabaseFixture
         _initialized = false;
     }
 
-    private static async Task CreateTablesAsync(SqliteConnection connection)
+    public static IItsmFieldMappingService GetMappingService()
     {
-        // SQLite doesn't have UUID type, so we use TEXT instead
+        if (UsePostgres)
+        {
+            return new ItsmFieldMappingService(() => new NpgsqlConnection(DefaultTestConnectionString));
+        }
+        return new ItsmFieldMappingService(() => new SqliteConnection(DefaultTestConnectionString));
+    }
+
+    public static IItsmSourceService GetSourceService()
+    {
+        if (UsePostgres)
+        {
+            return new ItsmSourceService(() => new NpgsqlConnection(DefaultTestConnectionString));
+        }
+        return new ItsmSourceService(() => new SqliteConnection(DefaultTestConnectionString));
+    }
+
+    // ------------------------------------------------------------------
+    // PostgreSQL schema creation
+    // ------------------------------------------------------------------
+    private static async Task CreatePostgresTablesAsync(IDbConnection connection)
+    {
+        const string sql = """
+            CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+            CREATE TABLE IF NOT EXISTS raw_snapshot (
+                id              TEXT PRIMARY KEY,
+                itsm_source     VARCHAR(100) NOT NULL,
+                snapshot_date   TIMESTAMPTZ NOT NULL,
+                uploaded_by     VARCHAR(255) NOT NULL,
+                uploaded_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                upload_metadata TEXT,
+                created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+
+            CREATE TABLE IF NOT EXISTS snapshot_ticket (
+                id              TEXT PRIMARY KEY,
+                snapshot_id     TEXT NOT NULL REFERENCES raw_snapshot(id) ON DELETE CASCADE,
+                company_name    VARCHAR(255) NOT NULL,
+                ticket_key      VARCHAR(255) NOT NULL,
+                created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                CONSTRAINT uq_snapshot_ticket UNIQUE (snapshot_id, ticket_key)
+            );
+
+            CREATE TABLE IF NOT EXISTS field_change (
+                id              BIGSERIAL PRIMARY KEY,
+                company_name    VARCHAR(255) NOT NULL,
+                ticket_key      VARCHAR(255) NOT NULL,
+                field_name      VARCHAR(255) NOT NULL,
+                field_value     TEXT,
+                observed_at     TIMESTAMPTZ NOT NULL,
+                snapshot_id     TEXT NOT NULL REFERENCES raw_snapshot(id) ON DELETE CASCADE,
+                created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+
+            CREATE TABLE IF NOT EXISTS itsm_source (
+                id            SERIAL PRIMARY KEY,
+                name          TEXT NOT NULL,
+                display_label TEXT NOT NULL,
+                created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                CONSTRAINT uq_itsm_source_name UNIQUE (name)
+            );
+
+            CREATE TABLE IF NOT EXISTS itsm_field_mapping (
+                itsm_source             VARCHAR(100)  NOT NULL,
+                source_field_name       VARCHAR(255)  NOT NULL,
+                canonical_field_name    VARCHAR(255)  NOT NULL,
+                is_required             BOOLEAN       NOT NULL DEFAULT FALSE,
+                PRIMARY KEY (itsm_source, source_field_name)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_snapshot_ticket_snapshot_id  ON snapshot_ticket (snapshot_id);
+            CREATE INDEX IF NOT EXISTS idx_snapshot_ticket_company_name  ON snapshot_ticket (company_name);
+            CREATE INDEX IF NOT EXISTS idx_field_change_company_ticket   ON field_change (company_name, ticket_key, observed_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_raw_snapshot_itsm_source      ON raw_snapshot (itsm_source);
+            CREATE INDEX IF NOT EXISTS idx_itsm_field_mapping_source     ON itsm_field_mapping (itsm_source);
+            """;
+
+        using var cmd = connection.CreateCommand();
+        cmd.CommandText = sql;
+        await ((System.Data.Common.DbCommand)cmd).ExecuteNonQueryAsync();
+    }
+
+    // ------------------------------------------------------------------
+    // SQLite schema creation
+    // ------------------------------------------------------------------
+    private static async Task CreateSqliteTablesAsync(SqliteConnection connection)
+    {
         const string createTablesSQL = """
             CREATE TABLE IF NOT EXISTS raw_snapshot (
                 id TEXT PRIMARY KEY,
@@ -94,10 +202,19 @@ public class TestDatabaseFixture
                 created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
+            CREATE TABLE IF NOT EXISTS itsm_source (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                name          TEXT NOT NULL,
+                display_label TEXT NOT NULL,
+                created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                CONSTRAINT uq_itsm_source_name UNIQUE (name)
+            );
+
             CREATE TABLE IF NOT EXISTS itsm_field_mapping (
                 itsm_source VARCHAR(100) NOT NULL,
                 source_field_name VARCHAR(255) NOT NULL,
                 canonical_field_name VARCHAR(255) NOT NULL,
+                is_required INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (itsm_source, source_field_name)
             );
 
@@ -105,6 +222,7 @@ public class TestDatabaseFixture
             CREATE INDEX IF NOT EXISTS idx_snapshot_ticket_company_name ON snapshot_ticket (company_name);
             CREATE INDEX IF NOT EXISTS idx_field_change_company_ticket_time ON field_change (company_name, ticket_key, observed_at DESC);
             CREATE INDEX IF NOT EXISTS idx_raw_snapshot_itsm_source ON raw_snapshot (itsm_source);
+            CREATE INDEX IF NOT EXISTS idx_itsm_field_mapping_source ON itsm_field_mapping (itsm_source);
             """;
 
         using SqliteCommand cmd = connection.CreateCommand();
@@ -112,45 +230,36 @@ public class TestDatabaseFixture
         int unused = await cmd.ExecuteNonQueryAsync();
     }
 
-    public static IItsmFieldMappingService GetMappingService()
-    {
-        return new ItsmFieldMappingService(() => new SqliteConnection($"Data Source={TestDatabasePath}"));
-    }
-
-    private static async Task SeedTestDataAsync(SqliteConnection connection)
+    // ------------------------------------------------------------------
+    // Shared seed logic — works for both backends via IDbConnection
+    // ------------------------------------------------------------------
+    private static async Task SeedTestDataAsync(IDbConnection connection)
     {
         string company1Name = TestData.Companies.Company1;
         string company2Name = TestData.Companies.Company2;
         string company3Name = TestData.Companies.Company3;
 
-        DateTime testSnapshotDate = TestData.Dates.NewSnapshotDate;
+        DateTime testSnapshotDate  = TestData.Dates.NewSnapshotDate;
         DateTime olderSnapshotDate = TestData.Dates.OlderSnapshotDate;
 
         Company1OldSnapshotId = Guid.NewGuid().ToString();
         Company1NewSnapshotId = Guid.NewGuid().ToString();
-        Company2SnapshotId = Guid.NewGuid().ToString();
-        Company3SnapshotId = Guid.NewGuid().ToString();
+        Company2SnapshotId    = Guid.NewGuid().ToString();
+        Company3SnapshotId    = Guid.NewGuid().ToString();
 
-        // Insert old snapshot for ServiceNow source
         await InsertSnapshotAsync(connection, Company1OldSnapshotId, TestData.Itsm.ServiceNow, olderSnapshotDate);
-
-        // Insert new snapshot for ServiceNow source
         await InsertSnapshotAsync(connection, Company1NewSnapshotId, TestData.Itsm.ServiceNow, testSnapshotDate);
+        await InsertSnapshotAsync(connection, Company2SnapshotId,    TestData.Itsm.Jira,        testSnapshotDate);
+        await InsertSnapshotAsync(connection, Company3SnapshotId,    TestData.Itsm.ServiceNow,  testSnapshotDate);
 
-        // Insert snapshot for Jira source
-        await InsertSnapshotAsync(connection, Company2SnapshotId, TestData.Itsm.Jira, testSnapshotDate);
-
-        // Insert snapshot for ServiceNow source (company 3)
-        await InsertSnapshotAsync(connection, Company3SnapshotId, TestData.Itsm.ServiceNow, testSnapshotDate);
-
-        // Insert snapshot tickets for company 1 in both old and new ServiceNow snapshots
-        string[] company1TicketKeys = new[] { 
-            TestData.TicketKeys.Ticket1, 
-            TestData.TicketKeys.Ticket2, 
-            TestData.TicketKeys.Ticket3, 
-            TestData.TicketKeys.Ticket4, 
-            TestData.TicketKeys.Ticket5 
-        };
+        string[] company1TicketKeys =
+        [
+            TestData.TicketKeys.Ticket1,
+            TestData.TicketKeys.Ticket2,
+            TestData.TicketKeys.Ticket3,
+            TestData.TicketKeys.Ticket4,
+            TestData.TicketKeys.Ticket5
+        ];
 
         foreach (string ticketKey in company1TicketKeys)
         {
@@ -158,110 +267,134 @@ public class TestDatabaseFixture
             await InsertSnapshotTicketAsync(connection, Company1NewSnapshotId, company1Name, ticketKey);
         }
 
-        // Insert snapshot tickets for company 2 in Jira snapshot
-        string[] company2TicketKeys = new[] { "JIRA-001", "JIRA-002", "JIRA-003" };
+        string[] company2TicketKeys = ["JIRA-001", "JIRA-002", "JIRA-003"];
         foreach (string ticketKey in company2TicketKeys)
         {
             await InsertSnapshotTicketAsync(connection, Company2SnapshotId, company2Name, ticketKey);
         }
 
-        // Insert snapshot tickets for company 3 in ServiceNow snapshot
-        string[] company3TicketKeys = new[] { TestData.TicketKeys.Ticket1, "INC0002233", "INC0002234" };
+        string[] company3TicketKeys = [TestData.TicketKeys.Ticket1, "INC0002233", "INC0002234"];
         foreach (string ticketKey in company3TicketKeys)
         {
             await InsertSnapshotTicketAsync(connection, Company3SnapshotId, company3Name, ticketKey);
         }
 
-        // Insert field changes for company 1 tickets from old snapshot
         foreach (string ticketKey in company1TicketKeys)
         {
-            await InsertFieldChangeAsync(connection, company1Name, ticketKey, TestData.Fields.Status, TestData.FieldValues.StatusOpen, olderSnapshotDate, Company1OldSnapshotId);
+            await InsertFieldChangeAsync(connection, company1Name, ticketKey, TestData.Fields.Status,   TestData.FieldValues.StatusOpen,       olderSnapshotDate, Company1OldSnapshotId);
         }
 
-        // Insert field changes for company 1 tickets from new snapshot
         foreach (string ticketKey in company1TicketKeys)
         {
-            await InsertFieldChangeAsync(connection, company1Name, ticketKey, TestData.Fields.Status, TestData.FieldValues.StatusInProgress, testSnapshotDate, Company1NewSnapshotId);
-            await InsertFieldChangeAsync(connection, company1Name, ticketKey, TestData.Fields.Priority, TestData.FieldValues.PriorityHigh, testSnapshotDate, Company1NewSnapshotId);
-            await InsertFieldChangeAsync(connection, company1Name, ticketKey, TestData.Fields.Assignee, "John Smith", testSnapshotDate, Company1NewSnapshotId);
+            await InsertFieldChangeAsync(connection, company1Name, ticketKey, TestData.Fields.Status,   TestData.FieldValues.StatusInProgress, testSnapshotDate,  Company1NewSnapshotId);
+            await InsertFieldChangeAsync(connection, company1Name, ticketKey, TestData.Fields.Priority, TestData.FieldValues.PriorityHigh,      testSnapshotDate,  Company1NewSnapshotId);
+            await InsertFieldChangeAsync(connection, company1Name, ticketKey, TestData.Fields.Assignee, "John Smith",                           testSnapshotDate,  Company1NewSnapshotId);
         }
 
-        // Insert field changes for company 2 tickets
         foreach (string ticketKey in company2TicketKeys)
         {
-            await InsertFieldChangeAsync(connection, company2Name, ticketKey, TestData.Fields.Status, TestData.FieldValues.StatusOpen, testSnapshotDate, Company2SnapshotId);
-            await InsertFieldChangeAsync(connection, company2Name, ticketKey, TestData.Fields.Priority, TestData.FieldValues.PriorityMedium, testSnapshotDate, Company2SnapshotId);
+            await InsertFieldChangeAsync(connection, company2Name, ticketKey, TestData.Fields.Status,   TestData.FieldValues.StatusOpen,       testSnapshotDate, Company2SnapshotId);
+            await InsertFieldChangeAsync(connection, company2Name, ticketKey, TestData.Fields.Priority, TestData.FieldValues.PriorityMedium,   testSnapshotDate, Company2SnapshotId);
         }
 
-        // Insert field changes for company 3 tickets
         foreach (string ticketKey in company3TicketKeys)
         {
-            await InsertFieldChangeAsync(connection, company3Name, ticketKey, TestData.Fields.Status, TestData.FieldValues.StatusResolved, testSnapshotDate, Company3SnapshotId);
-            await InsertFieldChangeAsync(connection, company3Name, ticketKey, TestData.Fields.Resolution, "Fixed", testSnapshotDate, Company3SnapshotId);
+            await InsertFieldChangeAsync(connection, company3Name, ticketKey, TestData.Fields.Status,     TestData.FieldValues.StatusResolved, testSnapshotDate, Company3SnapshotId);
+            await InsertFieldChangeAsync(connection, company3Name, ticketKey, TestData.Fields.Resolution, "Fixed",                             testSnapshotDate, Company3SnapshotId);
         }
 
-        // Seed canonical field mappings for ServiceNow
-        await InsertFieldMappingAsync(connection, "servicenow", "incident_state", "Status");
-        await InsertFieldMappingAsync(connection, "servicenow", "assigned_to", "Assignee");
-        await InsertFieldMappingAsync(connection, "servicenow", "short_description", "Summary");
-        // Seed canonical field mappings for Jira
-        await InsertFieldMappingAsync(connection, "jira", "status", "Status");
-        await InsertFieldMappingAsync(connection, "jira", "assignee", "Assignee");
-        await InsertFieldMappingAsync(connection, "jira", "summary", "Summary");
+        await InsertFieldMappingAsync(connection, "servicenow", "incident_state",    "Status",   false);
+        await InsertFieldMappingAsync(connection, "servicenow", "assigned_to",       "Assignee", false);
+        await InsertFieldMappingAsync(connection, "servicenow", "short_description", "Summary",  false);
+        await InsertFieldMappingAsync(connection, "jira",       "status",            "Status",   false);
+        await InsertFieldMappingAsync(connection, "jira",       "assignee",          "Assignee", false);
+        await InsertFieldMappingAsync(connection, "jira",       "summary",           "Summary",  false);
     }
 
-    private static async Task InsertSnapshotAsync(SqliteConnection connection, string snapshotId, string itsmSource, DateTime snapshotDate)
+    // ------------------------------------------------------------------
+    // Helpers — use raw IDbCommand so they work for both SQLite and Postgres
+    // ------------------------------------------------------------------
+
+    private static async Task InsertSnapshotAsync(IDbConnection connection, string snapshotId, string itsmSource, DateTime snapshotDate)
     {
-        using SqliteCommand cmd = connection.CreateCommand();
+        using IDbCommand cmd = connection.CreateCommand();
         cmd.CommandText = """
             INSERT INTO raw_snapshot (id, itsm_source, snapshot_date, uploaded_by, uploaded_at)
             VALUES (@Id, @ItsmSource, @SnapshotDate, @UploadedBy, @UploadedAt)
             """;
-        cmd.Parameters.AddWithValue("Id", snapshotId);
-        cmd.Parameters.AddWithValue("ItsmSource", itsmSource);
-        cmd.Parameters.AddWithValue("SnapshotDate", snapshotDate);
-        cmd.Parameters.AddWithValue("UploadedBy", "test");
-        cmd.Parameters.AddWithValue("UploadedAt", DateTime.UtcNow);
-        await cmd.ExecuteNonQueryAsync();
+        AddParam(cmd, "Id",           snapshotId);
+        AddParam(cmd, "ItsmSource",   itsmSource);
+        AddParam(cmd, "SnapshotDate", snapshotDate);
+        AddParam(cmd, "UploadedBy",   "test");
+        AddParam(cmd, "UploadedAt",   DateTime.UtcNow);
+        await ((System.Data.Common.DbCommand)cmd).ExecuteNonQueryAsync();
     }
 
-    private static async Task InsertSnapshotTicketAsync(SqliteConnection connection, string snapshotId, string companyName, string ticketKey)
+    private static async Task InsertSnapshotTicketAsync(IDbConnection connection, string snapshotId, string companyName, string ticketKey)
     {
-        using SqliteCommand cmd = connection.CreateCommand();
+        using IDbCommand cmd = connection.CreateCommand();
         cmd.CommandText = """
             INSERT INTO snapshot_ticket (id, snapshot_id, company_name, ticket_key)
             VALUES (@Id, @SnapshotId, @CompanyName, @TicketKey)
             """;
-        cmd.Parameters.AddWithValue("Id", Guid.NewGuid().ToString());
-        cmd.Parameters.AddWithValue("SnapshotId", snapshotId);
-        cmd.Parameters.AddWithValue("CompanyName", companyName);
-        cmd.Parameters.AddWithValue("TicketKey", ticketKey);
-        await cmd.ExecuteNonQueryAsync();
+        AddParam(cmd, "Id",          Guid.NewGuid().ToString());
+        AddParam(cmd, "SnapshotId",  snapshotId);
+        AddParam(cmd, "CompanyName", companyName);
+        AddParam(cmd, "TicketKey",   ticketKey);
+        await ((System.Data.Common.DbCommand)cmd).ExecuteNonQueryAsync();
     }
 
-    private static async Task InsertFieldMappingAsync(SqliteConnection connection, string itsmSource, string sourceFieldName, string canonicalFieldName)
+    private static async Task InsertFieldMappingAsync(IDbConnection connection, string itsmSource, string sourceFieldName, string canonicalFieldName, bool isRequired)
     {
-        using SqliteCommand cmd = connection.CreateCommand();
-        cmd.CommandText = "INSERT OR REPLACE INTO itsm_field_mapping (itsm_source, source_field_name, canonical_field_name) VALUES (@ItsmSource, @SourceFieldName, @CanonicalFieldName)";
-        cmd.Parameters.AddWithValue("ItsmSource", itsmSource);
-        cmd.Parameters.AddWithValue("SourceFieldName", sourceFieldName);
-        cmd.Parameters.AddWithValue("CanonicalFieldName", canonicalFieldName);
-        await cmd.ExecuteNonQueryAsync();
+        using IDbCommand cmd = connection.CreateCommand();
+        if (UsePostgres)
+        {
+            cmd.CommandText = """
+                INSERT INTO itsm_field_mapping (itsm_source, source_field_name, canonical_field_name, is_required)
+                VALUES (@ItsmSource, @SourceFieldName, @CanonicalFieldName, @IsRequired)
+                ON CONFLICT (itsm_source, source_field_name) DO UPDATE
+                    SET canonical_field_name = EXCLUDED.canonical_field_name,
+                        is_required          = EXCLUDED.is_required
+                """;
+        }
+        else
+        {
+            cmd.CommandText = """
+                INSERT INTO itsm_field_mapping (itsm_source, source_field_name, canonical_field_name, is_required)
+                VALUES (@ItsmSource, @SourceFieldName, @CanonicalFieldName, @IsRequired)
+                ON CONFLICT (itsm_source, source_field_name) DO UPDATE
+                    SET canonical_field_name = excluded.canonical_field_name,
+                        is_required          = excluded.is_required
+                """;
+        }
+        AddParam(cmd, "ItsmSource",          itsmSource);
+        AddParam(cmd, "SourceFieldName",     sourceFieldName);
+        AddParam(cmd, "CanonicalFieldName",  canonicalFieldName);
+        AddParam(cmd, "IsRequired",          isRequired ? 1 : 0);
+        await ((System.Data.Common.DbCommand)cmd).ExecuteNonQueryAsync();
     }
 
-    private static async Task InsertFieldChangeAsync(SqliteConnection connection, string companyName, string ticketKey, string fieldName, string? fieldValue, DateTime observedAt, string snapshotId)
+    private static async Task InsertFieldChangeAsync(IDbConnection connection, string companyName, string ticketKey, string fieldName, string? fieldValue, DateTime observedAt, string snapshotId)
     {
-        using SqliteCommand cmd = connection.CreateCommand();
+        using IDbCommand cmd = connection.CreateCommand();
         cmd.CommandText = """
             INSERT INTO field_change (company_name, ticket_key, field_name, field_value, observed_at, snapshot_id)
             VALUES (@CompanyName, @TicketKey, @FieldName, @FieldValue, @ObservedAt, @SnapshotId)
             """;
-        cmd.Parameters.AddWithValue("CompanyName", companyName);
-        cmd.Parameters.AddWithValue("TicketKey", ticketKey);
-        cmd.Parameters.AddWithValue("FieldName", fieldName);
-        cmd.Parameters.AddWithValue("FieldValue", fieldValue ?? (object)DBNull.Value);
-        cmd.Parameters.AddWithValue("ObservedAt", observedAt);
-        cmd.Parameters.AddWithValue("SnapshotId", snapshotId);
-        await cmd.ExecuteNonQueryAsync();
+        AddParam(cmd, "CompanyName", companyName);
+        AddParam(cmd, "TicketKey",   ticketKey);
+        AddParam(cmd, "FieldName",   fieldName);
+        AddParam(cmd, "FieldValue",  (object?)fieldValue ?? DBNull.Value);
+        AddParam(cmd, "ObservedAt",  observedAt);
+        AddParam(cmd, "SnapshotId",  snapshotId);
+        await ((System.Data.Common.DbCommand)cmd).ExecuteNonQueryAsync();
+    }
+
+    private static void AddParam(IDbCommand cmd, string name, object? value)
+    {
+        IDbDataParameter p = cmd.CreateParameter();
+        p.ParameterName = name;
+        p.Value = value ?? DBNull.Value;
+        cmd.Parameters.Add(p);
     }
 }

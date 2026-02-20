@@ -2,7 +2,7 @@
 
 ## Overview
 
-**UPMS.Data** is a data access layer that manages ticket data and field changes for ITSM (IT Service Management) sources. It tracks tickets and their field changes over time, allowing historical reconstruction of ticket state at specific points in time.
+**UPMS.Data** is the data access layer for the Unified Problem Management System. It manages ticket data and field changes ingested from ITSM (IT Service Management) sources, tracking field values over time and allowing historical reconstruction of ticket state at any specific point in time.
 
 ---
 
@@ -12,14 +12,16 @@
 
 | Component | Purpose |
 |-----------|---------|
-| **TicketDataService** | Static service providing all data I/O operations |
-| **Ticket** | Record representing a ticket with all its fields at a point in time |
-| **FieldChange** | Record representing a single field value change for a ticket |
-| **DatabaseOptions** | Configuration class for database connection settings |
+| [`TicketDataService`](../src/UPMS.Data/TicketDataService.cs) | Static service providing all snapshot, ticket, and field change I/O operations |
+| [`ItsmFieldMappingService`](../src/UPMS.Data/ItsmFieldMappingService.cs) | Database-backed service for canonical field name lookups and mapping management |
+| [`Ticket`](../src/UPMS.Data/Ticket.cs) | Record representing a ticket with all its fields at a point in time |
+| [`FieldChange`](../src/UPMS.Data/FieldChange.cs) | Record representing a single field value observation for a ticket |
+| [`ItsmFieldMapping`](../src/UPMS.Data/ItsmFieldMapping.cs) | Record representing a single source-field-name → canonical-name mapping row |
+| [`DatabaseOptions`](../src/UPMS.Data/DatabaseOptions.cs) | Configuration class for database connection settings |
 
 ### Database Backend
 
-- **Storage**: PostgreSQL (primary) with fallback support for SQLite
+- **Storage**: PostgreSQL (primary) with fallback support for SQLite (test environments)
 - **ORM**: Dapper (lightweight, performance-focused)
 - **Connection**: Npgsql driver for PostgreSQL
 
@@ -29,24 +31,22 @@
 
 ### Step 1: Add UPMS.Data to Your Project
 
-Reference the `UPMS.Data` NuGet package in your project dependencies.
+Reference the `UPMS.Data` project in your project dependencies.
 
-### Step 2: Initialize the Service
+### Step 2: Initialize TicketDataService
 
 You **must** initialize `TicketDataService` before using any operations. There are three initialization patterns:
 
 #### Option A: From Configuration (Recommended)
 
 ```csharp
-// In your Startup/Program.cs
+// In your Program.cs
 using UPMS.Data;
 using Microsoft.Extensions.Options;
 
-// Assuming IOptions<DatabaseOptions> is registered in DI
-var services = new ServiceCollection();
 services.Configure<DatabaseOptions>(config.GetSection("Database"));
 
-// Later, during app initialization
+// During app initialization
 var options = serviceProvider.GetRequiredService<IOptions<DatabaseOptions>>();
 TicketDataService.Initialize(options);
 ```
@@ -70,13 +70,71 @@ TicketDataService.Initialize(connectionString);
 #### Option C: From Custom Connection Factory
 
 ```csharp
-// Useful for dependency injection or connection pooling
 TicketDataService.Initialize(() => new NpgsqlConnection(connectionString));
+```
+
+### Step 3: Register ItsmFieldMappingService
+
+`ItsmFieldMappingService` is instantiated separately and registered in DI:
+
+```csharp
+services.AddSingleton<IItsmFieldMappingService>(sp =>
+    ItsmFieldMappingService.CreateFromOptions(
+        sp.GetRequiredService<IOptions<DatabaseOptions>>()));
 ```
 
 ### Configuration Section Name
 
 The standard configuration section name is `"Database"` (accessible via `DatabaseOptions.SectionName`).
+
+---
+
+## Snapshot CSV Format
+
+UPMS ingests ticket data from flat-table CSV files exported from ITSM systems.
+
+### Format Rules
+
+- **Row 1 is the header row** — these are the exact column names from the ITSM export (e.g. `number`, `company`, `short_description`, `priority`, `state`).
+- **Each subsequent row is one ticket** in its current state at the snapshot point in time.
+- **Company is read from the data** — there is no separate company field on the upload form. The column whose name maps to canonical name `company` for the selected ITSM source provides the company name for each ticket row.
+- **One CSV can contain tickets for multiple companies** as long as each row has a populated company column.
+
+### Sample CSV
+
+```csv
+number,company,short_description,priority,state
+INC0001234,Acme Corp,Cannot login to VPN,High,In Progress
+INC0001235,Acme Corp,Printer not responding,Low,New
+INC0001236,Globex Ltd,Email not syncing,Medium,Resolved
+CHG0005678,Globex Ltd,Deploy Q4 patch bundle,High,In Progress
+```
+
+In this example, for an ITSM source named `servicenow-client-a` with the following mappings:
+
+| Source Column | Canonical Name |
+|---------------|----------------|
+| `number` | `ticket_key` |
+| `company` | `company` |
+| `short_description` | `title` |
+| `priority` | `priority` |
+| `state` | `status` |
+
+All five columns are mapped. Each row produces one `snapshot_ticket` record and five `field_change` records (one per column), stored under the canonical field names. The company for each ticket (`Acme Corp` or `Globex Ltd`) is extracted from the `company` column of each row.
+
+### Required Fields Validation
+
+If the ITSM source definition marks certain source column names as **required**, the ingest pipeline validates the CSV header row before writing any data. If a required column is absent from the header, the upload is rejected immediately with an error listing the missing column names.
+
+For example, if `number` and `company` are marked as required for `servicenow-client-a`, uploading a CSV whose header row does not contain `number` or `company` will produce:
+
+```
+Validation failed. The following required fields are missing from the CSV header:
+  - number
+  - company
+```
+
+No records are written when validation fails.
 
 ---
 
@@ -95,9 +153,9 @@ public static async Task<Guid> CreateSnapshotAsync(
 ```
 
 **Parameters**:
-- `itsmSource` (required): Name/identifier of the ITSM system (e.g., "Jira", "ServiceNow")
+- `itsmSource` (required): The ITSM source name (e.g. `"servicenow-client-a"`) — must match a name defined in the `itsm_source` table
 - `snapshotDate` (required): The date/time the snapshot represents
-- `uploadedBy` (optional): User/system that created the snapshot (default: "system")
+- `uploadedBy` (optional): User or system that created the snapshot (default: `"system"`)
 - `uploadMetadata` (optional): JSON or arbitrary metadata about the upload
 
 **Returns**: A `Guid` identifier for the snapshot
@@ -105,10 +163,10 @@ public static async Task<Guid> CreateSnapshotAsync(
 **Example**:
 ```csharp
 var snapshotId = await TicketDataService.CreateSnapshotAsync(
-    itsmSource: "ServiceNow",
+    itsmSource: "servicenow-client-a",
     snapshotDate: new DateTime(2024, 1, 15, 10, 30, 0),
-    uploadedBy: "integration-service",
-    uploadMetadata: "{\"source\": \"api\", \"version\": \"1.0\"}"
+    uploadedBy: "web-upload",
+    uploadMetadata: "{\"filename\": \"snow_export_jan15.csv\", \"row_count\": 142}"
 );
 ```
 
@@ -116,7 +174,7 @@ var snapshotId = await TicketDataService.CreateSnapshotAsync(
 
 ### 2. Add Tickets to a Snapshot
 
-Associates tickets with a snapshot. Each ticket must have a company name.
+Associates ticket keys with a snapshot, scoped to a company. Each ticket must have a company name (read from the CSV data).
 
 ```csharp
 public static async Task AddTicketsToSnapshotAsync(
@@ -126,20 +184,21 @@ public static async Task AddTicketsToSnapshotAsync(
 
 **Parameters**:
 - `snapshotId` (required): The snapshot ID from `CreateSnapshotAsync`
-- `ticketsWithCompanies` (required): Enumerable of tuples containing ticket identifiers and company names
+- `ticketsWithCompanies` (required): Tuples of ticket key and company name, derived from the CSV data
 
-**Behavior**:
+**Behaviour**:
 - Automatically validates and deduplicates tickets
 - Ignores empty/null values
 - Uses transactions for data consistency
 
 **Example**:
 ```csharp
+// Company names come from the CSV data, not from the upload form
 var tickets = new[]
 {
-    ("TICK-001", "Acme Corp"),
-    ("TICK-002", "Acme Corp"),
-    ("TICK-003", "Global Industries"),
+    ("INC0001234", "Acme Corp"),
+    ("INC0001235", "Acme Corp"),
+    ("INC0001236", "Globex Ltd"),
 };
 
 await TicketDataService.AddTicketsToSnapshotAsync(snapshotId, tickets);
@@ -149,7 +208,7 @@ await TicketDataService.AddTicketsToSnapshotAsync(snapshotId, tickets);
 
 ### 3. Record Field Changes
 
-Records when a ticket field changes value. Called for each field change observation.
+Records a field value observation for a ticket. Called once per column per row during CSV ingest.
 
 ```csharp
 public static async Task RecordFieldChangeAsync(
@@ -162,37 +221,121 @@ public static async Task RecordFieldChangeAsync(
 ```
 
 **Parameters**:
-- `companyName` (required): Company that owns the ticket
+- `companyName` (required): Company that owns the ticket (read from the CSV row)
 - `ticketKey` (required): Unique ticket identifier
-- `fieldName` (required): Name of the field being changed (e.g., "Status", "Priority", "Assignee")
-- `fieldValue` (optional): New value of the field (can be null)
-- `observedAt` (required): When the change was observed
-- `snapshotId` (required): The snapshot this change is part of
+- `fieldName` (required): The field name to store — either the canonical name (if the column has a mapping) or the raw source column name (if unmapped)
+- `fieldValue` (optional): The field's value (can be null)
+- `observedAt` (required): The snapshot date
+- `snapshotId` (required): The snapshot this observation belongs to
 
-**Behavior**:
-- Each call records one field change observation
-- Stores the history of all changes
-- Allows reconstruction of ticket state at any point in time
+**Behaviour**:
+- Each call records one field value observation
+- Mapped columns are stored under their canonical name; unmapped columns are stored under their raw source column name
+- All observations for a snapshot share the same `observedAt` (the snapshot date)
 
 **Example**:
 ```csharp
+// fieldName here is the canonical name resolved by IItsmFieldMappingService
 await TicketDataService.RecordFieldChangeAsync(
-    companyName: "Acme Corp",
-    ticketKey: "TICK-001",
-    fieldName: "Status",
+    companyName: "Acme Corp",      // read from the "company" column in the CSV row
+    ticketKey: "INC0001234",       // read from the "number" column (mapped to canonical "ticket_key")
+    fieldName: "status",           // canonical name for source column "state"
     fieldValue: "In Progress",
-    observedAt: new DateTime(2024, 1, 15, 10, 30, 0),
+    observedAt: new DateTime(2024, 1, 15, 0, 0, 0),
     snapshotId: snapshotId
 );
 
 await TicketDataService.RecordFieldChangeAsync(
     companyName: "Acme Corp",
-    ticketKey: "TICK-001",
-    fieldName: "Assignee",
-    fieldValue: "john.doe@acme.com",
-    observedAt: new DateTime(2024, 1, 15, 10, 30, 0),
+    ticketKey: "INC0001234",
+    fieldName: "priority",         // same canonical name as source column name
+    fieldValue: "High",
+    observedAt: new DateTime(2024, 1, 15, 0, 0, 0),
     snapshotId: snapshotId
 );
+```
+
+---
+
+## Canonical Field Name Lookups
+
+During ingest, each source column name is resolved to a canonical name (or kept as-is if no mapping exists) using `IItsmFieldMappingService`.
+
+### GetCanonicalName
+
+```csharp
+string GetCanonicalName(string itsmSource, string sourceFieldName);
+```
+
+Returns the canonical name for the given ITSM source and source column name. If no mapping is defined for this combination, returns `sourceFieldName` unchanged (graceful fallback).
+
+**Example**:
+```csharp
+// For ITSM source "servicenow-client-a" with mapping: short_description → title
+string canonical = mappingService.GetCanonicalName("servicenow-client-a", "short_description");
+// Returns: "title"
+
+string unmapped = mappingService.GetCanonicalName("servicenow-client-a", "u_custom_field_99");
+// Returns: "u_custom_field_99" (fallback — no mapping defined)
+```
+
+### GetMappingsForSource
+
+```csharp
+IEnumerable<ItsmFieldMapping> GetMappingsForSource(string itsmSource);
+```
+
+Returns all [`ItsmFieldMapping`](../src/UPMS.Data/ItsmFieldMapping.cs) rows for a given ITSM source, ordered by source field name.
+
+```csharp
+public class ItsmFieldMapping
+{
+    public required string ItsmSource { get; init; }
+    public required string SourceFieldName { get; init; }
+    public required string CanonicalFieldName { get; init; }
+}
+```
+
+### UpsertMappingAsync
+
+```csharp
+Task UpsertMappingAsync(string itsmSource, string sourceFieldName, string canonicalFieldName);
+```
+
+Adds or updates a single field mapping. Used by the ITSM Source Management UI.
+
+---
+
+## Ingest Pseudocode
+
+The following pseudocode illustrates how `IItsmFieldMappingService` and `TicketDataService` are used together during CSV ingest:
+
+```
+// Validate required fields first
+var requiredFields = GetRequiredFieldsForSource(itsmSource);
+var missingFields = requiredFields.Except(csvHeaderColumns).ToList();
+if (missingFields.Any())
+    return IngestResult.Failure("Missing required fields: " + string.Join(", ", missingFields));
+
+// Create the snapshot record
+var snapshotId = await TicketDataService.CreateSnapshotAsync(itsmSource, snapshotDate, uploadedBy);
+
+// Process each data row
+foreach (var row in csvDataRows)
+{
+    // Company comes from the row, not from the upload form
+    var companyColumnName = mappingService.GetCanonicalName(itsmSource, "company") // or reverse lookup
+    var company = row[companyFieldName];
+    var ticketKey = row[mappingService.GetCanonicalName(itsmSource, "ticket_key")];
+
+    await TicketDataService.AddTicketsToSnapshotAsync(snapshotId, [(ticketKey, company)]);
+
+    foreach (var (columnName, value) in row)
+    {
+        var fieldName = mappingService.GetCanonicalName(itsmSource, columnName);
+        await TicketDataService.RecordFieldChangeAsync(company, ticketKey, fieldName, value, snapshotDate, snapshotId);
+    }
+}
 ```
 
 ---
@@ -201,7 +344,7 @@ await TicketDataService.RecordFieldChangeAsync(
 
 ### 1. Get Tickets as of a Date
 
-Retrieves all tickets for a company from a specific ITSM source as they appeared at a specific point in time. The ticket state is reconstructed by finding the latest field values observed on or before that date.
+Retrieves all tickets for a company from a specific ITSM source as they appeared at a specific point in time. Ticket state is reconstructed by finding the latest field values observed on or before that date.
 
 ```csharp
 public static async Task<IEnumerable<Ticket>> GetTicketsAsync(
@@ -211,7 +354,7 @@ public static async Task<IEnumerable<Ticket>> GetTicketsAsync(
 ```
 
 **Parameters**:
-- `itsmSource` (required): The ITSM source identifier
+- `itsmSource` (required): The ITSM source name (e.g. `"servicenow-client-a"`)
 - `companyName` (required): Filter tickets by company
 - `asOfDate` (required): Point-in-time for state reconstruction
 
@@ -220,7 +363,7 @@ public static async Task<IEnumerable<Ticket>> GetTicketsAsync(
 **Example**:
 ```csharp
 var tickets = await TicketDataService.GetTicketsAsync(
-    itsmSource: "ServiceNow",
+    itsmSource: "servicenow-client-a",
     companyName: "Acme Corp",
     asOfDate: new DateTime(2024, 1, 15, 10, 30, 0)
 );
@@ -228,9 +371,8 @@ var tickets = await TicketDataService.GetTicketsAsync(
 foreach (var ticket in tickets)
 {
     Console.WriteLine($"Ticket: {ticket.TicketKey}");
-    Console.WriteLine($"  Status: {ticket.Fields["Status"]}");
-    Console.WriteLine($"  Priority: {ticket.Fields["Priority"]}");
-    Console.WriteLine($"  Observed at: {ticket.ObservedAt}");
+    Console.WriteLine($"  Status: {ticket.Fields["status"]}");   // canonical name
+    Console.WriteLine($"  Priority: {ticket.Fields["priority"]}");
 }
 ```
 
@@ -238,13 +380,13 @@ foreach (var ticket in tickets)
 ```csharp
 public class Ticket
 {
-    public string TicketKey { get; init; }           // "TICK-001"
-    public string CompanyName { get; init; }         // "Acme Corp"
-    public string ItsmSource { get; init; }          // "ServiceNow"
-    public IDictionary<string, string?> Fields { get; init; }  // Field name ? value
-    public DateTime ObservedAt { get; init; }        // Latest field change time
-    public Guid SnapshotId { get; init; }            // Associated snapshot
-    public DateTime SnapshotDate { get; init; }      // Snapshot creation date
+    public string TicketKey { get; init; }
+    public string CompanyName { get; init; }
+    public string ItsmSource { get; init; }
+    public IDictionary<string, string?> Fields { get; init; }  // keyed by canonical name (or raw column name if unmapped)
+    public DateTime ObservedAt { get; init; }
+    public Guid SnapshotId { get; init; }
+    public DateTime SnapshotDate { get; init; }
 }
 ```
 
@@ -258,22 +400,17 @@ Retrieves all tickets from a specific snapshot, reconstructed as they appeared a
 public static async Task<IEnumerable<Ticket>> GetTicketsBySnapshotAsync(Guid snapshotId)
 ```
 
-**Parameters**:
-- `snapshotId` (required): The snapshot to query
-
-**Returns**: `IEnumerable<Ticket>` with all tickets in that snapshot
-
 **Example**:
 ```csharp
-var allTickets = await TicketDataService.GetTicketsBySnapshotAsync(snapshotId);
-Console.WriteLine($"Retrieved {allTickets.Count()} tickets from snapshot");
+var tickets = await TicketDataService.GetTicketsBySnapshotAsync(snapshotId);
+Console.WriteLine($"Retrieved {tickets.Count()} tickets from snapshot");
 ```
 
 ---
 
 ### 3. Get Field Change History
 
-Retrieves the complete change history for a specific field of a ticket in chronological order.
+Retrieves the complete observation history for a specific field of a ticket in chronological order.
 
 ```csharp
 public static async Task<IEnumerable<FieldChange>> GetTicketFieldHistoryAsync(
@@ -285,21 +422,22 @@ public static async Task<IEnumerable<FieldChange>> GetTicketFieldHistoryAsync(
 **Parameters**:
 - `companyName` (required): Company that owns the ticket
 - `ticketKey` (required): Ticket identifier
-- `fieldName` (required): Name of the field to get history for
+- `fieldName` (required): The field name to get history for — use the canonical name if the field was mapped
 
 **Returns**: `IEnumerable<FieldChange>` ordered by observation time (ascending)
 
 **Example**:
 ```csharp
+// Query using canonical name "status"
 var statusHistory = await TicketDataService.GetTicketFieldHistoryAsync(
     companyName: "Acme Corp",
-    ticketKey: "TICK-001",
-    fieldName: "Status"
+    ticketKey: "INC0001234",
+    fieldName: "status"
 );
 
 foreach (var change in statusHistory)
 {
-    Console.WriteLine($"  {change.ObservedAt:yyyy-MM-dd HH:mm:ss} ? {change.FieldValue}");
+    Console.WriteLine($"  {change.ObservedAt:yyyy-MM-dd} -> {change.FieldValue}");
 }
 ```
 
@@ -307,79 +445,85 @@ foreach (var change in statusHistory)
 ```csharp
 public class FieldChange
 {
-    public long Id { get; init; }                  // Database row ID
-    public string CompanyName { get; init; }       // "Acme Corp"
-    public string TicketKey { get; init; }         // "TICK-001"
-    public string FieldName { get; init; }         // "Status"
-    public string? FieldValue { get; init; }       // New value (can be null)
-    public DateTime ObservedAt { get; init; }      // When change occurred
-    public Guid SnapshotId { get; init; }          // Associated snapshot
+    public long Id { get; init; }
+    public string CompanyName { get; init; }
+    public string TicketKey { get; init; }
+    public string FieldName { get; init; }       // canonical name (or raw column name if unmapped)
+    public string? FieldValue { get; init; }
+    public DateTime ObservedAt { get; init; }
+    public Guid SnapshotId { get; init; }
 }
 ```
 
 ---
 
-## Data Storage
+## Database Schema
 
-### Database Schema
+### Table: `itsm_source`
 
-The system uses three main tables:
+One row per defined ITSM source instance.
 
-#### `raw_snapshot`
+| Column | Type | Purpose |
+|--------|------|---------|
+| `id` | UUID (PK) | Unique source identifier |
+| `name` | VARCHAR UNIQUE | Slug identifier used in snapshot records (e.g. `servicenow-client-a`) |
+| `display_label` | VARCHAR | Human-readable name shown in the UI |
+| `created_at` | TIMESTAMPTZ | Row creation timestamp |
+
+### Table: `itsm_field_mapping`
+
+One row per field mapping per ITSM source instance.
+
+| Column | Type | Purpose |
+|--------|------|---------|
+| `itsm_source` | VARCHAR (FK → `itsm_source.name`) | The ITSM source this mapping belongs to |
+| `source_field_name` | VARCHAR | Column name as it appears in the CSV export |
+| `canonical_field_name` | VARCHAR | Normalised name used throughout UPMS |
+| `is_required` | BOOLEAN | If true, this column must be present in every CSV for this source |
+| `created_at` | TIMESTAMPTZ | Row creation timestamp |
+| `updated_at` | TIMESTAMPTZ | Last update timestamp |
+
+**Primary key**: `(itsm_source, source_field_name)`
+
+### Table: `raw_snapshot`
+
 Stores snapshot metadata.
 
 | Column | Type | Purpose |
 |--------|------|---------|
 | `id` | UUID (PK) | Unique snapshot identifier |
-| `itsm_source` | VARCHAR | ITSM system name (e.g., "ServiceNow") |
-| `snapshot_date` | TIMESTAMP | When the snapshot represents |
-| `uploaded_by` | VARCHAR | User/system that uploaded |
-| `uploaded_at` | TIMESTAMP | When upload occurred |
-| `upload_metadata` | TEXT | Optional JSON metadata |
+| `itsm_source` | VARCHAR | ITSM source name — references `itsm_source.name` |
+| `snapshot_date` | TIMESTAMPTZ | The point in time the snapshot represents |
+| `uploaded_by` | VARCHAR | User or system that uploaded |
+| `uploaded_at` | TIMESTAMPTZ | When the upload occurred |
+| `upload_metadata` | JSONB | Optional metadata (filename, row count, etc.) |
 
-#### `snapshot_ticket`
-Links tickets to snapshots (many-to-many).
+### Table: `snapshot_ticket`
+
+Links ticket keys to snapshots.
 
 | Column | Type | Purpose |
 |--------|------|---------|
 | `id` | UUID (PK) | Unique row identifier |
 | `snapshot_id` | UUID (FK) | References `raw_snapshot.id` |
-| `company_name` | VARCHAR | Ticket's company |
+| `company_name` | VARCHAR | Ticket's company — read from the CSV data |
 | `ticket_key` | VARCHAR | Unique ticket identifier |
 
-**Unique Constraint**: `(snapshot_id, ticket_key)` prevents duplicate tickets in a snapshot
+**Unique constraint**: `(snapshot_id, ticket_key)` prevents duplicate tickets in a snapshot
 
-#### `field_change`
-Records individual field value changes.
+### Table: `field_change`
+
+Records individual field value observations.
 
 | Column | Type | Purpose |
 |--------|------|---------|
 | `id` | BIGINT (PK) | Auto-incrementing row ID |
-| `company_name` | VARCHAR | Ticket's company |
+| `company_name` | VARCHAR | Ticket's company — read from the CSV data |
 | `ticket_key` | VARCHAR | Ticket identifier |
-| `field_name` | VARCHAR | Name of the field (e.g., "Status") |
-| `field_value` | TEXT | The value (nullable) |
-| `observed_at` | TIMESTAMP | When change was observed |
+| `field_name` | VARCHAR | Canonical field name (or raw source column name if unmapped) |
+| `field_value` | TEXT | The observed value (nullable) |
+| `observed_at` | TIMESTAMPTZ | The snapshot date |
 | `snapshot_id` | UUID (FK) | Associated snapshot |
-
-### Data Flow
-
-```
-TicketDataService Operations
-    ?
- Dapper ORM
-    ?
-Npgsql Driver
-    ?
-PostgreSQL Database
-    ?
-?????????????????????????????????????????????????????????????
-?  raw_snapshot       ?  snapshot_ticket ?  field_change    ?
-?????????????????????????????????????????????????????????????
-? Snapshot metadata   ? Ticket roster    ? Historical data  ?
-? (when, who, source) ? (which tickets)  ? (what changed)   ?
-?????????????????????????????????????????????????????????????
-```
 
 ---
 
@@ -397,107 +541,110 @@ PostgreSQL Database
 
 ### Environment Variables
 
-Alternatively, override via environment variable:
 ```bash
 Database__ConnectionString=Server=db.example.com;Database=upms;User Id=user;Password=pass
 ```
 
-### Connection String Format (PostgreSQL)
-
-```
-Server=hostname;Port=5432;Database=database_name;User Id=username;Password=password;[options]
-```
-
-**Common Options**:
-- `Timeout=30` - Connection timeout in seconds
-- `Application Name=AppName` - Identify your app in logs
-- `Pooling=true` - Use connection pooling (recommended)
-
 ---
 
-## Example: Complete Workflow
+## Example: Complete Ingest Workflow
 
 ```csharp
 using UPMS.Data;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Options;
 
-// 1. Load configuration
+// 1. Initialize
 var config = new ConfigurationBuilder()
     .AddJsonFile("appsettings.json")
     .AddEnvironmentVariables()
     .Build();
 
-var options = Options.Create(new DatabaseOptions 
-{ 
+var dbOptions = Options.Create(new DatabaseOptions
+{
     ConnectionString = config.GetConnectionString("Database")!
 });
 
-// 2. Initialize the service
-TicketDataService.Initialize(options);
+TicketDataService.Initialize(dbOptions);
 
-// 3. Create a snapshot
+var mappingService = ItsmFieldMappingService.CreateFromOptions(dbOptions);
+
+// 2. Define the ITSM source name
+string itsmSource = "servicenow-client-a";
+
+// 3. Read the CSV header and validate required fields
+string[] csvHeader = ["number", "company", "short_description", "priority", "state"];
+var allMappings = mappingService.GetMappingsForSource(itsmSource).ToList();
+// (required field validation happens here — omitted for brevity)
+
+// 4. Create the snapshot — no company name on the snapshot itself
 var snapshotId = await TicketDataService.CreateSnapshotAsync(
-    itsmSource: "ServiceNow",
-    snapshotDate: DateTime.UtcNow,
-    uploadedBy: "batch-importer"
+    itsmSource: itsmSource,
+    snapshotDate: new DateTime(2024, 1, 15, 0, 0, 0),
+    uploadedBy: "web-upload"
 );
 
-// 4. Add tickets to snapshot
-await TicketDataService.AddTicketsToSnapshotAsync(
-    snapshotId,
-    new[]
+// 5. Process CSV rows — company comes from each row's data
+var csvRows = new[]
+{
+    new Dictionary<string, string> {
+        ["number"] = "INC0001234", ["company"] = "Acme Corp",
+        ["short_description"] = "Cannot login to VPN", ["priority"] = "High", ["state"] = "In Progress"
+    },
+    new Dictionary<string, string> {
+        ["number"] = "INC0001236", ["company"] = "Globex Ltd",
+        ["short_description"] = "Email not syncing", ["priority"] = "Medium", ["state"] = "Resolved"
+    },
+};
+
+var ticketsWithCompanies = new List<(string, string)>();
+var fieldChanges = new List<(string company, string key, string field, string? value)>();
+
+foreach (var row in csvRows)
+{
+    // Resolve company and ticket key from mapped columns
+    string companyColumn = allMappings.FirstOrDefault(m => m.CanonicalFieldName == "company")?.SourceFieldName ?? "company";
+    string ticketKeyColumn = allMappings.FirstOrDefault(m => m.CanonicalFieldName == "ticket_key")?.SourceFieldName ?? "number";
+
+    string company = row[companyColumn];
+    string ticketKey = row[ticketKeyColumn];
+
+    ticketsWithCompanies.Add((ticketKey, company));
+
+    foreach (var (col, val) in row)
     {
-        ("INC0001234", "Acme Corp"),
-        ("INC0001235", "Acme Corp"),
-        ("CHG0005678", "Global Industries"),
+        string fieldName = mappingService.GetCanonicalName(itsmSource, col);
+        fieldChanges.Add((company, ticketKey, fieldName, val));
     }
-);
+}
 
-// 5. Record field changes
-await TicketDataService.RecordFieldChangeAsync(
-    companyName: "Acme Corp",
-    ticketKey: "INC0001234",
-    fieldName: "Status",
-    fieldValue: "New",
-    observedAt: DateTime.UtcNow,
-    snapshotId: snapshotId
-);
+await TicketDataService.AddTicketsToSnapshotAsync(snapshotId, ticketsWithCompanies);
 
-await TicketDataService.RecordFieldChangeAsync(
-    companyName: "Acme Corp",
-    ticketKey: "INC0001234",
-    fieldName: "Priority",
-    fieldValue: "High",
-    observedAt: DateTime.UtcNow,
-    snapshotId: snapshotId
-);
+foreach (var (company, key, field, value) in fieldChanges)
+{
+    await TicketDataService.RecordFieldChangeAsync(
+        companyName: company,
+        ticketKey: key,
+        fieldName: field,
+        fieldValue: value,
+        observedAt: new DateTime(2024, 1, 15, 0, 0, 0),
+        snapshotId: snapshotId
+    );
+}
 
-// 6. Retrieve tickets as of a date
+// 6. Retrieve tickets as of a date using canonical field names
 var tickets = await TicketDataService.GetTicketsAsync(
-    itsmSource: "ServiceNow",
+    itsmSource: itsmSource,
     companyName: "Acme Corp",
-    asOfDate: DateTime.UtcNow
+    asOfDate: new DateTime(2024, 1, 15, 0, 0, 0)
 );
 
 foreach (var ticket in tickets)
 {
     Console.WriteLine($"Ticket: {ticket.TicketKey}");
-    Console.WriteLine($"  Status: {ticket.Fields["Status"]}");
-    Console.WriteLine($"  Priority: {ticket.Fields["Priority"]}");
-}
-
-// 7. Get field history for auditing
-var statusHistory = await TicketDataService.GetTicketFieldHistoryAsync(
-    companyName: "Acme Corp",
-    ticketKey: "INC0001234",
-    fieldName: "Status"
-);
-
-Console.WriteLine("Status change history:");
-foreach (var change in statusHistory)
-{
-    Console.WriteLine($"  {change.ObservedAt:yyyy-MM-dd HH:mm:ss} ? {change.FieldValue}");
+    Console.WriteLine($"  Status: {ticket.Fields["status"]}");    // canonical name
+    Console.WriteLine($"  Priority: {ticket.Fields["priority"]}");
+    Console.WriteLine($"  Title: {ticket.Fields["title"]}");
 }
 ```
 
@@ -505,45 +652,44 @@ foreach (var change in statusHistory)
 
 ## Key Design Patterns
 
-### 1. Snapshot-Based History Tracking
+### 1. Flat-Table CSV with Company from Data
 
-Rather than storing just current values, the system:
-- Creates snapshots at specific points in time
-- Records field changes within each snapshot
-- Allows reconstruction of state at any point in time
+The CSV format is a flat table: row 1 is the header (source column names), each subsequent row is one ticket. The company for each ticket is read from the column mapped to canonical name `company` — it is never a separate upload-time input. This allows a single CSV file to contain tickets for multiple companies.
 
-**Benefit**: Complete audit trail and point-in-time queries.
+### 2. Source-Scoped Field Mappings
 
-### 2. Dapper + Raw SQL
+Field mappings belong to a specific **named ITSM source instance** (`itsm_source.name`), not to a tool type. Two ServiceNow instances with different field names each have their own mapping table. The same source column name can map to different canonical names in different ITSM sources.
 
-- Uses Dapper for performance and control
-- Raw SQL queries for complex joins and window functions
-- Supports multiple database backends (PostgreSQL, SQLite)
+### 3. Canonical Names in Storage
 
-### 3. Static Service Pattern
+After ingest, `field_change.field_name` contains:
+- The **canonical name** for any column that had a mapping defined for the selected ITSM source
+- The **raw source column name** for any unmapped column (graceful fallback)
 
-- `TicketDataService` is a static class
-- Initialization happens once per application lifetime
-- No instance creation needed (simpler API)
+Consumers should query using canonical names (e.g. `"status"`, `"priority"`) to get consistent results across all ITSM sources.
 
-### 4. Immutable Records
+### 4. Required Field Validation
 
-- `Ticket` and `FieldChange` use C# `record` types
-- `init`-only properties prevent accidental mutation
-- Ensures data consistency and thread safety
+If `itsm_field_mapping.is_required = true` for a source column, the ingest pipeline validates the CSV header row before writing any data. A missing required column causes the entire upload to be rejected with an error message listing the missing fields.
+
+### 5. Append-Only History
+
+Data is never modified after ingest. Each snapshot adds new `field_change` rows. Point-in-time reconstruction selects the latest observed value for each field up to the requested timestamp.
+
+### 6. Static Service Pattern
+
+`TicketDataService` is a static class initialized once per application lifetime. `IItsmFieldMappingService` is an instance-based interface registered in DI.
 
 ---
 
 ## Error Handling
 
-All public methods validate inputs and throw appropriate exceptions:
-
 | Exception | Trigger |
 |-----------|---------|
 | `ArgumentNullException` | Connection factory or options not initialized |
-| `ArgumentException` | Required parameter is null/empty/invalid |
-| `InvalidOperationException` | Service not initialized before use |
-| `NpgsqlException` | Database connection/query failure |
+| `ArgumentException` | Required parameter is null, empty, or invalid |
+| `InvalidOperationException` | `TicketDataService` not initialized before use |
+| `NpgsqlException` | Database connection or query failure |
 
 **Best Practice**: Always initialize before first use, and handle `InvalidOperationException` in your calling code.
 
@@ -551,70 +697,10 @@ All public methods validate inputs and throw appropriate exceptions:
 
 ## Performance Considerations
 
-1. **Batch Operations**: The `AddTicketsToSnapshotAsync` method uses transactions for efficiency
-2. **Window Functions**: Complex queries use SQL window functions for performance
-3. **Indexing**: Ensure indexes exist on `company_name`, `ticket_key`, `itsm_source`, and `observed_at`
+1. **Batch Operations**: `AddTicketsToSnapshotAsync` uses transactions for efficiency
+2. **Window Functions**: Reconstruction queries use SQL window functions for set-based performance
+3. **Indexing**: Indexes exist on `company_name`, `ticket_key`, `itsm_source`, `observed_at`, and `field_name`
 4. **Connection Pooling**: Always use connection pooling in production
-
----
-
-## Canonical Field Mapping
-
-> **Planned — not yet implemented** in the current version of `UPMS.Data`.
-
-### What It Is
-
-Different ITSM sources use different field names for semantically identical data. The canonical field mapping system provides a reference table (`itsm_field_mapping`) that maps source-specific field names to a single normalised (canonical) name used consistently throughout UPMS.
-
-**Table: `itsm_field_mapping`**
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `itsm_source` | `VARCHAR` | The ITSM source system (e.g. `"ServiceNow"`, `"Jira"`) |
-| `source_field_name` | `VARCHAR` | The field name as it appears in exports from that source |
-| `canonical_field_name` | `VARCHAR` | The normalised field name used internally in UPMS |
-
-### Why It Exists
-
-Without canonical mapping, the same concept — such as ticket status — appears under different names depending on the source:
-
-| ITSM Source | Source Field Name | Canonical Field Name |
-|-------------|-------------------|----------------------|
-| ServiceNow  | `incident_state`  | `Status`             |
-| Jira        | `status`          | `Status`             |
-| ServiceNow  | `assigned_to`     | `Assignee`           |
-| Jira        | `assignee`        | `Assignee`           |
-| ServiceNow  | `short_description` | `Summary`          |
-| Jira        | `summary`         | `Summary`            |
-
-Without mapping, queries and reports would need to handle source-specific field names separately, and ticket data from different sources could not be compared directly.
-
-### How It Will Be Used
-
-During ingest (file upload), the source field names found in the uploaded file are looked up in `itsm_field_mapping` for the relevant ITSM source. The canonical field name is used when writing `field_change` records to the database.
-
-Pseudocode:
-
-```
-for each field in uploaded ticket:
-    canonicalName = mappingService.Lookup(itsmSource, sourceFieldName)
-                    ?? sourceFieldName   // fallback: use source name if no mapping found
-    RecordFieldChange(ticketKey, canonicalName, fieldValue, ...)
-```
-
-Once canonical mapping is in place, all `field_change` records use canonical field names regardless of their origin. Consumers of `TicketDataService` can query using canonical names (e.g. `"Status"`) and receive consistent results across all ITSM sources.
-
-### Planned API Addition
-
-A future `ItsmFieldMappingService` (in `UPMS.Data`) will expose:
-
-```csharp
-// Look up the canonical name for a given source field name
-string? GetCanonicalName(string itsmSource, string sourceFieldName);
-
-// Get all mappings for an ITSM source
-IEnumerable<ItsmFieldMapping> GetMappingsForSource(string itsmSource);
-```
 
 ---
 
@@ -622,11 +708,12 @@ IEnumerable<ItsmFieldMapping> GetMappingsForSource(string itsmSource);
 
 | Aspect | Details |
 |--------|---------|
-| **Storage** | PostgreSQL (Npgsql) + SQLite fallback |
+| **Storage** | PostgreSQL (Npgsql) + SQLite fallback for tests |
 | **ORM** | Dapper |
 | **Main Service** | `TicketDataService` (static) |
-| **Data Input** | Snapshots, Tickets, Field Changes |
-| **Data Retrieval** | Point-in-time queries, Snapshot queries, History queries |
+| **Mapping Service** | `IItsmFieldMappingService` / `ItsmFieldMappingService` (instance, DI) |
+| **CSV Format** | Flat table — row 1 = header, each row = one ticket, company from data |
+| **Data Input** | Snapshots, Tickets (company from CSV), Field Changes (canonical names) |
+| **Data Retrieval** | Point-in-time queries, snapshot queries, field history queries |
 | **Configuration** | `DatabaseOptions` from appsettings.json |
-| **Core Pattern** | Snapshot-based history tracking with field change auditing |
-| **Canonical Mapping** | `itsm_field_mapping` table — normalises field names across ITSM sources *(planned)* |
+| **Core Pattern** | Append-only field change history with canonical name normalisation per ITSM source |

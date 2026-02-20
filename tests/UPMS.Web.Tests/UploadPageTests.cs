@@ -3,6 +3,7 @@ namespace UPMS.Web.Tests;
 /// <summary>
 /// Requirements for the ticket dump upload page (/upload).
 /// Users must be able to upload CSV or JSON ticket dumps from ITSM sources.
+/// Company is extracted from the uploaded data — it is no longer a form input.
 /// </summary>
 [TestFixture]
 public class UploadPageTests : PageTestBase
@@ -35,9 +36,38 @@ public class UploadPageTests : PageTestBase
         // Act
         await Page.GotoAsync(Url("/upload"));
 
-        // Assert � users must select which ITSM source the dump originates from.
+        // Assert — users must select which ITSM source the dump originates from.
         var selector = Page.Locator("[data-testid='upload-itsm-source']");
         await Assertions.Expect(selector).ToBeVisibleAsync();
+    }
+
+    [Test]
+    public async Task WhenUploadPageLoadsThenNoCompanyNameInputPresent()
+    {
+        // Act
+        await Page.GotoAsync(Url("/upload"));
+
+        // Assert — company is read from the CSV data, not entered on the form.
+        var companyInput = Page.Locator("[data-testid='company-name-input']");
+        Assert.That(await companyInput.CountAsync(), Is.EqualTo(0),
+            "Company name input should not be present; company is extracted from uploaded data.");
+    }
+
+    [Test]
+    public async Task WhenUploadPageLoadsThenItsmSourceDropdownHasOptions()
+    {
+        // Act
+        await Page.GotoAsync(Url("/upload"));
+
+        // Assert — the dropdown should contain at least the placeholder option
+        // (populated from the database via IItsmSourceService).
+        var dropdown = Page.Locator("[data-testid='upload-itsm-source']");
+        await Assertions.Expect(dropdown).ToBeVisibleAsync();
+
+        // At minimum there is the placeholder "-- Select ITSM Source --" option
+        int optionCount = await Page.Locator("[data-testid='upload-itsm-source'] option").CountAsync();
+        Assert.That(optionCount, Is.GreaterThanOrEqualTo(1),
+            "ITSM source dropdown must contain at least the placeholder option.");
     }
 
     [Test]
@@ -46,7 +76,7 @@ public class UploadPageTests : PageTestBase
         // Act
         await Page.GotoAsync(Url("/upload"));
 
-        // Assert � a file input must be available for selecting CSV or JSON files.
+        // Assert
         var fileInput = Page.Locator("[data-testid='upload-file-input']");
         await Assertions.Expect(fileInput).ToBeAttachedAsync();
     }
@@ -68,53 +98,13 @@ public class UploadPageTests : PageTestBase
         // Act
         await Page.GotoAsync(Url("/upload"));
 
-        // Assert � an area must exist to display upload results or status messages.
+        // Assert
         var resultArea = Page.Locator("[data-testid='upload-result']");
         await Assertions.Expect(resultArea).ToBeAttachedAsync();
     }
 
     [Test]
-    public async Task WhenUploadSubmittedWithoutFileThenValidationMessageShown()
-    {
-        // Arrange
-        await Page.GotoAsync(Url("/upload"));
-
-        // Act � click upload without selecting a file.
-        await Page.Locator("[data-testid='upload-submit']").ClickAsync();
-
-        // Assert � a validation message should tell the user a file is required.
-        var validation = Page.Locator("[data-testid='upload-validation']");
-        await Assertions.Expect(validation).ToBeVisibleAsync();
-    }
-
-    [Test]
-    public async Task WhenUploadSubmittedWithoutItsmSourceThenValidationMessageShown()
-    {
-        // Arrange
-        await Page.GotoAsync(Url("/upload"));
-
-        // Act � click upload without selecting an ITSM source.
-        await Page.Locator("[data-testid='upload-submit']").ClickAsync();
-
-        // Assert
-        var validation = Page.Locator("[data-testid='upload-validation']");
-        await Assertions.Expect(validation).ToBeVisibleAsync();
-    }
-    [Test]
-    public async Task UploadPage_HasCompanyNameInput()
-    {
-        // Act
-        await Page.GotoAsync(Url("/upload"));
-
-        // Assert — users must supply a company name so tickets are attributed correctly.
-        var companyInput = Page.Locator("[data-testid='company-name-input'], input[name='companyName']");
-        var hasTestId = await companyInput.CountAsync() > 0;
-        var hasLabel = await Page.Locator("label", new() { HasText = "Company" }).CountAsync() > 0;
-        Assert.That(hasTestId || hasLabel, Is.True, "Expected a company name input or a label containing 'Company'.");
-    }
-
-    [Test]
-    public async Task UploadPage_HasSnapshotDateInput()
+    public async Task WhenUploadPageLoadsThenSnapshotDateInputIsPresent()
     {
         // Act
         await Page.GotoAsync(Url("/upload"));
@@ -125,7 +115,35 @@ public class UploadPageTests : PageTestBase
     }
 
     [Test]
-    [Description("Stage 4 requirement — ingest summary is shown after a successful upload.")]
+    public async Task WhenUploadSubmittedWithoutItsmSourceThenValidationMessageShown()
+    {
+        // Arrange
+        await Page.GotoAsync(Url("/upload"));
+
+        // Act — click upload without selecting an ITSM source.
+        await Page.Locator("[data-testid='upload-submit']").ClickAsync();
+
+        // Assert
+        var validation = Page.Locator("[data-testid='upload-validation']");
+        await Assertions.Expect(validation).ToBeVisibleAsync();
+    }
+
+    [Test]
+    public async Task WhenUploadSubmittedWithoutFileThenValidationMessageShown()
+    {
+        // Arrange
+        await Page.GotoAsync(Url("/upload"));
+
+        // Act — click upload without selecting a file.
+        await Page.Locator("[data-testid='upload-submit']").ClickAsync();
+
+        // Assert
+        var validation = Page.Locator("[data-testid='upload-validation']");
+        await Assertions.Expect(validation).ToBeVisibleAsync();
+    }
+
+    [Test]
+    [Description("Stage 5 requirement — ingest summary is shown after a successful upload.")]
     public Task UploadPage_ShowsIngestSummary_AfterSuccessfulUpload()
     {
         Assert.Ignore("Requires a real database connection — run against a live environment");
@@ -133,7 +151,7 @@ public class UploadPageTests : PageTestBase
     }
 
     [Test]
-    [Description("Stage 4 requirement — summary must display how many tickets were ingested.")]
+    [Description("Stage 5 requirement — summary must display how many tickets were ingested.")]
     public Task UploadPage_ShowsTicketCount_InSummary()
     {
         Assert.Ignore("Requires a real database connection — run against a live environment");
@@ -141,24 +159,10 @@ public class UploadPageTests : PageTestBase
     }
 
     [Test]
-    [Description("Stage 4 requirement — summary must display how many field changes were recorded.")]
+    [Description("Stage 5 requirement — summary must display how many field changes were recorded.")]
     public Task UploadPage_ShowsFieldChangeCount_InSummary()
     {
         Assert.Ignore("Requires a real database connection — run against a live environment");
         return Task.CompletedTask;
-    }
-
-    [Test]
-    public async Task UploadPage_ValidationMessage_ShownForMissingCompanyName()
-    {
-        // Arrange
-        await Page.GotoAsync(Url("/upload"));
-
-        // Act — click upload without entering a company name.
-        await Page.Locator("[data-testid='upload-submit']").ClickAsync();
-
-        // Assert — validation message should indicate company name is required.
-        var validation = Page.Locator("[data-testid='upload-validation']");
-        await Assertions.Expect(validation).ToBeVisibleAsync();
     }
 }

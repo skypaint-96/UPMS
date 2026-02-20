@@ -5,67 +5,89 @@ using System.Text.Json;
 using UPMS.Data;
 
 /// <summary>
-/// Parses uploaded snapshot files and persists extracted ticket and field change data.
-/// Supports CSV and JSON formats. Field names are mapped to canonical names via IItsmFieldMappingService.
+/// Parses uploaded flat-table CSV and JSON snapshot files and persists extracted ticket and
+/// field-change data. Field names are mapped to canonical names via <see cref="IItsmSourceService"/>.
+/// Company is read from the CSV/JSON row data (the column mapped to canonical "company") — it is
+/// not passed as a parameter.
 /// </summary>
 public class SnapshotIngestService : ISnapshotIngestService
 {
     private readonly TicketDataServiceInstance _dataService;
-    private readonly IItsmFieldMappingService _mappingService;
+    private readonly IItsmSourceService _sourceService;
 
     public SnapshotIngestService(
         TicketDataServiceInstance dataService,
-        IItsmFieldMappingService mappingService)
+        IItsmSourceService sourceService)
     {
-        _dataService = dataService ?? throw new ArgumentNullException(nameof(dataService));
-        _mappingService = mappingService ?? throw new ArgumentNullException(nameof(mappingService));
+        _dataService   = dataService   ?? throw new ArgumentNullException(nameof(dataService));
+        _sourceService = sourceService ?? throw new ArgumentNullException(nameof(sourceService));
     }
 
     /// <inheritdoc />
     public async Task<IngestResult> IngestCsvAsync(
-        Stream fileStream,
-        string itsmSource,
-        DateTime snapshotDate,
-        string uploadedBy,
-        string companyName,
+        Stream csvStream,
+        string itsmSourceName,
+        DateOnly snapshotDate,
         CancellationToken ct = default)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(itsmSourceName);
+
         try
         {
-            using var reader = new StreamReader(fileStream, Encoding.UTF8, leaveOpen: true);
-            var warnings = new List<string>();
+            using var reader  = new StreamReader(csvStream, Encoding.UTF8, leaveOpen: true);
+            var warnings      = new List<string>();
 
-            // Read header line
+            // ── 1. Read header row ──────────────────────────────────────────
             string? headerLine = await reader.ReadLineAsync(ct);
             if (string.IsNullOrWhiteSpace(headerLine))
             {
                 return IngestResult.Failure("CSV file is empty or has no header row.");
             }
 
-            // Parse headers case-insensitively
-            string[] headers = headerLine.Split(',');
-            int ticketKeyIndex = -1;
-            int fieldNameIndex = -1;
-            int fieldValueIndex = -1;
+            string[] headers = headerLine.Split(',').Select(h => h.Trim()).ToArray();
 
+            // ── 2. Validate required fields ─────────────────────────────────
+            IReadOnlyList<string> requiredFields = await _sourceService.GetRequiredFieldsAsync(itsmSourceName);
+            var missingRequired = requiredFields
+                .Where(req => !headers.Contains(req, StringComparer.Ordinal))
+                .ToList();
+
+            if (missingRequired.Count > 0)
+            {
+                return IngestResult.Failure(
+                    $"Missing required fields: {string.Join(", ", missingRequired)}");
+            }
+
+            // ── 3. Resolve canonical names for each header ──────────────────
+            // canonical[i] = canonical name for headers[i], or null if no mapping
+            string?[] canonicalHeaders = new string?[headers.Length];
             for (int i = 0; i < headers.Length; i++)
             {
-                string header = headers[i].Trim();
-                if (header.Equals("ticket_key", StringComparison.OrdinalIgnoreCase))
-                    ticketKeyIndex = i;
-                else if (header.Equals("field_name", StringComparison.OrdinalIgnoreCase))
-                    fieldNameIndex = i;
-                else if (header.Equals("field_value", StringComparison.OrdinalIgnoreCase))
-                    fieldValueIndex = i;
+                canonicalHeaders[i] = await _sourceService.GetCanonicalNameAsync(itsmSourceName, headers[i]);
             }
 
-            if (ticketKeyIndex < 0 || fieldNameIndex < 0 || fieldValueIndex < 0)
+            // Locate the column index for the canonical "ticket_key" and "company" fields
+            int ticketKeyColIndex = FindCanonicalIndex(canonicalHeaders, "ticket_key");
+            int companyColIndex   = FindCanonicalIndex(canonicalHeaders, "company");
+
+            if (ticketKeyColIndex < 0)
             {
-                return IngestResult.Failure("CSV is missing required columns: ticket_key, field_name, field_value");
+                return IngestResult.Failure(
+                    "No column is mapped to canonical name 'ticket_key' for this ITSM source. " +
+                    "Add a field mapping for ticket_key before uploading.");
             }
 
-            // Parse data rows
-            var rows = new List<(string TicketKey, string FieldName, string? FieldValue)>();
+            if (companyColIndex < 0)
+            {
+                return IngestResult.Failure(
+                    "No column is mapped to canonical name 'company' for this ITSM source. " +
+                    "Add a field mapping for company before uploading.");
+            }
+
+            // ── 4. Parse data rows ──────────────────────────────────────────
+            // Each row is a ticket; each column is a field.
+            // rows: list of (ticketKey, companyName, columns[])
+            var parsedRows = new List<(string TicketKey, string CompanyName, string[] Columns)>();
             int lineNumber = 1;
 
             string? line;
@@ -79,29 +101,37 @@ public class SnapshotIngestService : ISnapshotIngestService
                     continue;
                 }
 
-                string[] columns = line.Split(',');
+                string[] cols = line.Split(',').Select(c => c.Trim()).ToArray();
 
-                if (columns.Length <= Math.Max(ticketKeyIndex, Math.Max(fieldNameIndex, fieldValueIndex)))
+                if (cols.Length <= Math.Max(ticketKeyColIndex, companyColIndex))
                 {
                     warnings.Add($"Line {lineNumber}: insufficient columns, row skipped.");
                     continue;
                 }
 
-                string ticketKey = columns[ticketKeyIndex].Trim();
-                string fieldName = columns[fieldNameIndex].Trim();
-                string fieldValue = columns[fieldValueIndex].Trim();
+                string ticketKey  = cols[ticketKeyColIndex];
+                string companyName = cols[companyColIndex];
 
-                if (string.IsNullOrWhiteSpace(ticketKey) || string.IsNullOrWhiteSpace(fieldName))
+                if (string.IsNullOrWhiteSpace(ticketKey))
                 {
-                    warnings.Add($"Line {lineNumber}: empty ticket_key or field_name, row skipped.");
+                    warnings.Add($"Line {lineNumber}: empty ticket key, row skipped.");
                     continue;
                 }
 
-                rows.Add((ticketKey, fieldName, string.IsNullOrEmpty(fieldValue) ? null : fieldValue));
+                if (string.IsNullOrWhiteSpace(companyName))
+                {
+                    warnings.Add($"Line {lineNumber}: empty company value, row skipped.");
+                    continue;
+                }
+
+                parsedRows.Add((ticketKey, companyName, cols));
             }
 
-            return await PersistIngestDataAsync(
-                rows, itsmSource, snapshotDate, uploadedBy, companyName, warnings, ct);
+            // ── 5. Persist ──────────────────────────────────────────────────
+            return await PersistFlatTableRowsAsync(
+                parsedRows, headers, canonicalHeaders,
+                itsmSourceName, snapshotDate,
+                warnings, ct);
         }
         catch (Exception ex)
         {
@@ -111,69 +141,80 @@ public class SnapshotIngestService : ISnapshotIngestService
 
     /// <inheritdoc />
     public async Task<IngestResult> IngestJsonAsync(
-        Stream fileStream,
-        string itsmSource,
-        DateTime snapshotDate,
-        string uploadedBy,
-        string companyName,
+        Stream jsonStream,
+        string itsmSourceName,
+        DateOnly snapshotDate,
         CancellationToken ct = default)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(itsmSourceName);
+
         try
         {
-            var warnings = new List<string>();
-            var rows = new List<(string TicketKey, string FieldName, string? FieldValue)>();
+            var warnings  = new List<string>();
+            var parsedRows = new List<(string TicketKey, string CompanyName, Dictionary<string, string?> Fields)>();
 
-            using JsonDocument document = await JsonDocument.ParseAsync(fileStream, cancellationToken: ct);
+            using JsonDocument document = await JsonDocument.ParseAsync(jsonStream, cancellationToken: ct);
 
             if (document.RootElement.ValueKind != JsonValueKind.Array)
             {
                 return IngestResult.Failure("JSON root element must be an array.");
             }
 
+            // Validate required fields are available
+            IReadOnlyList<string> requiredFields = await _sourceService.GetRequiredFieldsAsync(itsmSourceName);
+
             int elementIndex = 0;
             foreach (JsonElement element in document.RootElement.EnumerateArray())
             {
                 elementIndex++;
 
-                if (!element.TryGetProperty("ticket_key", out JsonElement ticketKeyElement))
+                if (element.ValueKind != JsonValueKind.Object)
                 {
-                    warnings.Add($"Element {elementIndex}: missing 'ticket_key' property, skipped.");
+                    warnings.Add($"Element {elementIndex}: not a JSON object, skipped.");
                     continue;
                 }
 
-                string? ticketKey = ticketKeyElement.GetString();
+                // Collect all fields from the JSON object
+                var fields = new Dictionary<string, string?>(StringComparer.Ordinal);
+                foreach (JsonProperty prop in element.EnumerateObject())
+                {
+                    fields[prop.Name] = prop.Value.ValueKind == JsonValueKind.Null
+                        ? null
+                        : prop.Value.ToString();
+                }
+
+                // Validate required fields
+                var missingRequired = requiredFields
+                    .Where(req => !fields.ContainsKey(req))
+                    .ToList();
+
+                if (missingRequired.Count > 0)
+                {
+                    warnings.Add($"Element {elementIndex}: missing required fields: {string.Join(", ", missingRequired)}, skipped.");
+                    continue;
+                }
+
+                // Resolve ticket key: find the field whose canonical name is "ticket_key"
+                string? ticketKey  = await ResolveCanonicalFieldValueAsync(itsmSourceName, fields, "ticket_key");
+                string? companyName = await ResolveCanonicalFieldValueAsync(itsmSourceName, fields, "company");
+
                 if (string.IsNullOrWhiteSpace(ticketKey))
                 {
-                    warnings.Add($"Element {elementIndex}: empty ticket_key, skipped.");
+                    warnings.Add($"Element {elementIndex}: could not resolve ticket_key value, skipped.");
                     continue;
                 }
 
-                if (!element.TryGetProperty("fields", out JsonElement fieldsElement)
-                    || fieldsElement.ValueKind != JsonValueKind.Object)
+                if (string.IsNullOrWhiteSpace(companyName))
                 {
-                    warnings.Add($"Element {elementIndex} (ticket '{ticketKey}'): missing or invalid 'fields' object, skipped.");
+                    warnings.Add($"Element {elementIndex}: could not resolve company value, skipped.");
                     continue;
                 }
 
-                foreach (JsonProperty field in fieldsElement.EnumerateObject())
-                {
-                    string fieldName = field.Name;
-                    string? fieldValue = field.Value.ValueKind == JsonValueKind.Null
-                        ? null
-                        : field.Value.GetString();
-
-                    if (string.IsNullOrWhiteSpace(fieldName))
-                    {
-                        warnings.Add($"Element {elementIndex} (ticket '{ticketKey}'): empty field name, skipped.");
-                        continue;
-                    }
-
-                    rows.Add((ticketKey, fieldName, fieldValue));
-                }
+                parsedRows.Add((ticketKey, companyName, fields));
             }
 
-            return await PersistIngestDataAsync(
-                rows, itsmSource, snapshotDate, uploadedBy, companyName, warnings, ct);
+            return await PersistJsonRowsAsync(
+                parsedRows, itsmSourceName, snapshotDate, warnings, ct);
         }
         catch (JsonException ex)
         {
@@ -185,60 +226,158 @@ public class SnapshotIngestService : ISnapshotIngestService
         }
     }
 
-    /// <summary>
-    /// Persists parsed rows: creates a snapshot, registers tickets, and records all field changes.
-    /// </summary>
-    private async Task<IngestResult> PersistIngestDataAsync(
-        List<(string TicketKey, string FieldName, string? FieldValue)> rows,
-        string itsmSource,
-        DateTime snapshotDate,
-        string uploadedBy,
-        string companyName,
+    // ── Private helpers ────────────────────────────────────────────────────
+
+    private async Task<IngestResult> PersistFlatTableRowsAsync(
+        List<(string TicketKey, string CompanyName, string[] Columns)> rows,
+        string[] headers,
+        string?[] canonicalHeaders,
+        string itsmSourceName,
+        DateOnly snapshotDate,
         List<string> warnings,
         CancellationToken ct)
     {
-        _ = ct; // cancellation propagation to Dapper not supported; parameter reserved
+        _ = ct;
 
-        // Create the snapshot record
-        Guid snapshotId = await _dataService.CreateSnapshotAsync(
-            itsmSource, snapshotDate, uploadedBy);
-
-        // Collect distinct ticket keys
-        var distinctTickets = rows
-            .Select(r => r.TicketKey)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .Select(key => (TicketKey: key, CompanyName: companyName))
-            .ToList();
-
-        if (distinctTickets.Count > 0)
+        if (rows.Count == 0)
         {
-            await _dataService.AddTicketsToSnapshotAsync(snapshotId, distinctTickets);
+            return new IngestResult
+            {
+                Success = true,
+                SnapshotId = Guid.Empty,
+                TicketsIngested = 0,
+                FieldChangesRecorded = 0,
+                Warnings = warnings.AsReadOnly()
+            };
         }
 
-        // Record each field change with canonical field name lookup
+        DateTime snapshotDateTime = snapshotDate.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
+
+        // Create snapshot record
+        Guid snapshotId = await _dataService.CreateSnapshotAsync(
+            itsmSourceName, snapshotDateTime, uploadedBy: "web-upload");
+
+        // Collect distinct (ticketKey, companyName) pairs
+        var ticketEntries = rows
+            .Select(r => (TicketKey: r.TicketKey, CompanyName: r.CompanyName))
+            .Distinct()
+            .ToList();
+
+        await _dataService.AddTicketsToSnapshotAsync(snapshotId, ticketEntries);
+
+        // Record field changes
         int fieldChangesRecorded = 0;
-        foreach ((string ticketKey, string fieldName, string? fieldValue) in rows)
+        foreach (var (ticketKey, companyName, cols) in rows)
         {
-            string canonicalName = _mappingService.GetCanonicalName(itsmSource, fieldName);
+            for (int i = 0; i < headers.Length; i++)
+            {
+                string fieldName = canonicalHeaders[i] ?? headers[i];
+                string? fieldValue = i < cols.Length
+                    ? (string.IsNullOrEmpty(cols[i]) ? null : cols[i])
+                    : null;
 
-            await _dataService.RecordFieldChangeAsync(
-                companyName,
-                ticketKey,
-                canonicalName,
-                fieldValue,
-                snapshotDate,
-                snapshotId);
+                await _dataService.RecordFieldChangeAsync(
+                    companyName, ticketKey, fieldName, fieldValue,
+                    snapshotDateTime, snapshotId);
 
-            fieldChangesRecorded++;
+                fieldChangesRecorded++;
+            }
         }
 
         return new IngestResult
         {
             Success = true,
             SnapshotId = snapshotId,
-            TicketsIngested = distinctTickets.Count,
+            TicketsIngested = ticketEntries.Count,
             FieldChangesRecorded = fieldChangesRecorded,
             Warnings = warnings.AsReadOnly()
         };
+    }
+
+    private async Task<IngestResult> PersistJsonRowsAsync(
+        List<(string TicketKey, string CompanyName, Dictionary<string, string?> Fields)> rows,
+        string itsmSourceName,
+        DateOnly snapshotDate,
+        List<string> warnings,
+        CancellationToken ct)
+    {
+        _ = ct;
+
+        if (rows.Count == 0)
+        {
+            return new IngestResult
+            {
+                Success = true,
+                SnapshotId = Guid.Empty,
+                TicketsIngested = 0,
+                FieldChangesRecorded = 0,
+                Warnings = warnings.AsReadOnly()
+            };
+        }
+
+        DateTime snapshotDateTime = snapshotDate.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
+
+        Guid snapshotId = await _dataService.CreateSnapshotAsync(
+            itsmSourceName, snapshotDateTime, uploadedBy: "web-upload");
+
+        var ticketEntries = rows
+            .Select(r => (TicketKey: r.TicketKey, CompanyName: r.CompanyName))
+            .Distinct()
+            .ToList();
+
+        await _dataService.AddTicketsToSnapshotAsync(snapshotId, ticketEntries);
+
+        int fieldChangesRecorded = 0;
+        foreach (var (ticketKey, companyName, fields) in rows)
+        {
+            foreach (var (sourceFieldName, fieldValue) in fields)
+            {
+                string? canonical = await _sourceService.GetCanonicalNameAsync(itsmSourceName, sourceFieldName);
+                string fieldName = canonical ?? sourceFieldName;
+
+                await _dataService.RecordFieldChangeAsync(
+                    companyName, ticketKey, fieldName, fieldValue,
+                    snapshotDateTime, snapshotId);
+
+                fieldChangesRecorded++;
+            }
+        }
+
+        return new IngestResult
+        {
+            Success = true,
+            SnapshotId = snapshotId,
+            TicketsIngested = ticketEntries.Count,
+            FieldChangesRecorded = fieldChangesRecorded,
+            Warnings = warnings.AsReadOnly()
+        };
+    }
+
+    private static int FindCanonicalIndex(string?[] canonicalHeaders, string canonicalName)
+    {
+        for (int i = 0; i < canonicalHeaders.Length; i++)
+        {
+            if (string.Equals(canonicalHeaders[i], canonicalName, StringComparison.Ordinal))
+                return i;
+        }
+        return -1;
+    }
+
+    /// <summary>
+    /// Finds the source field name whose canonical maps to <paramref name="targetCanonical"/>
+    /// and returns its value from <paramref name="fields"/>.
+    /// </summary>
+    private async Task<string?> ResolveCanonicalFieldValueAsync(
+        string sourceName,
+        Dictionary<string, string?> fields,
+        string targetCanonical)
+    {
+        foreach (var (sourceField, value) in fields)
+        {
+            string? canonical = await _sourceService.GetCanonicalNameAsync(sourceName, sourceField);
+            if (string.Equals(canonical, targetCanonical, StringComparison.Ordinal))
+                return value;
+        }
+        return null;
     }
 }

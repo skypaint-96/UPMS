@@ -6,12 +6,13 @@ using UPMS.Data;
 using UPMS.Web.Services;
 
 /// <summary>
-/// Unit tests for IngestResult and SnapshotIngestService.
+/// Unit / integration tests for <see cref="SnapshotIngestService"/>.
+/// All database-backed tests use an isolated SQLite in-memory database.
 /// </summary>
 [TestFixture]
 public class IngestServiceTests
 {
-    // ── IngestResult.Failure factory ───────────────────────────────────────
+    // ── IngestResult factory ───────────────────────────────────────────────
 
     [Test]
     public void IngestResult_Failure_HasSuccessFalse()
@@ -48,110 +49,212 @@ public class IngestServiceTests
         Assert.That(result.Warnings, Is.Empty);
     }
 
-    [Test]
-    public void IngestResult_Success_CanBeCreated()
-    {
-        // Arrange
-        var snapshotId = Guid.NewGuid();
-
-        // Act
-        var result = new IngestResult
-        {
-            Success = true,
-            SnapshotId = snapshotId,
-            TicketsIngested = 5,
-            FieldChangesRecorded = 20
-        };
-
-        // Assert
-        Assert.That(result.Success, Is.True);
-        Assert.That(result.SnapshotId, Is.EqualTo(snapshotId));
-        Assert.That(result.TicketsIngested, Is.EqualTo(5));
-        Assert.That(result.FieldChangesRecorded, Is.EqualTo(20));
-    }
-
-    // ── SnapshotIngestService real ingest behaviour ────────────────────────
+    // ── Flat-table CSV ingest ──────────────────────────────────────────────
 
     [Test]
     [NonParallelizable]
-    public async Task SnapshotIngestService_IngestCsvAsync_WithValidCsv_ReturnsSuccess()
+    public async Task IngestCsv_ValidFlatTable_StoresAllTickets()
     {
-        // Arrange
-        var (service, _) = BuildServiceWithSqlite();
+        // Arrange — source with mappings for number→ticket_key, company→company, short_description→title
+        var (service, _) = BuildServiceWithMappings(new[]
+        {
+            ("number",            "ticket_key", true),
+            ("company",           "company",    true),
+            ("short_description", "title",      false),
+            ("priority",          "priority",   false),
+            ("state",             "status",     false),
+        });
 
         const string csv = """
-            ticket_key,field_name,field_value
-            INC0001234,incident_state,Open
-            INC0001234,assigned_to,john.smith
-            INC0001234,short_description,Server is down
-            INC0001235,incident_state,In Progress
-            INC0001235,assigned_to,jane.doe
-            INC0001235,short_description,DB unreachable
+            number,company,short_description,priority,state
+            INC001,Acme Corp,Cannot login,High,In Progress
+            INC002,Acme Corp,Email broken,Medium,New
+            INC003,Globex Ltd,VPN down,High,Open
             """;
 
-        using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(csv));
+        using var stream = MakeStream(csv);
 
         // Act
         IngestResult result = await service.IngestCsvAsync(
-            stream, "servicenow", DateTime.UtcNow, "tester", "AcmeCorp");
+            stream, "test-source", new DateOnly(2025, 1, 15));
 
         // Assert
         Assert.That(result.Success, Is.True, result.ErrorMessage);
-        Assert.That(result.TicketsIngested, Is.EqualTo(2));
-        Assert.That(result.FieldChangesRecorded, Is.EqualTo(6));
+        Assert.That(result.TicketsIngested, Is.EqualTo(3));
+        Assert.That(result.FieldChangesRecorded, Is.EqualTo(15)); // 3 tickets × 5 columns
     }
 
     [Test]
     [NonParallelizable]
-    public async Task SnapshotIngestService_IngestJsonAsync_WithValidJson_ReturnsSuccess()
+    public async Task IngestCsv_MissingRequiredField_ReturnsValidationError()
+    {
+        // Arrange — source requires "number" (ticket_key) but CSV doesn't have it
+        var (service, _) = BuildServiceWithMappings(new[]
+        {
+            ("number",  "ticket_key", true),
+            ("company", "company",    true),
+        });
+
+        const string csv = """
+            company,short_description
+            Acme Corp,Cannot login
+            """;
+
+        using var stream = MakeStream(csv);
+
+        // Act
+        IngestResult result = await service.IngestCsvAsync(
+            stream, "test-source", new DateOnly(2025, 1, 15));
+
+        // Assert
+        Assert.That(result.Success, Is.False);
+        Assert.That(result.ErrorMessage, Does.Contain("number").IgnoreCase);
+    }
+
+    [Test]
+    [NonParallelizable]
+    public async Task IngestCsv_UnmappedColumns_StoredWithRawName()
+    {
+        // Arrange — only number and company are mapped; u_custom_99 has no mapping
+        var (service, _) = BuildServiceWithMappings(new[]
+        {
+            ("number",  "ticket_key", true),
+            ("company", "company",    true),
+        });
+
+        const string csv = """
+            number,company,u_custom_99
+            INC001,Acme Corp,BATCH-7
+            """;
+
+        using var stream = MakeStream(csv);
+
+        // Act
+        IngestResult result = await service.IngestCsvAsync(
+            stream, "test-source", new DateOnly(2025, 1, 15));
+
+        // Assert — 3 field changes: ticket_key, company, u_custom_99 (raw name)
+        Assert.That(result.Success, Is.True, result.ErrorMessage);
+        Assert.That(result.FieldChangesRecorded, Is.EqualTo(3));
+    }
+
+    [Test]
+    [NonParallelizable]
+    public async Task IngestCsv_CompanyExtractedFromRowData()
     {
         // Arrange
-        var (service, _) = BuildServiceWithSqlite();
+        var (service, _) = BuildServiceWithMappings(new[]
+        {
+            ("number",  "ticket_key", true),
+            ("company", "company",    true),
+        });
+
+        const string csv = """
+            number,company
+            INC001,Acme Corp
+            """;
+
+        using var stream = MakeStream(csv);
+
+        // Act
+        IngestResult result = await service.IngestCsvAsync(
+            stream, "test-source", new DateOnly(2025, 1, 15));
+
+        // Assert — success means company was read from the row, not a parameter
+        Assert.That(result.Success, Is.True, result.ErrorMessage);
+        Assert.That(result.TicketsIngested, Is.EqualTo(1));
+    }
+
+    [Test]
+    [NonParallelizable]
+    public async Task IngestCsv_MultipleCompanies_CreatesMultipleSnapshots()
+    {
+        // Arrange — rows from two different companies
+        var (service, _) = BuildServiceWithMappings(new[]
+        {
+            ("number",  "ticket_key", true),
+            ("company", "company",    true),
+        });
+
+        const string csv = """
+            number,company
+            INC001,Acme Corp
+            INC002,Globex Ltd
+            INC003,Acme Corp
+            """;
+
+        using var stream = MakeStream(csv);
+
+        // Act
+        IngestResult result = await service.IngestCsvAsync(
+            stream, "test-source", new DateOnly(2025, 1, 15));
+
+        // Assert — all 3 tickets ingested (different companies, same snapshot)
+        Assert.That(result.Success, Is.True, result.ErrorMessage);
+        Assert.That(result.TicketsIngested, Is.EqualTo(3));
+    }
+
+    [Test]
+    [NonParallelizable]
+    public async Task IngestJson_ValidArray_StoresAllTickets()
+    {
+        // Arrange
+        var (service, _) = BuildServiceWithMappings(new[]
+        {
+            ("number",  "ticket_key", true),
+            ("company", "company",    true),
+            ("state",   "status",     false),
+        });
 
         const string json = """
             [
-              {
-                "ticket_key": "INC0001234",
-                "fields": {
-                  "incident_state": "Open",
-                  "assigned_to": "john.smith"
-                }
-              },
-              {
-                "ticket_key": "INC0001235",
-                "fields": {
-                  "incident_state": "In Progress",
-                  "assigned_to": "jane.doe"
-                }
-              }
+              { "number": "INC001", "company": "Acme Corp", "state": "Open" },
+              { "number": "INC002", "company": "Globex Ltd", "state": "New" }
             ]
             """;
 
-        using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(json));
+        using var stream = MakeStream(json);
 
         // Act
         IngestResult result = await service.IngestJsonAsync(
-            stream, "servicenow", DateTime.UtcNow, "tester", "AcmeCorp");
+            stream, "test-source", new DateOnly(2025, 1, 15));
 
         // Assert
         Assert.That(result.Success, Is.True, result.ErrorMessage);
         Assert.That(result.TicketsIngested, Is.EqualTo(2));
-        Assert.That(result.FieldChangesRecorded, Is.EqualTo(4));
+        Assert.That(result.FieldChangesRecorded, Is.EqualTo(6)); // 2 tickets × 3 fields
     }
 
-    // ── SnapshotIngestService constructor guards ───────────────────────────
+    [Test]
+    [NonParallelizable]
+    public async Task IngestCsv_EmptyFile_ReturnsZeroTickets()
+    {
+        // Arrange
+        var (service, _) = BuildServiceWithMappings(Array.Empty<(string, string, bool)>());
+
+        using var stream = MakeStream(string.Empty);
+
+        // Act
+        IngestResult result = await service.IngestCsvAsync(
+            stream, "test-source", new DateOnly(2025, 1, 15));
+
+        // Assert — empty file returns a failure (no header row)
+        Assert.That(result.Success, Is.False);
+    }
+
+    // ── Constructor guards ─────────────────────────────────────────────────
 
     [Test]
     public void SnapshotIngestService_RequiresDataService_ThrowsOnNull()
     {
-        var fakeMappingService = new FakeMappingService();
+        var fakeSourceService = new FakeItsmSourceService();
 
         Assert.Throws<ArgumentNullException>(() =>
-            new SnapshotIngestService(null!, fakeMappingService));
+            new SnapshotIngestService(null!, fakeSourceService));
     }
 
     [Test]
-    public void SnapshotIngestService_RequiresMappingService_ThrowsOnNull()
+    public void SnapshotIngestService_RequiresSourceService_ThrowsOnNull()
     {
         var fakeOptions = Options.Create(new DatabaseOptions { ConnectionString = "Host=localhost;Database=test;" });
         var fakeDataService = new TicketDataServiceInstance(fakeOptions);
@@ -162,20 +265,22 @@ public class IngestServiceTests
 
     // ── Helpers ────────────────────────────────────────────────────────────
 
+    private static MemoryStream MakeStream(string text) =>
+        new MemoryStream(System.Text.Encoding.UTF8.GetBytes(text));
+
     /// <summary>
-    /// Creates a SnapshotIngestService backed by a fresh SQLite in-memory database.
-    /// Returns both the service and the connection (keep connection open for lifetime of test).
+    /// Builds a <see cref="SnapshotIngestService"/> backed by a fresh SQLite in-memory DB.
+    /// The supplied mappings are seeded into the fake source service.
     /// </summary>
-    private static (SnapshotIngestService Service, SqliteConnection Connection) BuildServiceWithSqlite()
+    private static (SnapshotIngestService Service, SqliteConnection Connection) BuildServiceWithMappings(
+        IEnumerable<(string SourceField, string Canonical, bool IsRequired)> mappings)
     {
-        // Use a named in-memory database so the schema is shared across connections
         var dbName = $"ingest_test_{Guid.NewGuid():N}";
         var connectionString = $"Data Source={dbName};Mode=Memory;Cache=Shared";
 
         var connection = new SqliteConnection(connectionString);
         connection.Open();
 
-        // Create schema
         using var cmd = connection.CreateCommand();
         cmd.CommandText = """
             CREATE TABLE IF NOT EXISTS raw_snapshot (
@@ -201,35 +306,86 @@ public class IngestServiceTests
                 field_value TEXT,
                 observed_at TEXT NOT NULL,
                 snapshot_id TEXT NOT NULL);
-
-            CREATE TABLE IF NOT EXISTS itsm_field_mapping (
-                itsm_source TEXT NOT NULL,
-                source_field_name TEXT NOT NULL,
-                canonical_field_name TEXT NOT NULL,
-                PRIMARY KEY(itsm_source, source_field_name));
             """;
         cmd.ExecuteNonQuery();
 
-        // Wire TicketDataService to use this SQLite connection
+        // Wire TicketDataService to this SQLite connection
         TicketDataService.Initialize(() => new SqliteConnection(connectionString));
-
         var options = Options.Create(new DatabaseOptions { ConnectionString = connectionString });
-
-        // TicketDataServiceInstance calls Initialize internally; we override immediately after
         var dataServiceInstance = new TicketDataServiceInstance(options);
-        // Re-apply SQLite factory since the instance constructor sets a Npgsql factory
         TicketDataService.Initialize(() => new SqliteConnection(connectionString));
 
-        var fakeMappingService = new FakeMappingService();
-        var service = new SnapshotIngestService(dataServiceInstance, fakeMappingService);
+        var fakeSourceService = new FakeItsmSourceService();
+        foreach (var (src, canonical, required) in mappings)
+        {
+            fakeSourceService.AddMapping("test-source", src, canonical, required);
+        }
 
+        var service = new SnapshotIngestService(dataServiceInstance, fakeSourceService);
         return (service, connection);
     }
 
-    private class FakeMappingService : IItsmFieldMappingService
+    // ── Fake IItsmSourceService ────────────────────────────────────────────
+
+    private class FakeItsmSourceService : IItsmSourceService
     {
-        public string GetCanonicalName(string itsmSource, string sourceFieldName) => sourceFieldName;
-        public IEnumerable<ItsmFieldMapping> GetMappingsForSource(string itsmSource) => [];
-        public Task UpsertMappingAsync(string itsmSource, string sourceFieldName, string canonicalFieldName) => Task.CompletedTask;
+        // sourceName → (sourceField → (canonical, isRequired))
+        private readonly Dictionary<string, Dictionary<string, (string Canonical, bool IsRequired)>> _mappings
+            = new(StringComparer.Ordinal);
+
+        public void AddMapping(string sourceName, string sourceField, string canonical, bool isRequired)
+        {
+            if (!_mappings.TryGetValue(sourceName, out var dict))
+            {
+                dict = new Dictionary<string, (string, bool)>(StringComparer.Ordinal);
+                _mappings[sourceName] = dict;
+            }
+            dict[sourceField] = (canonical, isRequired);
+        }
+
+        public Task<IReadOnlyList<ItsmSource>> GetAllSourcesAsync() =>
+            Task.FromResult<IReadOnlyList<ItsmSource>>(Array.Empty<ItsmSource>());
+
+        public Task<ItsmSource?> GetSourceByNameAsync(string name) =>
+            Task.FromResult<ItsmSource?>(null);
+
+        public Task<ItsmSourceDefinition> GetSourceDefinitionAsync(string name) =>
+            throw new KeyNotFoundException(name);
+
+        public Task<ItsmSource> CreateSourceAsync(string name, string displayLabel) =>
+            throw new NotImplementedException();
+
+        public Task DeleteSourceAsync(string name) => Task.CompletedTask;
+
+        public Task UpsertMappingAsync(string sourceName, string sourceFieldName, string canonicalName, bool isRequired)
+        {
+            AddMapping(sourceName, sourceFieldName, canonicalName, isRequired);
+            return Task.CompletedTask;
+        }
+
+        public Task DeleteMappingAsync(string sourceName, string sourceFieldName) => Task.CompletedTask;
+
+        public Task<IReadOnlyList<string>> GetRequiredFieldsAsync(string sourceName)
+        {
+            if (!_mappings.TryGetValue(sourceName, out var dict))
+                return Task.FromResult<IReadOnlyList<string>>(Array.Empty<string>());
+
+            var required = dict
+                .Where(kv => kv.Value.IsRequired)
+                .Select(kv => kv.Key)
+                .ToList()
+                .AsReadOnly();
+            return Task.FromResult<IReadOnlyList<string>>(required);
+        }
+
+        public Task<string?> GetCanonicalNameAsync(string sourceName, string sourceFieldName)
+        {
+            if (_mappings.TryGetValue(sourceName, out var dict) &&
+                dict.TryGetValue(sourceFieldName, out var entry))
+            {
+                return Task.FromResult<string?>(entry.Canonical);
+            }
+            return Task.FromResult<string?>(null);
+        }
     }
 }

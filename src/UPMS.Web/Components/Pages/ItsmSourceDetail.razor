@@ -1,0 +1,192 @@
+@page "/itsm-sources/{SourceName}"
+@rendermode InteractiveServer
+
+@using UPMS.Data
+
+@inject IItsmSourceService ItsmSourceService
+
+<PageTitle>@(source?.DisplayLabel ?? SourceName) - ITSM Sources - UPMS</PageTitle>
+
+<a href="/itsm-sources" data-testid="back-to-sources">← Back to ITSM Sources</a>
+
+@if (source is null)
+{
+    <p data-testid="source-not-found">ITSM source '@SourceName' was not found.</p>
+}
+else
+{
+    <h1 data-testid="source-display-name">@source.DisplayLabel</h1>
+    <p><strong>Name (slug):</strong> <code data-testid="source-slug">@source.Name</code></p>
+
+    <h2>Field Mappings</h2>
+
+    <div data-testid="mappings-table">
+        @if (mappings.Count == 0)
+        {
+            <p data-testid="no-mappings-message">No field mappings defined for this source.</p>
+        }
+        else
+        {
+            <table>
+                <thead>
+                    <tr>
+                        <th>Source Field Name</th>
+                        <th>Canonical Name</th>
+                        <th>Required</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var mapping in mappings)
+                    {
+                        <tr data-testid="mapping-row-@mapping.SourceFieldName">
+                            <td>@mapping.SourceFieldName</td>
+                            <td>@mapping.CanonicalFieldName</td>
+                            <td>
+                                @if (mapping.IsRequired)
+                                {
+                                    <span data-testid="required-badge-@mapping.SourceFieldName">✓</span>
+                                }
+                            </td>
+                            <td>
+                                <button data-testid="delete-mapping-@mapping.SourceFieldName"
+                                        @onclick="() => DeleteMappingAsync(mapping.SourceFieldName)">
+                                    Delete
+                                </button>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </div>
+
+    <hr />
+
+    <h2>Add Field Mapping</h2>
+
+    @if (!string.IsNullOrEmpty(addMappingError))
+    {
+        <p data-testid="add-mapping-error" style="color:red">@addMappingError</p>
+    }
+
+    <div>
+        <label for="source-field-name">Source Field Name</label>
+        <input id="source-field-name"
+               data-testid="add-mapping-source-field"
+               placeholder="e.g. short_description"
+               @bind="newSourceField" />
+    </div>
+
+    <div>
+        <label for="canonical-name">Canonical Name</label>
+        <select id="canonical-name"
+                data-testid="add-mapping-canonical-name"
+                @bind="newCanonicalName">
+            <option value="">-- Select or type a canonical name --</option>
+            @foreach (var name in CanonicalNames)
+            {
+                <option value="@name">@name</option>
+            }
+        </select>
+    </div>
+
+    <div>
+        <label>
+            <input type="checkbox"
+                   data-testid="add-mapping-is-required"
+                   @bind="newIsRequired" />
+            Required
+        </label>
+    </div>
+
+    <button data-testid="add-mapping-submit" @onclick="AddMappingAsync">Add Mapping</button>
+}
+
+@code {
+    [Parameter]
+    public string SourceName { get; set; } = string.Empty;
+
+    private ItsmSource? source;
+    private List<ItsmFieldMapping> mappings = [];
+    private string newSourceField  = string.Empty;
+    private string newCanonicalName = string.Empty;
+    private bool   newIsRequired;
+    private string? addMappingError;
+
+    private static readonly string[] CanonicalNames =
+    [
+        "ticket_key",
+        "company",
+        "title",
+        "description",
+        "priority",
+        "status",
+        "created_date",
+        "updated_date",
+        "assigned_to",
+        "category",
+    ];
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        source = await ItsmSourceService.GetSourceByNameAsync(SourceName);
+        if (source is not null)
+        {
+            var definition = await ItsmSourceService.GetSourceDefinitionAsync(SourceName);
+            mappings = definition.Mappings.ToList();
+        }
+    }
+
+    private async Task AddMappingAsync()
+    {
+        addMappingError = null;
+
+        if (string.IsNullOrWhiteSpace(newSourceField))
+        {
+            addMappingError = "Source field name is required.";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(newCanonicalName))
+        {
+            addMappingError = "Canonical name is required.";
+            return;
+        }
+
+        try
+        {
+            await ItsmSourceService.UpsertMappingAsync(
+                SourceName,
+                newSourceField.Trim(),
+                newCanonicalName.Trim(),
+                newIsRequired);
+
+            newSourceField   = string.Empty;
+            newCanonicalName = string.Empty;
+            newIsRequired    = false;
+
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            addMappingError = $"Failed to add mapping: {ex.Message}";
+        }
+    }
+
+    private async Task DeleteMappingAsync(string sourceFieldName)
+    {
+        await ItsmSourceService.DeleteMappingAsync(SourceName, sourceFieldName);
+        await LoadAsync();
+    }
+}

@@ -59,56 +59,118 @@ This document defines the implementation stages for UPMS. Each stage has a clear
 
 ---
 
-## Stage 3 — Canonical Field Mapping
+## Stage 3 — ITSM Source Definition and Canonical Field Mapping
 
 **Status: 🔲 NOT STARTED**
 
-**Goal:** Implement the ITSM source field name normalisation layer. Different ITSM sources use different field names for semantically identical fields. This stage introduces a reference mapping table and a mapping service so that all field data is stored using consistent canonical field names regardless of source.
+**Goal:** Introduce the two-table ITSM source definition model. An ITSM source is a **named instance** of a ticketing tool (not just a tool type). Each source has a set of field mappings (source column name → canonical name) and a set of required field names used for upload validation. This stage replaces the existing single-table `itsm_field_mapping` design with the correct two-table model.
+
+### Design
+
+The new schema consists of:
+
+**`itsm_source` table** — one row per defined ITSM source instance:
+- `id` (UUID PK)
+- `name` (VARCHAR UNIQUE) — slug identifier used in snapshot records (e.g. `servicenow-client-a`)
+- `display_label` (VARCHAR) — human-readable label shown in the UI
+
+**`itsm_field_mapping` table** — revised to be a child of `itsm_source`:
+- `itsm_source` (VARCHAR FK → `itsm_source.name`) — replaces the free-text ITSM source column
+- `source_field_name` (VARCHAR) — the column name as it appears in the CSV export
+- `canonical_field_name` (VARCHAR) — the normalised canonical name used throughout UPMS
+- `is_required` (BOOLEAN DEFAULT false) — if true, this column must be present in every uploaded CSV for this source
+
+The existing [`sql/migrations/003_itsm_field_mapping.sql`](../sql/migrations/003_itsm_field_mapping.sql) (which created a simpler version of `itsm_field_mapping` without `is_required` or the parent `itsm_source` table) must be superseded by a new migration that introduces the correct two-table design.
 
 ### Acceptance Criteria
-- A new `itsm_field_mapping` table exists with columns `itsm_source`, `source_field_name`, `canonical_field_name`.
-- A migration script creates and seeds the table with known mappings for supported ITSM sources (e.g. ServiceNow, Jira).
-- A mapping service in `UPMS.Data` can look up the canonical name for a given source and source field name.
-- If no mapping exists, the source field name is used as-is (graceful fallback).
-- The mapping service has unit tests covering lookup, fallback, and multi-source scenarios.
+- A new `itsm_source` table exists with `id`, `name`, and `display_label` columns.
+- The `itsm_field_mapping` table has `itsm_source` (FK → `itsm_source.name`), `source_field_name`, `canonical_field_name`, and `is_required` columns.
+- The primary key on `itsm_field_mapping` is `(itsm_source, source_field_name)`.
+- `IItsmFieldMappingService.GetCanonicalName` returns the canonical name for a given source and source field name, falling back to the source field name if no mapping exists.
+- `IItsmFieldMappingService.GetMappingsForSource` returns all mappings for a given ITSM source.
+- `IItsmFieldMappingService.UpsertMappingAsync` adds or updates a mapping.
+- A method exists to retrieve required field names for a given ITSM source (for upload validation).
+- The mapping service has integration tests covering lookup, fallback, required-field retrieval, and multi-source scenarios.
 
 ### Key Files / Components
 | File | Description |
 |------|-------------|
-| `sql/migrations/003_itsm_field_mapping.sql` | Creates and seeds the `itsm_field_mapping` table |
-| `src/UPMS.Data/ItsmFieldMappingService.cs` | Service for looking up canonical field names |
-| `src/UPMS.Data/ItsmFieldMapping.cs` | Data type representing a single mapping row |
-| `tests/UPMS.Data.Tests/ItsmFieldMappingServiceTests.cs` | Unit/integration tests for the mapping service |
+| `sql/migrations/004_itsm_source_definition.sql` | New migration: creates `itsm_source` table and revises `itsm_field_mapping` with `is_required` and FK |
+| [`src/UPMS.Data/IItsmFieldMappingService.cs`](../src/UPMS.Data/IItsmFieldMappingService.cs) | Interface — extend to expose required-field retrieval |
+| [`src/UPMS.Data/ItsmFieldMappingService.cs`](../src/UPMS.Data/ItsmFieldMappingService.cs) | Implementation — update queries to use new schema |
+| [`src/UPMS.Data/ItsmFieldMapping.cs`](../src/UPMS.Data/ItsmFieldMapping.cs) | Data type — add `IsRequired` property |
+| `src/UPMS.Data/ItsmSource.cs` | New data type representing a row from the `itsm_source` table |
+| [`tests/UPMS.Data.Tests/ItsmFieldMappingServiceTests.cs`](../tests/UPMS.Data.Tests/ItsmFieldMappingServiceTests.cs) | Update/extend tests for the new schema |
 
 ---
 
-## Stage 4 — File Ingest / Upload Parsing
+## Stage 4 — ITSM Source Management UI
 
-**Status: 🔲 NOT STARTED** *(Partial: snapshot record creation exists)*
+**Status: 🔲 NOT STARTED**
 
-**Goal:** Complete the upload pipeline so that uploading a file actually parses its contents and populates `snapshot_ticket` and `field_change` records. Currently the Upload page creates a `raw_snapshot` record but does not read or parse the uploaded file.
+**Goal:** Provide a web page in UPMS where users can view, add, edit, and delete ITSM source definitions and their field mappings. This is the administrative interface for the data introduced in Stage 3.
 
 ### Acceptance Criteria
-- CSV and/or JSON snapshot files can be uploaded via the Upload page.
-- The parser reads each row/record and extracts ticket keys and field values.
-- Source field names are looked up in `itsm_field_mapping` and translated to canonical names before being stored (depends on Stage 3).
-- A `snapshot_ticket` record is inserted for each ticket found.
-- A `field_change` record is inserted for each field value in each ticket.
-- Re-uploading the same snapshot does not corrupt existing data (idempotent or guarded).
-- The Upload page displays a summary of what was ingested (tickets found, field changes recorded).
+- A new page at `/itsm-sources` lists all defined ITSM sources (name and display label).
+- Users can add a new ITSM source by entering a name and display label.
+- Users can edit the field mappings for an ITSM source: add, update, or remove mappings (source column name → canonical name, and whether the field is required).
+- Users can delete an ITSM source (and its associated field mappings).
+- The ITSM source name (slug) is validated to be unique and non-empty.
+- The Upload page's ITSM source dropdown is populated from the `itsm_source` table, not hardcoded values.
+- Navigation includes a link to the ITSM Source Management page.
 
 ### Key Files / Components
 | File | Description |
 |------|-------------|
-| [`src/UPMS.Web/Components/Pages/Upload.razor`](../src/UPMS.Web/Components/Pages/Upload.razor) | Upload page — needs file parsing wired in |
-| `src/UPMS.Web/Services/SnapshotIngestService.cs` | New: orchestrates parsing and DB writes |
-| `src/UPMS.Web/Parsers/CsvSnapshotParser.cs` | New: CSV file parser |
-| `src/UPMS.Web/Parsers/JsonSnapshotParser.cs` | New: JSON file parser (if supported) |
+| `src/UPMS.Web/Components/Pages/ItsmSources.razor` | New page: list and manage ITSM sources |
+| [`src/UPMS.Web/Components/Pages/Upload.razor`](../src/UPMS.Web/Components/Pages/Upload.razor) | Update ITSM source dropdown to load from database |
+| [`src/UPMS.Web/Components/Layout/MainLayout.razor`](../src/UPMS.Web/Components/Layout/MainLayout.razor) | Add navigation link to ITSM Source Management |
+| [`src/UPMS.Data/IItsmFieldMappingService.cs`](../src/UPMS.Data/IItsmFieldMappingService.cs) | Consumed by the management page for all CRUD operations |
+
+---
+
+## Stage 5 — Flat-Table CSV Ingest
+
+**Status: 🔲 NOT STARTED** *(Partial: snapshot record creation and service interface exist)*
+
+**Goal:** Complete the upload pipeline to parse flat-table CSV snapshot files and populate `snapshot_ticket` and `field_change` records. The CSV format is: row 1 = header (source column names), each subsequent row = one ticket in its current state. Company comes from the ticket data, not from the upload form.
+
+### CSV Format
+
+```
+number,company,short_description,priority,state
+INC0001234,Acme Corp,Cannot login to VPN,High,In Progress
+INC0001235,Globex Ltd,Email not syncing,Medium,New
+```
+
+Row 1 is the header. Each subsequent row is one ticket. The column that provides the company name is identified by the field mapping for canonical name `company` on the selected ITSM source.
+
+### Acceptance Criteria
+- CSV files can be uploaded via the Upload page.
+- Row 1 is treated as the header row (source column names from the ITSM export).
+- Required fields (as defined in `itsm_field_mapping.is_required` for the selected source) are validated against the header row before any data is written; missing required fields cause a validation error listing which fields are absent.
+- The company value for each ticket is read from the column mapped to canonical name `company` for the selected ITSM source.
+- Company is NOT collected as a separate input on the Upload page.
+- For each data row, a `snapshot_ticket` record and one `field_change` record per column are inserted.
+- Mapped columns are stored under their canonical name; unmapped columns are stored under their raw source column name.
+- Re-uploading the same snapshot does not corrupt existing data (idempotent or guarded).
+- The Upload page displays a summary: tickets ingested, field changes recorded, and any warnings.
+- [`IngestResult`](../src/UPMS.Web/Services/IngestResult.cs) is returned from [`ISnapshotIngestService.IngestCsvAsync`](../src/UPMS.Web/Services/ISnapshotIngestService.cs) with `Success`, `TicketsIngested`, `FieldChangesRecorded`, and `Warnings` populated.
+
+### Key Files / Components
+| File | Description |
+|------|-------------|
+| [`src/UPMS.Web/Components/Pages/Upload.razor`](../src/UPMS.Web/Components/Pages/Upload.razor) | Remove company name input; add required-field validation feedback |
+| [`src/UPMS.Web/Services/ISnapshotIngestService.cs`](../src/UPMS.Web/Services/ISnapshotIngestService.cs) | Interface — `IngestCsvAsync` signature already defined |
+| `src/UPMS.Web/Services/SnapshotIngestService.cs` | Implement flat-table CSV parsing and DB writes |
+| `src/UPMS.Web/Parsers/CsvSnapshotParser.cs` | New: flat-table CSV parser |
+| [`src/UPMS.Web/Services/IngestResult.cs`](../src/UPMS.Web/Services/IngestResult.cs) | Return type — already defined |
+| [`tests/UPMS.Web.Tests/IngestServiceTests.cs`](../tests/UPMS.Web.Tests/IngestServiceTests.cs) | Tests for ingest logic |
 | [`tests/UPMS.Web.Tests/UploadPageTests.cs`](../tests/UPMS.Web.Tests/UploadPageTests.cs) | E2E tests for upload flow |
 
 ---
 
-## Stage 5 — Reporting Plugin System Foundation
+## Stage 6 — Reporting Plugin System Foundation
 
 **Status: 🔲 NOT STARTED**
 
@@ -136,7 +198,7 @@ This document defines the implementation stages for UPMS. Each stage has a clear
 
 ---
 
-## Stage 6 — First Reporting Plugin: PowerPoint Pack
+## Stage 7 — First Reporting Plugin: PowerPoint Pack
 
 **Status: 🔲 NOT STARTED**
 
@@ -159,7 +221,7 @@ This document defines the implementation stages for UPMS. Each stage has a clear
 
 ---
 
-## Stage 7 — Second Reporting Plugin: Email Notification
+## Stage 8 — Second Reporting Plugin: Email Notification
 
 **Status: 🔲 NOT STARTED**
 
@@ -183,15 +245,15 @@ This document defines the implementation stages for UPMS. Each stage has a clear
 
 ---
 
-## Stage 8 — Validation, Polish, and Performance
+## Stage 9 — Validation, Polish, and Performance
 
 **Status: 🔲 NOT STARTED**
 
 **Goal:** Address known gaps, hardcoded values, and quality issues across the application to bring it to a production-ready state.
 
 ### Acceptance Criteria
-- The `itsmSources` dropdown on the Snapshots page is populated from the database, not hardcoded.
-- Company names / identifiers are not hardcoded in any page.
+- The `itsmSources` dropdown on the Snapshots page is populated from the `itsm_source` table, not hardcoded.
+- The Upload page company name input has been removed; company is read from CSV data.
 - N+1 query patterns are identified and resolved (batch queries where applicable).
 - Stored procedures are used for all bulk read operations where they exist.
 - All `UPMS.Data.Tests` pass with full coverage of snapshot, field change, and point-in-time scenarios.

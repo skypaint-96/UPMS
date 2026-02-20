@@ -6,6 +6,7 @@ using Microsoft.Extensions.Options;
 
 /// <summary>
 /// Database-backed service for canonical field name lookups.
+/// Kept for backward compatibility — new code should prefer <see cref="IItsmSourceService"/>.
 /// </summary>
 public class ItsmFieldMappingService : IItsmFieldMappingService
 {
@@ -41,7 +42,15 @@ public class ItsmFieldMappingService : IItsmFieldMappingService
 
         using var conn = _connectionFactory();
         return conn.Query<ItsmFieldMapping>(
-            "SELECT itsm_source AS ItsmSource, source_field_name AS SourceFieldName, canonical_field_name AS CanonicalFieldName FROM itsm_field_mapping WHERE itsm_source = @ItsmSource ORDER BY source_field_name",
+            """
+            SELECT itsm_source          AS ItsmSource,
+                   source_field_name    AS SourceFieldName,
+                   canonical_field_name AS CanonicalFieldName,
+                   is_required          AS IsRequired
+            FROM   itsm_field_mapping
+            WHERE  itsm_source = @ItsmSource
+            ORDER  BY source_field_name
+            """,
             new { ItsmSource = itsmSource }).ToList();
     }
 
@@ -52,11 +61,20 @@ public class ItsmFieldMappingService : IItsmFieldMappingService
         ArgumentException.ThrowIfNullOrWhiteSpace(canonicalFieldName);
 
         using var conn = _connectionFactory();
-        // Use INSERT OR REPLACE for SQLite compatibility; real impl uses PostgreSQL UPSERT
         string providerName = conn.GetType().FullName ?? string.Empty;
         string sql = providerName.Contains("Sqlite", StringComparison.OrdinalIgnoreCase)
-            ? "INSERT OR REPLACE INTO itsm_field_mapping (itsm_source, source_field_name, canonical_field_name) VALUES (@ItsmSource, @SourceFieldName, @CanonicalFieldName)"
-            : "INSERT INTO itsm_field_mapping (itsm_source, source_field_name, canonical_field_name) VALUES (@ItsmSource, @SourceFieldName, @CanonicalFieldName) ON CONFLICT (itsm_source, source_field_name) DO UPDATE SET canonical_field_name = EXCLUDED.canonical_field_name";
+            ? """
+              INSERT INTO itsm_field_mapping (itsm_source, source_field_name, canonical_field_name)
+              VALUES (@ItsmSource, @SourceFieldName, @CanonicalFieldName)
+              ON CONFLICT (itsm_source, source_field_name) DO UPDATE
+                  SET canonical_field_name = excluded.canonical_field_name
+              """
+            : """
+              INSERT INTO itsm_field_mapping (itsm_source, source_field_name, canonical_field_name)
+              VALUES (@ItsmSource, @SourceFieldName, @CanonicalFieldName)
+              ON CONFLICT (itsm_source, source_field_name) DO UPDATE
+                  SET canonical_field_name = EXCLUDED.canonical_field_name
+              """;
         await conn.ExecuteAsync(sql, new { ItsmSource = itsmSource, SourceFieldName = sourceFieldName, CanonicalFieldName = canonicalFieldName });
     }
 }

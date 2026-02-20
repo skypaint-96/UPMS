@@ -1,0 +1,149 @@
+@page "/itsm-sources"
+@rendermode InteractiveServer
+
+@using UPMS.Data
+
+@inject IItsmSourceService ItsmSourceService
+
+<PageTitle>ITSM Sources - UPMS</PageTitle>
+
+<h1>ITSM Sources</h1>
+
+<p>Define and manage the ITSM source instances from which ticket snapshots are uploaded.</p>
+
+<div data-testid="itsm-sources-list">
+    @if (sources.Count == 0)
+    {
+        <p data-testid="no-sources-message">No ITSM sources defined yet.</p>
+    }
+    else
+    {
+        <table>
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Display Label</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var source in sources)
+                {
+                    <tr data-testid="source-row-@source.Name">
+                        <td>
+                            <a href="/itsm-sources/@source.Name"
+                               data-testid="source-link-@source.Name">@source.Name</a>
+                        </td>
+                        <td>@source.DisplayLabel</td>
+                        <td>
+                            @if (confirmDeleteName == source.Name)
+                            {
+                                <span>Are you sure? </span>
+                                <button data-testid="confirm-delete-@source.Name"
+                                        @onclick="() => ConfirmDeleteAsync(source.Name)">Yes, delete</button>
+                                <button @onclick="CancelDelete">Cancel</button>
+                            }
+                            else
+                            {
+                                <button data-testid="delete-source-@source.Name"
+                                        @onclick="() => RequestDelete(source.Name)">Delete</button>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+</div>
+
+<hr />
+
+<h2>Add ITSM Source</h2>
+
+@if (!string.IsNullOrEmpty(addError))
+{
+    <p data-testid="add-source-error" style="color:red">@addError</p>
+}
+
+<div>
+    <label for="add-source-name">Name (slug)</label>
+    <input id="add-source-name"
+           data-testid="add-source-name"
+           placeholder="e.g. servicenow-client-a"
+           @bind="newSourceName" />
+</div>
+
+<div>
+    <label for="add-source-label">Display Label</label>
+    <input id="add-source-label"
+           data-testid="add-source-label"
+           placeholder="e.g. ServiceNow (Client A)"
+           @bind="newSourceLabel" />
+</div>
+
+<button data-testid="add-source-submit" @onclick="AddSourceAsync">Add Source</button>
+
+@code {
+    private List<ItsmSource> sources = [];
+    private string newSourceName  = string.Empty;
+    private string newSourceLabel = string.Empty;
+    private string? addError;
+    private string? confirmDeleteName;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadSourcesAsync();
+    }
+
+    private async Task LoadSourcesAsync()
+    {
+        var result = await ItsmSourceService.GetAllSourcesAsync();
+        sources = result.ToList();
+    }
+
+    private async Task AddSourceAsync()
+    {
+        addError = null;
+
+        if (string.IsNullOrWhiteSpace(newSourceName))
+        {
+            addError = "Name is required.";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(newSourceLabel))
+        {
+            addError = "Display label is required.";
+            return;
+        }
+
+        try
+        {
+            await ItsmSourceService.CreateSourceAsync(newSourceName.Trim(), newSourceLabel.Trim());
+            newSourceName  = string.Empty;
+            newSourceLabel = string.Empty;
+            await LoadSourcesAsync();
+        }
+        catch (Exception ex)
+        {
+            addError = $"Failed to add source: {ex.Message}";
+        }
+    }
+
+    private void RequestDelete(string name)
+    {
+        confirmDeleteName = name;
+    }
+
+    private void CancelDelete()
+    {
+        confirmDeleteName = null;
+    }
+
+    private async Task ConfirmDeleteAsync(string name)
+    {
+        confirmDeleteName = null;
+        await ItsmSourceService.DeleteSourceAsync(name);
+        await LoadSourcesAsync();
+    }
+}

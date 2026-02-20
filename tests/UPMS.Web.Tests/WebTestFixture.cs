@@ -22,8 +22,13 @@ public class WebTestFixture
     private static IPlaywright? _playwright;
     private static IBrowser? _browser;
 
+    // Resolve test connection string: env var takes priority, then local default.
+    private static readonly string TestConnectionString =
+        Environment.GetEnvironmentVariable("UPMS_TEST_CONNECTION_STRING")
+        ?? "Host=localhost;Port=5433;Database=upms_test;Username=upms;Password=upms_test";
+
     /// <summary>
-    /// Base URL of the running web application (e.g. "https://localhost:5001").
+    /// Base URL of the running web application (e.g. "http://127.0.0.1:5001").
     /// </summary>
     public static string BaseUrl { get; private set; } = string.Empty;
 
@@ -33,17 +38,23 @@ public class WebTestFixture
         _factory = new WebApplicationFactory<Program>()
             .WithWebHostBuilder(builder =>
             {
-                builder.UseUrls("https://127.0.0.1:0");
+                builder.UseUrls("http://127.0.0.1:0");
 
                 builder.ConfigureServices(services =>
                 {
+                    // Override the database connection string so the web app
+                    // points at the test database rather than a production one.
                     services.Configure<DatabaseOptions>(options =>
-                        options.ConnectionString = "Host=localhost;Database=upms_test_placeholder;");
+                        options.ConnectionString = TestConnectionString);
                 });
+
+                // Ensure the UPMS_CONNECTION_STRING env var seen by Program.cs
+                // also resolves to the test database.
+                builder.UseSetting(
+                    "UPMS_CONNECTION_STRING_OVERRIDE", TestConnectionString);
             });
 
-        // Access the factory's Services to force the host to start,
-        // then retrieve the bound address.
+        // Accessing Services forces the host to start; then retrieve bound address.
         IServer server = _factory.Services.GetRequiredService<IServer>();
         IServerAddressesFeature addresses = server.Features.Get<IServerAddressesFeature>()
             ?? throw new InvalidOperationException("No server address feature available.");

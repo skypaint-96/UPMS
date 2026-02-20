@@ -6,25 +6,25 @@ namespace UPMS.Web.Services;
 public interface ISnapshotIngestService
 {
     /// <summary>
-    /// Parses a CSV snapshot file stream and records all tickets and field changes.
-    /// Returns an IngestResult summarising what was processed.
+    /// Parses a flat-table CSV snapshot file stream and records all tickets and field changes.
+    /// Row 1 must be the header row (source column names).
+    /// Company is extracted from the CSV row data via the column mapped to canonical name "company".
+    /// Returns an <see cref="IngestResult"/> summarising what was processed.
     /// </summary>
     Task<IngestResult> IngestCsvAsync(
-        Stream fileStream,
-        string itsmSource,
-        DateTime snapshotDate,
-        string uploadedBy,
-        string companyName,
+        Stream csvStream,
+        string itsmSourceName,
+        DateOnly snapshotDate,
         CancellationToken ct = default);
 
     /// <summary>
-    /// Parses a JSON snapshot file stream and records all tickets and field changes.
+    /// Parses a JSON snapshot array stream and records all tickets and field changes.
+    /// Company is extracted from each JSON object's field mapped to canonical name "company".
+    /// Returns an <see cref="IngestResult"/> summarising what was processed.
     /// </summary>
     Task<IngestResult> IngestJsonAsync(
-        Stream fileStream,
-        string itsmSource,
-        DateTime snapshotDate,
-        string uploadedBy,
-        string companyName,
+        Stream jsonStream,
+        string itsmSourceName,
+        DateOnly snapshotDate,
         CancellationToken ct = default);
 }

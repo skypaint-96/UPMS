@@ -2,8 +2,10 @@
 @rendermode InteractiveServer
 
 @using UPMS.Web.Services
+@using UPMS.Data
 
 @inject ISnapshotIngestService IngestService
+@inject IItsmSourceService ItsmSourceService
 
 <PageTitle>Upload - UPMS</PageTitle>
 
@@ -13,18 +15,11 @@
     <label for="itsm-source">ITSM Source</label>
     <select id="itsm-source" data-testid="upload-itsm-source" @bind="selectedItsmSource">
         <option value="">-- Select ITSM Source --</option>
-        <option value="servicenow">ServiceNow</option>
-        <option value="jira">Jira</option>
+        @foreach (var source in itsmSources)
+        {
+            <option value="@source.Name">@source.DisplayLabel</option>
+        }
     </select>
-</div>
-
-<div>
-    <label for="company-name">Company Name</label>
-    <input type="text"
-           id="company-name"
-           data-testid="company-name-input"
-           placeholder="Company name"
-           @bind="companyName" />
 </div>
 
 <div>
@@ -72,12 +67,17 @@
 
 @code {
     private string selectedItsmSource = string.Empty;
-    private string companyName = string.Empty;
-    private DateTime snapshotDate = DateTime.Today;
+    private DateOnly snapshotDate = DateOnly.FromDateTime(DateTime.Today);
     private IBrowserFile? selectedFile;
     private string? validationMessage;
     private string? resultMessage;
     private IngestResult? ingestResult;
+    private IReadOnlyList<ItsmSource> itsmSources = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        itsmSources = await ItsmSourceService.GetAllSourcesAsync();
+    }
 
     private void OnFileSelected(InputFileChangeEventArgs e)
     {
@@ -91,13 +91,6 @@
         validationMessage = null;
         resultMessage = null;
         ingestResult = null;
-
-        // Validate all required fields
-        if (string.IsNullOrWhiteSpace(companyName))
-        {
-            validationMessage = "Company name is required.";
-            return;
-        }
 
         if (string.IsNullOrEmpty(selectedItsmSource))
         {
@@ -130,8 +123,8 @@
             await using Stream fileStream = selectedFile.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024);
 
             IngestResult result = extension == ".csv"
-                ? await IngestService.IngestCsvAsync(fileStream, selectedItsmSource, snapshotDate, uploadedBy: "web-upload", companyName)
-                : await IngestService.IngestJsonAsync(fileStream, selectedItsmSource, snapshotDate, uploadedBy: "web-upload", companyName);
+                ? await IngestService.IngestCsvAsync(fileStream, selectedItsmSource, snapshotDate)
+                : await IngestService.IngestJsonAsync(fileStream, selectedItsmSource, snapshotDate);
 
             if (result.Success)
             {
@@ -139,7 +132,7 @@
             }
             else
             {
-                resultMessage = $"Upload failed: {result.ErrorMessage}";
+                validationMessage = result.ErrorMessage;
             }
         }
         catch (Exception ex)
