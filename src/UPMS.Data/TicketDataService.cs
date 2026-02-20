@@ -441,7 +441,7 @@ public static class TicketDataService
     public static async Task<IEnumerable<Snapshot>> GetSnapshotsAsync(string? itsmSource = null)
     {
         string sql = """
-            SELECT 
+            SELECT
                 id as Id,
                 itsm_source as ItsmSource,
                 snapshot_date as SnapshotDate,
@@ -462,6 +462,61 @@ public static class TicketDataService
         IEnumerable<SnapshotQueryResult> rows = await connection.QueryAsync<SnapshotQueryResult>(
             sql,
             new { ItsmSource = itsmSource }
+        );
+
+        return rows.Select(row => new Snapshot
+        {
+            Id = Guid.Parse(row.Id),
+            ItsmSource = row.ItsmSource,
+            SnapshotDate = ParseDateTime(row.SnapshotDate),
+            UploadedBy = row.UploadedBy,
+            UploadedAt = ParseDateTime(row.UploadedAt),
+            UploadMetadata = row.UploadMetadata
+        }).ToList();
+    }
+
+    /// <summary>
+    /// Retrieves snapshots filtered by optional ITSM source and/or company name.
+    /// When <paramref name="companyName"/> is provided a subquery filters to snapshots
+    /// that contain at least one ticket for that company.
+    /// Results are ordered by snapshot date descending (most recent first).
+    /// </summary>
+    public static async Task<IEnumerable<Snapshot>> GetSnapshotsAsync(string? itsmSource, string? companyName)
+    {
+        List<string> whereClauses = [];
+
+        if (!string.IsNullOrWhiteSpace(itsmSource))
+        {
+            whereClauses.Add("itsm_source = @ItsmSource");
+        }
+
+        if (!string.IsNullOrWhiteSpace(companyName))
+        {
+            whereClauses.Add("id IN (SELECT DISTINCT snapshot_id FROM snapshot_ticket WHERE company_name = @CompanyName)");
+        }
+
+        string sql = """
+            SELECT
+                id as Id,
+                itsm_source as ItsmSource,
+                snapshot_date as SnapshotDate,
+                uploaded_by as UploadedBy,
+                uploaded_at as UploadedAt,
+                upload_metadata as UploadMetadata
+            FROM raw_snapshot
+            """;
+
+        if (whereClauses.Count > 0)
+        {
+            sql += " WHERE " + string.Join(" AND ", whereClauses);
+        }
+
+        sql += " ORDER BY snapshot_date DESC";
+
+        using IDbConnection connection = GetConnection();
+        IEnumerable<SnapshotQueryResult> rows = await connection.QueryAsync<SnapshotQueryResult>(
+            sql,
+            new { ItsmSource = itsmSource, CompanyName = companyName }
         );
 
         return rows.Select(row => new Snapshot

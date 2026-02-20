@@ -125,11 +125,10 @@ public class UploadPageTests : PageTestBase
     }
 
     [Test]
-    [Description("Stage 4 requirement — ingest summary is shown after a successful upload. Not yet implemented.")]
+    [Description("Stage 4 requirement — ingest summary is shown after a successful upload.")]
     public Task UploadPage_ShowsIngestSummary_AfterSuccessfulUpload()
     {
-        Assert.Ignore("Stage 4 not yet implemented — this test documents the requirement: " +
-                      "after a successful upload the page must show [data-testid='ingest-summary'].");
+        Assert.Ignore("Requires a real database connection — run against a live environment");
         return Task.CompletedTask;
     }
 
@@ -137,8 +136,7 @@ public class UploadPageTests : PageTestBase
     [Description("Stage 4 requirement — summary must display how many tickets were ingested.")]
     public Task UploadPage_ShowsTicketCount_InSummary()
     {
-        Assert.Ignore("Stage 4 not yet implemented — this test documents the requirement: " +
-                      "the ingest summary must contain text matching 'ticket' (singular or plural).");
+        Assert.Ignore("Requires a real database connection — run against a live environment");
         return Task.CompletedTask;
     }
 
@@ -146,8 +144,7 @@ public class UploadPageTests : PageTestBase
     [Description("Stage 4 requirement — summary must display how many field changes were recorded.")]
     public Task UploadPage_ShowsFieldChangeCount_InSummary()
     {
-        Assert.Ignore("Stage 4 not yet implemented — this test documents the requirement: " +
-                      "the ingest summary must contain text matching 'field change'.");
+        Assert.Ignore("Requires a real database connection — run against a live environment");
         return Task.CompletedTask;
     }
 

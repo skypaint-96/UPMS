@@ -1,6 +1,10 @@
 @page "/upload"
 @rendermode InteractiveServer
 
+@using UPMS.Web.Services
+
+@inject ISnapshotIngestService IngestService
+
 <PageTitle>Upload - UPMS</PageTitle>
 
 <h1>Upload Ticket Dump</h1>
@@ -12,6 +16,23 @@
         <option value="servicenow">ServiceNow</option>
         <option value="jira">Jira</option>
     </select>
+</div>
+
+<div>
+    <label for="company-name">Company Name</label>
+    <input type="text"
+           id="company-name"
+           data-testid="company-name-input"
+           placeholder="Company name"
+           @bind="companyName" />
+</div>
+
+<div>
+    <label for="snapshot-date">Snapshot Date</label>
+    <input type="date"
+           id="snapshot-date"
+           data-testid="snapshot-date-input"
+           @bind="snapshotDate" />
 </div>
 
 <div>
@@ -33,48 +54,97 @@
     }
 </div>
 
-@code {
-    [Inject]
-    private TicketDataServiceInstance DataService { get; set; } = default!;
+@if (ingestResult is not null && ingestResult.Success)
+{
+    <div data-testid="ingest-summary">
+        <p>Successfully ingested @ingestResult.TicketsIngested ticket@(ingestResult.TicketsIngested == 1 ? "" : "s") and @ingestResult.FieldChangesRecorded field change@(ingestResult.FieldChangesRecorded == 1 ? "" : "s").</p>
+        @if (ingestResult.Warnings.Count > 0)
+        {
+            <ul>
+                @foreach (string warning in ingestResult.Warnings)
+                {
+                    <li>@warning</li>
+                }
+            </ul>
+        }
+    </div>
+}
 
+@code {
     private string selectedItsmSource = string.Empty;
+    private string companyName = string.Empty;
+    private DateTime snapshotDate = DateTime.Today;
     private IBrowserFile? selectedFile;
     private string? validationMessage;
     private string? resultMessage;
+    private IngestResult? ingestResult;
 
     private void OnFileSelected(InputFileChangeEventArgs e)
     {
         selectedFile = e.File;
         validationMessage = null;
+        ingestResult = null;
     }
 
     private async Task OnUploadAsync()
     {
         validationMessage = null;
         resultMessage = null;
+        ingestResult = null;
 
-        if (string.IsNullOrEmpty(selectedItsmSource) || selectedFile is null)
+        // Validate all required fields
+        if (string.IsNullOrWhiteSpace(companyName))
         {
-            validationMessage = string.IsNullOrEmpty(selectedItsmSource) && selectedFile is null
-                ? "Please select an ITSM source and a file."
-                : string.IsNullOrEmpty(selectedItsmSource)
-                    ? "Please select an ITSM source."
-                    : "Please select a file.";
+            validationMessage = "Company name is required.";
+            return;
+        }
+
+        if (string.IsNullOrEmpty(selectedItsmSource))
+        {
+            validationMessage = "Please select an ITSM source.";
+            return;
+        }
+
+        if (selectedFile is null)
+        {
+            validationMessage = "Please select a file.";
+            return;
+        }
+
+        if (snapshotDate == default)
+        {
+            validationMessage = "Please select a snapshot date.";
+            return;
+        }
+
+        // Determine format from file extension
+        string extension = Path.GetExtension(selectedFile.Name).ToLowerInvariant();
+        if (extension is not ".csv" and not ".json")
+        {
+            validationMessage = $"Unrecognised file format '{extension}'. Please upload a .csv or .json file.";
             return;
         }
 
         try
         {
-            Guid snapshotId = await DataService.CreateSnapshotAsync(
-                selectedItsmSource,
-                DateTime.UtcNow,
-                uploadedBy: "web-upload");
+            await using Stream fileStream = selectedFile.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024);
 
-            resultMessage = $"Snapshot {snapshotId} created successfully.";
+            IngestResult result = extension == ".csv"
+                ? await IngestService.IngestCsvAsync(fileStream, selectedItsmSource, snapshotDate, uploadedBy: "web-upload", companyName)
+                : await IngestService.IngestJsonAsync(fileStream, selectedItsmSource, snapshotDate, uploadedBy: "web-upload", companyName);
+
+            if (result.Success)
+            {
+                ingestResult = result;
+            }
+            else
+            {
+                resultMessage = $"Upload failed: {result.ErrorMessage}";
+            }
         }
-        catch
+        catch (Exception ex)
         {
-            resultMessage = "Upload failed. Please try again.";
+            resultMessage = $"Upload failed: {ex.Message}";
         }
     }
 }

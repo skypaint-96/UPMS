@@ -1,0 +1,92 @@
+@foreach (var param in Parameters)
+{
+    var fromKey = param.Key + "_from";
+    var toKey = param.Key + "_to";
+
+    <div class="parameter-field">
+        <label for="@param.Key">
+            @param.DisplayName@(param.IsRequired ? " *" : "")
+        </label>
+
+        @if (param.Type == ReportParameterType.Text)
+        {
+            <input id="@param.Key"
+                   type="text"
+                   value="@GetValue(param.Key)"
+                   @onchange="e => SetValue(param.Key, e.Value?.ToString() ?? string.Empty)" />
+        }
+        else if (param.Type == ReportParameterType.Date)
+        {
+            <input id="@param.Key"
+                   type="date"
+                   value="@GetValue(param.Key)"
+                   @onchange="e => SetValue(param.Key, e.Value?.ToString() ?? string.Empty)" />
+        }
+        else if (param.Type == ReportParameterType.Select)
+        {
+            <select id="@param.Key"
+                    @onchange="e => SetValue(param.Key, e.Value?.ToString() ?? string.Empty)">
+                <option value="">-- Select --</option>
+                @foreach (var option in param.Options ?? Array.Empty<string>())
+                {
+                    <option value="@option" selected="@(GetValue(param.Key) == option)">@option</option>
+                }
+            </select>
+        }
+        else if (param.Type == ReportParameterType.MultiSelect)
+        {
+            <select id="@param.Key"
+                    multiple
+                    @onchange="e => SetValue(param.Key, e.Value?.ToString() ?? string.Empty)">
+                @foreach (var option in param.Options ?? Array.Empty<string>())
+                {
+                    <option value="@option">@option</option>
+                }
+            </select>
+        }
+        else if (param.Type == ReportParameterType.Boolean)
+        {
+            var isChecked = GetValue(param.Key) == "true";
+            <input id="@param.Key"
+                   type="checkbox"
+                   checked="@isChecked"
+                   @onchange="e => OnBooleanChanged(param.Key, e.Value)" />
+        }
+        else if (param.Type == ReportParameterType.DateRange)
+        {
+            <div class="date-range">
+                <label for="@fromKey">From</label>
+                <input id="@fromKey"
+                       type="date"
+                       value="@GetValue(fromKey)"
+                       @onchange="e => SetValue(fromKey, e.Value?.ToString() ?? string.Empty)" />
+                <label for="@toKey">To</label>
+                <input id="@toKey"
+                       type="date"
+                       value="@GetValue(toKey)"
+                       @onchange="e => SetValue(toKey, e.Value?.ToString() ?? string.Empty)" />
+            </div>
+        }
+    </div>
+}
+
+@code {
+    [Parameter] public IReadOnlyList<ReportParameterDefinition> Parameters { get; set; } = Array.Empty<ReportParameterDefinition>();
+    [Parameter] public Dictionary<string, string> Values { get; set; } = new();
+    [Parameter] public EventCallback OnValuesChanged { get; set; }
+
+    private string GetValue(string key) =>
+        Values.TryGetValue(key, out var v) ? v : string.Empty;
+
+    private async Task SetValue(string key, string value)
+    {
+        Values[key] = value;
+        await OnValuesChanged.InvokeAsync();
+    }
+
+    private async Task OnBooleanChanged(string key, object? value)
+    {
+        var boolValue = value is bool b && b;
+        await SetValue(key, boolValue ? "true" : "false");
+    }
+}

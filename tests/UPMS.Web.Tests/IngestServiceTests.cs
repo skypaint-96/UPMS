@@ -1,13 +1,12 @@
 namespace UPMS.Web.Tests;
 
+using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Options;
 using UPMS.Data;
 using UPMS.Web.Services;
 
 /// <summary>
 /// Unit tests for IngestResult and SnapshotIngestService.
-/// Tests that invoke the stub IngestCsvAsync/IngestJsonAsync assert NotImplementedException,
-/// documenting Stage 4 pending work.
 /// </summary>
 [TestFixture]
 public class IngestServiceTests
@@ -71,31 +70,76 @@ public class IngestServiceTests
         Assert.That(result.FieldChangesRecorded, Is.EqualTo(20));
     }
 
-    // ── SnapshotIngestService stub behaviour ───────────────────────────────
+    // ── SnapshotIngestService real ingest behaviour ────────────────────────
 
     [Test]
-    public void SnapshotIngestService_IngestCsvAsync_ThrowsNotImplementedException()
+    [NonParallelizable]
+    public async Task SnapshotIngestService_IngestCsvAsync_WithValidCsv_ReturnsSuccess()
     {
-        // Arrange — Stage 4 pending: documents that CSV ingest is not yet implemented
-        var service = BuildService();
-        using var stream = new MemoryStream();
+        // Arrange
+        var (service, _) = BuildServiceWithSqlite();
 
-        // Act & Assert
-        Assert.ThrowsAsync<NotImplementedException>(() =>
-            service.IngestCsvAsync(stream, "ServiceNow", DateTime.UtcNow, "tester", "Acme"));
+        const string csv = """
+            ticket_key,field_name,field_value
+            INC0001234,incident_state,Open
+            INC0001234,assigned_to,john.smith
+            INC0001234,short_description,Server is down
+            INC0001235,incident_state,In Progress
+            INC0001235,assigned_to,jane.doe
+            INC0001235,short_description,DB unreachable
+            """;
+
+        using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(csv));
+
+        // Act
+        IngestResult result = await service.IngestCsvAsync(
+            stream, "servicenow", DateTime.UtcNow, "tester", "AcmeCorp");
+
+        // Assert
+        Assert.That(result.Success, Is.True, result.ErrorMessage);
+        Assert.That(result.TicketsIngested, Is.EqualTo(2));
+        Assert.That(result.FieldChangesRecorded, Is.EqualTo(6));
     }
 
     [Test]
-    public void SnapshotIngestService_IngestJsonAsync_ThrowsNotImplementedException()
+    [NonParallelizable]
+    public async Task SnapshotIngestService_IngestJsonAsync_WithValidJson_ReturnsSuccess()
     {
-        // Arrange — Stage 4 pending: documents that JSON ingest is not yet implemented
-        var service = BuildService();
-        using var stream = new MemoryStream();
+        // Arrange
+        var (service, _) = BuildServiceWithSqlite();
 
-        // Act & Assert
-        Assert.ThrowsAsync<NotImplementedException>(() =>
-            service.IngestJsonAsync(stream, "ServiceNow", DateTime.UtcNow, "tester", "Acme"));
+        const string json = """
+            [
+              {
+                "ticket_key": "INC0001234",
+                "fields": {
+                  "incident_state": "Open",
+                  "assigned_to": "john.smith"
+                }
+              },
+              {
+                "ticket_key": "INC0001235",
+                "fields": {
+                  "incident_state": "In Progress",
+                  "assigned_to": "jane.doe"
+                }
+              }
+            ]
+            """;
+
+        using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(json));
+
+        // Act
+        IngestResult result = await service.IngestJsonAsync(
+            stream, "servicenow", DateTime.UtcNow, "tester", "AcmeCorp");
+
+        // Assert
+        Assert.That(result.Success, Is.True, result.ErrorMessage);
+        Assert.That(result.TicketsIngested, Is.EqualTo(2));
+        Assert.That(result.FieldChangesRecorded, Is.EqualTo(4));
     }
+
+    // ── SnapshotIngestService constructor guards ───────────────────────────
 
     [Test]
     public void SnapshotIngestService_RequiresDataService_ThrowsOnNull()
@@ -118,12 +162,68 @@ public class IngestServiceTests
 
     // ── Helpers ────────────────────────────────────────────────────────────
 
-    private static SnapshotIngestService BuildService()
+    /// <summary>
+    /// Creates a SnapshotIngestService backed by a fresh SQLite in-memory database.
+    /// Returns both the service and the connection (keep connection open for lifetime of test).
+    /// </summary>
+    private static (SnapshotIngestService Service, SqliteConnection Connection) BuildServiceWithSqlite()
     {
-        var fakeOptions = Options.Create(new DatabaseOptions { ConnectionString = "Host=localhost;Database=test;" });
-        var fakeDataService = new TicketDataServiceInstance(fakeOptions);
+        // Use a named in-memory database so the schema is shared across connections
+        var dbName = $"ingest_test_{Guid.NewGuid():N}";
+        var connectionString = $"Data Source={dbName};Mode=Memory;Cache=Shared";
+
+        var connection = new SqliteConnection(connectionString);
+        connection.Open();
+
+        // Create schema
+        using var cmd = connection.CreateCommand();
+        cmd.CommandText = """
+            CREATE TABLE IF NOT EXISTS raw_snapshot (
+                id TEXT PRIMARY KEY,
+                itsm_source TEXT NOT NULL,
+                snapshot_date TEXT NOT NULL,
+                uploaded_by TEXT NOT NULL,
+                uploaded_at TEXT NOT NULL,
+                upload_metadata TEXT);
+
+            CREATE TABLE IF NOT EXISTS snapshot_ticket (
+                id TEXT PRIMARY KEY,
+                snapshot_id TEXT NOT NULL,
+                company_name TEXT NOT NULL,
+                ticket_key TEXT NOT NULL,
+                UNIQUE(snapshot_id, ticket_key));
+
+            CREATE TABLE IF NOT EXISTS field_change (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                company_name TEXT NOT NULL,
+                ticket_key TEXT NOT NULL,
+                field_name TEXT NOT NULL,
+                field_value TEXT,
+                observed_at TEXT NOT NULL,
+                snapshot_id TEXT NOT NULL);
+
+            CREATE TABLE IF NOT EXISTS itsm_field_mapping (
+                itsm_source TEXT NOT NULL,
+                source_field_name TEXT NOT NULL,
+                canonical_field_name TEXT NOT NULL,
+                PRIMARY KEY(itsm_source, source_field_name));
+            """;
+        cmd.ExecuteNonQuery();
+
+        // Wire TicketDataService to use this SQLite connection
+        TicketDataService.Initialize(() => new SqliteConnection(connectionString));
+
+        var options = Options.Create(new DatabaseOptions { ConnectionString = connectionString });
+
+        // TicketDataServiceInstance calls Initialize internally; we override immediately after
+        var dataServiceInstance = new TicketDataServiceInstance(options);
+        // Re-apply SQLite factory since the instance constructor sets a Npgsql factory
+        TicketDataService.Initialize(() => new SqliteConnection(connectionString));
+
         var fakeMappingService = new FakeMappingService();
-        return new SnapshotIngestService(fakeDataService, fakeMappingService);
+        var service = new SnapshotIngestService(dataServiceInstance, fakeMappingService);
+
+        return (service, connection);
     }
 
     private class FakeMappingService : IItsmFieldMappingService

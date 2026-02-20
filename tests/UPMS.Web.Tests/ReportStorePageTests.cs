@@ -1,10 +1,10 @@
 namespace UPMS.Web.Tests;
 
+using Microsoft.Playwright;
+
 /// <summary>
-/// Tests for the Report Store page (/reports).
-/// The page does not exist yet — it will be implemented in Stage 5.
-/// Test 1 is a transitional test that accepts either outcome (404 or live page).
-/// All remaining tests use Assert.Ignore to document Stage 5 requirements.
+/// End-to-end tests for the Report Store page (/reports).
+/// Implemented in Stage 5.
 /// </summary>
 [TestFixture]
 public class ReportStorePageTests : PageTestBase
@@ -15,63 +15,103 @@ public class ReportStorePageTests : PageTestBase
         // Act
         await Page.GotoAsync(Url("/reports"));
 
-        // Assert — transitional: either the route is registered (title contains "Reports")
-        // or the not-found page is displayed. Both are acceptable before Stage 5 is complete.
+        // Assert — the page now exists; title must contain "Report Store"
         var title = await Page.TitleAsync();
-        var notFoundVisible = await Page.Locator("text=Not Found").IsVisibleAsync();
-
         Assert.That(
-            title.Contains("Reports", StringComparison.OrdinalIgnoreCase) || notFoundVisible,
+            title.Contains("Report Store", StringComparison.OrdinalIgnoreCase),
             Is.True,
-            "Expected either a Reports page title or the Not Found page.");
+            $"Expected page title to contain 'Report Store' but was '{title}'.");
     }
 
     [Test]
-    public Task ReportStorePage_WhenImplemented_HasHeading()
+    public async Task ReportStorePage_WhenImplemented_HasHeading()
     {
-        Assert.Ignore("Stage 5 not yet implemented — the /reports page must have a visible heading.");
-        return Task.CompletedTask;
+        // Arrange
+        await Page.GotoAsync(Url("/reports"));
+
+        // Act
+        var heading = Page.Locator("h1");
+
+        // Assert
+        await Assertions.Expect(heading).ToContainTextAsync("Report Store");
     }
 
     [Test]
-    public Task ReportStorePage_WhenImplemented_ListsPlugins()
+    public async Task ReportStorePage_WhenImplemented_ListsPlugins()
     {
-        Assert.Ignore("Stage 5 not yet implemented — the /reports page must list all registered report plugins.");
-        return Task.CompletedTask;
+        // Arrange
+        await Page.GotoAsync(Url("/reports"));
+
+        // Act
+        var pluginList = Page.Locator("[data-testid='plugin-list']");
+
+        // Assert
+        await Assertions.Expect(pluginList).ToBeVisibleAsync();
     }
 
     [Test]
-    public Task ReportStorePage_WhenImplemented_ShowsPluginDisplayName()
+    public async Task ReportStorePage_WhenImplemented_ShowsPluginDisplayName()
     {
-        Assert.Ignore("Stage 5 not yet implemented — each plugin card must display the plugin's DisplayName.");
-        return Task.CompletedTask;
+        // Arrange
+        await Page.GotoAsync(Url("/reports"));
+
+        // Assert — the StubReportPlugin's DisplayName must appear on the page
+        await Assertions.Expect(Page.Locator("text=Stub Report")).ToBeVisibleAsync();
     }
 
     [Test]
-    public Task ReportStorePage_WhenImplemented_ShowsPluginDescription()
+    public async Task ReportStorePage_WhenImplemented_ShowsPluginDescription()
     {
-        Assert.Ignore("Stage 5 not yet implemented — each plugin card must display the plugin's Description.");
-        return Task.CompletedTask;
+        // Arrange
+        await Page.GotoAsync(Url("/reports"));
+
+        // Assert — the StubReportPlugin's Description must appear on the page
+        await Assertions.Expect(Page.Locator("text=no-op stub plugin")).ToBeVisibleAsync();
     }
 
     [Test]
-    public Task ReportStorePage_WhenImplemented_HasParameterForm()
+    public async Task ReportStorePage_WhenImplemented_HasParameterForm()
     {
-        Assert.Ignore("Stage 5 not yet implemented — selecting a plugin must show a parameter input form.");
-        return Task.CompletedTask;
+        // Arrange
+        await Page.GotoAsync(Url("/reports"));
+
+        // Act — click the Generate Report button for the stub plugin
+        await Page.Locator("button:has-text('Generate Report')").First.ClickAsync();
+
+        // Assert
+        var parameterForm = Page.Locator("[data-testid='parameter-form']");
+        await Assertions.Expect(parameterForm).ToBeVisibleAsync();
     }
 
     [Test]
-    public Task ReportStorePage_WhenImplemented_NavContainsReportsLink()
+    public async Task ReportStorePage_WhenImplemented_NavContainsReportsLink()
     {
-        Assert.Ignore("Stage 5 not yet implemented — the site navigation must include a link to /reports.");
-        return Task.CompletedTask;
+        // Arrange
+        await Page.GotoAsync(Url("/"));
+
+        // Assert — nav must contain a link to /reports or with text "Reports"
+        var reportsLink = Page.Locator("nav a[href='/reports'], nav a:has-text('Reports')");
+        await Assertions.Expect(reportsLink).ToBeVisibleAsync();
     }
 
     [Test]
-    public Task ReportStorePage_WhenImplemented_PluginGeneratesResult()
+    public async Task ReportStorePage_WhenImplemented_PluginGeneratesResult()
     {
-        Assert.Ignore("Stage 5 not yet implemented — submitting the parameter form must invoke GenerateAsync and display a result.");
-        return Task.CompletedTask;
+        // Arrange
+        await Page.GotoAsync(Url("/reports"));
+
+        // Act — open the parameter form for the stub plugin
+        await Page.Locator("button:has-text('Generate Report')").First.ClickAsync();
+
+        // Fill in required parameters
+        await Page.Locator("[data-testid='parameter-form'] input[type='text']").First.FillAsync("Acme Corp");
+        await Page.Locator("[data-testid='parameter-form'] input[type='date']").First.FillAsync(DateTime.Today.ToString("yyyy-MM-dd"));
+
+        // Submit
+        await Page.Locator("[data-testid='parameter-form'] button:has-text('Generate')").ClickAsync();
+
+        // Assert
+        var resultSection = Page.Locator("[data-testid='report-result']");
+        await Assertions.Expect(resultSection).ToBeVisibleAsync();
     }
 }

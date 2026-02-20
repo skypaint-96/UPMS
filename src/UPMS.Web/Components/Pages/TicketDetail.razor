@@ -1,3 +1,4 @@
+@page "/tickets/{Company}/{ItsmSource}/{TicketKey}"
 @page "/tickets/{Company}/{TicketKey}"
 
 <PageTitle>@TicketKey - UPMS</PageTitle>
@@ -5,7 +6,7 @@
 <h1>@TicketKey</h1>
 
 <p data-testid="ticket-company">Company: @Company</p>
-<p data-testid="ticket-itsm-source">ITSM Source: @itsmSource</p>
+<p data-testid="ticket-itsm-source">ITSM Source: @resolvedItsmSource</p>
 
 <a href="/tickets">Back to Tickets</a>
 
@@ -17,7 +18,7 @@
             @foreach (KeyValuePair<string, string?> field in fields)
             {
                 <dt>@field.Key</dt>
-                <dd>@(field.Value ?? "—")</dd>
+                <dd>@(field.Value ?? "â€”")</dd>
             }
         </dl>
     }
@@ -44,7 +45,7 @@
                 {
                     <tr>
                         <td>@change.FieldName</td>
-                        <td>@(change.FieldValue ?? "—")</td>
+                        <td>@(change.FieldValue ?? "â€”")</td>
                         <td>@change.ObservedAt.ToString("yyyy-MM-dd HH:mm:ss")</td>
                     </tr>
                 }
@@ -62,12 +63,15 @@
     public string Company { get; set; } = string.Empty;
 
     [Parameter]
+    public string? ItsmSource { get; set; }
+
+    [Parameter]
     public string TicketKey { get; set; } = string.Empty;
 
     [Inject]
     private TicketDataServiceInstance DataService { get; set; } = default!;
 
-    private string itsmSource = string.Empty;
+    private string resolvedItsmSource = string.Empty;
     private Dictionary<string, string?> fields = [];
     private List<FieldChange> fieldChanges = [];
 
@@ -77,25 +81,38 @@
         {
             string decodedCompany = Uri.UnescapeDataString(Company);
             string decodedTicketKey = Uri.UnescapeDataString(TicketKey);
+            string? decodedItsmSource = ItsmSource is not null ? Uri.UnescapeDataString(ItsmSource) : null;
 
-            IEnumerable<Ticket> tickets = await DataService.GetTicketsAsync(
-                "servicenow",
-                decodedCompany,
-                DateTime.UtcNow);
-
-            Ticket? ticket = tickets.FirstOrDefault(t => t.TicketKey == decodedTicketKey);
-            if (ticket is not null)
+            // If no ITSM source provided in route, look it up from snapshots
+            if (string.IsNullOrWhiteSpace(decodedItsmSource))
             {
-                itsmSource = ticket.ItsmSource;
-                fields = new Dictionary<string, string?>(ticket.Fields);
+                IEnumerable<Snapshot> snapshots = await DataService.GetSnapshotsAsync();
+                decodedItsmSource = snapshots.FirstOrDefault()?.ItsmSource ?? string.Empty;
+            }
 
-                foreach (string fieldName in ticket.Fields.Keys)
+            resolvedItsmSource = decodedItsmSource;
+
+            if (!string.IsNullOrWhiteSpace(decodedItsmSource))
+            {
+                IEnumerable<Ticket> tickets = await DataService.GetTicketsAsync(
+                    decodedItsmSource,
+                    decodedCompany,
+                    DateTime.UtcNow);
+
+                Ticket? ticket = tickets.FirstOrDefault(t => t.TicketKey == decodedTicketKey);
+                if (ticket is not null)
                 {
-                    IEnumerable<FieldChange> history = await DataService.GetTicketFieldHistoryAsync(
-                        decodedCompany,
-                        decodedTicketKey,
-                        fieldName);
-                    fieldChanges.AddRange(history);
+                    resolvedItsmSource = ticket.ItsmSource;
+                    fields = new Dictionary<string, string?>(ticket.Fields);
+
+                    foreach (string fieldName in ticket.Fields.Keys)
+                    {
+                        IEnumerable<FieldChange> history = await DataService.GetTicketFieldHistoryAsync(
+                            decodedCompany,
+                            decodedTicketKey,
+                            fieldName);
+                        fieldChanges.AddRange(history);
+                    }
                 }
             }
         }

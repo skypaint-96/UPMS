@@ -5,15 +5,9 @@
 <h1>Tickets</h1>
 
 <div>
-    <select data-testid="company-filter" @bind="selectedCompany" @bind:after="LoadTicketsAsync">
-        <option value="">All Companies</option>
-        @foreach (string company in companies)
-        {
-            <option value="@company">@company</option>
-        }
-    </select>
+    <input type="text" data-testid="company-filter" placeholder="Company name" @bind="companyName" @bind:after="LoadTicketsAsync" />
 
-    <select data-testid="itsm-source-filter" @bind="selectedItsmSource" @bind:after="LoadTicketsAsync">
+    <select data-testid="itsm-source-filter" @bind="itsmSource" @bind:after="LoadTicketsAsync">
         <option value="">All ITSM Sources</option>
         @foreach (string source in itsmSources)
         {
@@ -21,6 +15,11 @@
         }
     </select>
 </div>
+
+@if (string.IsNullOrWhiteSpace(itsmSource) || string.IsNullOrWhiteSpace(companyName))
+{
+    <p data-testid="tickets-empty-hint">Enter an ITSM source and company name to browse tickets.</p>
+}
 
 <table data-testid="ticket-table">
     <thead>
@@ -43,10 +42,10 @@
             @foreach (Ticket ticket in tickets)
             {
                 <tr>
-                    <td><a href="/tickets/@Uri.EscapeDataString(ticket.CompanyName)/@Uri.EscapeDataString(ticket.TicketKey)">@ticket.TicketKey</a></td>
+                    <td><a href="/tickets/@Uri.EscapeDataString(ticket.CompanyName)/@Uri.EscapeDataString(ticket.ItsmSource)/@Uri.EscapeDataString(ticket.TicketKey)">@ticket.TicketKey</a></td>
                     <td>@ticket.CompanyName</td>
                     <td>@ticket.ItsmSource</td>
-                    <td>@(ticket.Fields.TryGetValue("Status", out string? status) ? status : "—")</td>
+                    <td>@(ticket.Fields.TryGetValue("Status", out string? status) ? status : "â€”")</td>
                 </tr>
             }
         }
@@ -58,26 +57,41 @@
     private TicketDataServiceInstance DataService { get; set; } = default!;
 
     private List<Ticket> tickets = [];
-    private List<string> companies = [];
     private List<string> itsmSources = [];
-    private string selectedCompany = string.Empty;
-    private string selectedItsmSource = string.Empty;
+    private string companyName = string.Empty;
+    private string itsmSource = string.Empty;
 
     protected override async Task OnInitializedAsync()
     {
-        await LoadTicketsAsync();
+        await LoadItsmSourcesAsync();
+    }
+
+    private async Task LoadItsmSourcesAsync()
+    {
+        try
+        {
+            IEnumerable<Snapshot> snapshots = await DataService.GetSnapshotsAsync();
+            itsmSources = snapshots.Select(s => s.ItsmSource).Distinct().OrderBy(s => s).ToList();
+        }
+        catch
+        {
+            itsmSources = [];
+        }
     }
 
     private async Task LoadTicketsAsync()
     {
+        if (string.IsNullOrWhiteSpace(itsmSource) || string.IsNullOrWhiteSpace(companyName))
+        {
+            tickets = [];
+            return;
+        }
+
         try
         {
-            string itsmSource = string.IsNullOrEmpty(selectedItsmSource) ? "servicenow" : selectedItsmSource;
-            string company = string.IsNullOrEmpty(selectedCompany) ? "Acme Corp" : selectedCompany;
-
             IEnumerable<Ticket> results = await DataService.GetTicketsAsync(
                 itsmSource,
-                company,
+                companyName,
                 DateTime.UtcNow);
 
             tickets = results.ToList();

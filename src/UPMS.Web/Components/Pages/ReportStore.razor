@@ -1,0 +1,127 @@
+@page "/reports"
+@rendermode InteractiveServer
+
+@inject PluginRegistry PluginRegistry
+@inject ReportDownloadStore DownloadStore
+
+<PageTitle>Report Store — UPMS</PageTitle>
+
+<h1>Report Store</h1>
+<p>Select a report plugin below, fill in the required parameters, and generate your report.</p>
+
+<section data-testid="plugin-list">
+    @foreach (var plugin in PluginRegistry.GetAll())
+    {
+        <div class="plugin-card">
+            <h2>@plugin.DisplayName</h2>
+            <p>@plugin.Description</p>
+            <button @onclick="() => SelectPlugin(plugin)">Generate Report</button>
+        </div>
+    }
+</section>
+
+@if (selectedPlugin is not null)
+{
+    <section data-testid="parameter-form">
+        <h2>Generate: @selectedPlugin.DisplayName</h2>
+
+        <ReportParameterForm Parameters="selectedPlugin.Parameters"
+                             Values="parameterValues"
+                             OnValuesChanged="StateHasChanged" />
+
+        @if (!string.IsNullOrEmpty(errorMessage))
+        {
+            <div class="error-message" role="alert">@errorMessage</div>
+        }
+
+        <div class="form-actions">
+            <button @onclick="GenerateReportAsync" disabled="@isGenerating">
+                @(isGenerating ? "Generating…" : "Generate")
+            </button>
+            <button @onclick="CancelSelection">Cancel</button>
+        </div>
+    </section>
+}
+
+@if (lastResult is not null)
+{
+    <section data-testid="report-result">
+        @if (lastResult.Success)
+        {
+            @if (lastResult.OutputType == ReportOutputType.FileDownload)
+            {
+                <p>Report generated. <a href="/reports/download">Download report</a></p>
+            }
+            else if (lastResult.OutputType == ReportOutputType.HtmlContent)
+            {
+                <div>@((MarkupString)lastResult.HtmlContent!)</div>
+            }
+            else if (lastResult.OutputType == ReportOutputType.PlainText)
+            {
+                <pre>@lastResult.HtmlContent</pre>
+            }
+        }
+        else
+        {
+            <div class="error-message" role="alert">@lastResult.ErrorMessage</div>
+        }
+    </section>
+}
+
+@code {
+    private IReportPlugin? selectedPlugin;
+    private Dictionary<string, string> parameterValues = new();
+    private ReportResult? lastResult;
+    private bool isGenerating = false;
+    private string? errorMessage;
+
+    private void SelectPlugin(IReportPlugin plugin)
+    {
+        selectedPlugin = plugin;
+        parameterValues = new();
+        lastResult = null;
+        errorMessage = null;
+    }
+
+    private void CancelSelection()
+    {
+        selectedPlugin = null;
+        parameterValues = new();
+        lastResult = null;
+        errorMessage = null;
+    }
+
+    private async Task GenerateReportAsync()
+    {
+        if (selectedPlugin is null) return;
+
+        isGenerating = true;
+        errorMessage = null;
+        lastResult = null;
+
+        try
+        {
+            var request = new ReportRequest
+            {
+                PluginId = selectedPlugin.PluginId,
+                Parameters = new Dictionary<string, string>(parameterValues)
+            };
+
+            var result = await selectedPlugin.GenerateAsync(request);
+            lastResult = result;
+
+            if (result.Success && result.OutputType == ReportOutputType.FileDownload)
+            {
+                DownloadStore.PendingDownload = result;
+            }
+        }
+        catch (Exception ex)
+        {
+            lastResult = ReportResult.Failure(ex.Message);
+        }
+        finally
+        {
+            isGenerating = false;
+        }
+    }
+}

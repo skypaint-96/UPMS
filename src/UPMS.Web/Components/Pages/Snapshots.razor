@@ -63,6 +63,7 @@
             string? filter = string.IsNullOrEmpty(selectedItsmSource) ? null : selectedItsmSource;
             IEnumerable<Snapshot> results = await DataService.GetSnapshotsAsync(filter);
             snapshots = results.ToList();
+            itsmSources = snapshots.Select(s => s.ItsmSource).Distinct().OrderBy(s => s).ToList();
         }
         catch
         {

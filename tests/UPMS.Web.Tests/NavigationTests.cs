@@ -116,9 +116,13 @@ public class NavigationTests : PageTestBase
     }
 
     [Test]
-    public Task Navigation_HasReportStoreLink_WhenImplemented()
+    public async Task Navigation_HasReportStoreLink_WhenImplemented()
     {
-        Assert.Ignore("Stage 5 not yet implemented — nav should include a link to /reports");
-        return Task.CompletedTask;
+        // Arrange
+        await Page.GotoAsync(Url("/"));
+
+        // Assert
+        var reportsLink = Page.Locator("nav a[href='/reports'], nav a:has-text('Reports')");
+        await Assertions.Expect(reportsLink).ToBeVisibleAsync();
     }
 }

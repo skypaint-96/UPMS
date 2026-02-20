@@ -89,4 +89,14 @@ public class TicketDataServiceInstance
     {
         return await TicketDataService.GetSnapshotsAsync(itsmSource);
     }
+
+    /// <summary>
+    /// Gets snapshots filtered by optional ITSM source and/or company name.
+    /// When <paramref name="companyName"/> is provided a subquery filters to snapshots
+    /// that contain at least one ticket for that company.
+    /// </summary>
+    public async Task<IEnumerable<Snapshot>> GetSnapshotsAsync(string? itsmSource, string? companyName)
+    {
+        return await TicketDataService.GetSnapshotsAsync(itsmSource, companyName);
+    }
 }

@@ -3,6 +3,8 @@ namespace UPMS.Web
     using Microsoft.Extensions.Options;
     using UPMS.Web.Components;
     using UPMS.Web.Plugins;
+    using UPMS.Web.Plugins.PowerPoint;
+    using UPMS.Web.Plugins.Email;
     using UPMS.Web.Services;
     using UPMS.Data;
 
@@ -28,12 +30,17 @@ namespace UPMS.Web
 
             // Register report plugins
             builder.Services.AddSingleton<IReportPlugin, StubReportPlugin>();
+            builder.Services.AddSingleton<IReportPlugin, PowerPointReportPlugin>();
+            builder.Services.AddSingleton<IReportPlugin, EmailNotificationPlugin>();
 
             // Register plugin registry (receives all IReportPlugin registrations via IEnumerable)
             builder.Services.AddSingleton<PluginRegistry>();
 
             // Register ingest service
             builder.Services.AddScoped<ISnapshotIngestService, SnapshotIngestService>();
+
+            // Register report download store (scoped per-connection)
+            builder.Services.AddScoped<ReportDownloadStore>();
 
             var app = builder.Build();
 
@@ -53,6 +60,20 @@ namespace UPMS.Web
             app.MapStaticAssets();
             app.MapRazorComponents<App>()
                 .AddInteractiveServerRenderMode();
+
+            app.MapGet("/reports/download", async (ReportDownloadStore store, HttpContext ctx) =>
+            {
+                if (store.PendingDownload is null || store.PendingDownload.FileContent is null)
+                {
+                    ctx.Response.StatusCode = 404;
+                    return;
+                }
+                var result = store.PendingDownload;
+                store.PendingDownload = null;
+                ctx.Response.ContentType = result.ContentType ?? "application/octet-stream";
+                ctx.Response.Headers.ContentDisposition = $"attachment; filename=\"{result.FileName ?? "report"}\"";
+                await ctx.Response.Body.WriteAsync(result.FileContent);
+            });
 
             app.Run();
         }

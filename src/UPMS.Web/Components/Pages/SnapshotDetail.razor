@@ -30,10 +30,10 @@
             @foreach (Ticket ticket in tickets)
             {
                 <tr>
-                    <td><a href="/tickets/@Uri.EscapeDataString(ticket.CompanyName)/@Uri.EscapeDataString(ticket.TicketKey)">@ticket.TicketKey</a></td>
+                    <td><a href="/tickets/@Uri.EscapeDataString(ticket.CompanyName)/@Uri.EscapeDataString(ticket.ItsmSource)/@Uri.EscapeDataString(ticket.TicketKey)">@ticket.TicketKey</a></td>
                     <td>@ticket.CompanyName</td>
                     <td>@ticket.ItsmSource</td>
-                    <td>@(ticket.Fields.TryGetValue("Status", out string? status) ? status : "—")</td>
+                    <td>@(ticket.Fields.TryGetValue("Status", out string? status) ? status : "ï¿½")</td>
                 </tr>
             }
         }
