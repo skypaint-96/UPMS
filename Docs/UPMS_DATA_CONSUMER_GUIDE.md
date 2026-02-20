@@ -558,6 +558,66 @@ All public methods validate inputs and throw appropriate exceptions:
 
 ---
 
+## Canonical Field Mapping
+
+> **Planned — not yet implemented** in the current version of `UPMS.Data`.
+
+### What It Is
+
+Different ITSM sources use different field names for semantically identical data. The canonical field mapping system provides a reference table (`itsm_field_mapping`) that maps source-specific field names to a single normalised (canonical) name used consistently throughout UPMS.
+
+**Table: `itsm_field_mapping`**
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `itsm_source` | `VARCHAR` | The ITSM source system (e.g. `"ServiceNow"`, `"Jira"`) |
+| `source_field_name` | `VARCHAR` | The field name as it appears in exports from that source |
+| `canonical_field_name` | `VARCHAR` | The normalised field name used internally in UPMS |
+
+### Why It Exists
+
+Without canonical mapping, the same concept — such as ticket status — appears under different names depending on the source:
+
+| ITSM Source | Source Field Name | Canonical Field Name |
+|-------------|-------------------|----------------------|
+| ServiceNow  | `incident_state`  | `Status`             |
+| Jira        | `status`          | `Status`             |
+| ServiceNow  | `assigned_to`     | `Assignee`           |
+| Jira        | `assignee`        | `Assignee`           |
+| ServiceNow  | `short_description` | `Summary`          |
+| Jira        | `summary`         | `Summary`            |
+
+Without mapping, queries and reports would need to handle source-specific field names separately, and ticket data from different sources could not be compared directly.
+
+### How It Will Be Used
+
+During ingest (file upload), the source field names found in the uploaded file are looked up in `itsm_field_mapping` for the relevant ITSM source. The canonical field name is used when writing `field_change` records to the database.
+
+Pseudocode:
+
+```
+for each field in uploaded ticket:
+    canonicalName = mappingService.Lookup(itsmSource, sourceFieldName)
+                    ?? sourceFieldName   // fallback: use source name if no mapping found
+    RecordFieldChange(ticketKey, canonicalName, fieldValue, ...)
+```
+
+Once canonical mapping is in place, all `field_change` records use canonical field names regardless of their origin. Consumers of `TicketDataService` can query using canonical names (e.g. `"Status"`) and receive consistent results across all ITSM sources.
+
+### Planned API Addition
+
+A future `ItsmFieldMappingService` (in `UPMS.Data`) will expose:
+
+```csharp
+// Look up the canonical name for a given source field name
+string? GetCanonicalName(string itsmSource, string sourceFieldName);
+
+// Get all mappings for an ITSM source
+IEnumerable<ItsmFieldMapping> GetMappingsForSource(string itsmSource);
+```
+
+---
+
 ## Summary
 
 | Aspect | Details |
@@ -569,3 +629,4 @@ All public methods validate inputs and throw appropriate exceptions:
 | **Data Retrieval** | Point-in-time queries, Snapshot queries, History queries |
 | **Configuration** | `DatabaseOptions` from appsettings.json |
 | **Core Pattern** | Snapshot-based history tracking with field change auditing |
+| **Canonical Mapping** | `itsm_field_mapping` table — normalises field names across ITSM sources *(planned)* |

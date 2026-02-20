@@ -1,0 +1,103 @@
+namespace UPMS.Web.Tests;
+
+/// <summary>
+/// Requirements for the ticket dump upload page (/upload).
+/// Users must be able to upload CSV or JSON ticket dumps from ITSM sources.
+/// </summary>
+[TestFixture]
+public class UploadPageTests : PageTestBase
+{
+    [Test]
+    public async Task WhenUploadPageLoadsThenPageTitleContainsUpload()
+    {
+        // Act
+        await Page.GotoAsync(Url("/upload"));
+
+        // Assert
+        string title = await Page.TitleAsync();
+        Assert.That(title, Does.Contain("Upload").IgnoreCase);
+    }
+
+    [Test]
+    public async Task WhenUploadPageLoadsThenHeadingIsVisible()
+    {
+        // Act
+        await Page.GotoAsync(Url("/upload"));
+
+        // Assert
+        var heading = Page.GetByRole(Microsoft.Playwright.AriaRole.Heading, new() { Name = "Upload" });
+        await Assertions.Expect(heading).ToBeVisibleAsync();
+    }
+
+    [Test]
+    public async Task WhenUploadPageLoadsThenItsmSourceSelectorIsPresent()
+    {
+        // Act
+        await Page.GotoAsync(Url("/upload"));
+
+        // Assert — users must select which ITSM source the dump originates from.
+        var selector = Page.Locator("[data-testid='upload-itsm-source']");
+        await Assertions.Expect(selector).ToBeVisibleAsync();
+    }
+
+    [Test]
+    public async Task WhenUploadPageLoadsThenFileInputIsPresent()
+    {
+        // Act
+        await Page.GotoAsync(Url("/upload"));
+
+        // Assert — a file input must be available for selecting CSV or JSON files.
+        var fileInput = Page.Locator("[data-testid='upload-file-input']");
+        await Assertions.Expect(fileInput).ToBeAttachedAsync();
+    }
+
+    [Test]
+    public async Task WhenUploadPageLoadsThenUploadButtonIsPresent()
+    {
+        // Act
+        await Page.GotoAsync(Url("/upload"));
+
+        // Assert
+        var button = Page.Locator("[data-testid='upload-submit']");
+        await Assertions.Expect(button).ToBeVisibleAsync();
+    }
+
+    [Test]
+    public async Task WhenUploadPageLoadsThenResultAreaIsPresent()
+    {
+        // Act
+        await Page.GotoAsync(Url("/upload"));
+
+        // Assert — an area must exist to display upload results or status messages.
+        var resultArea = Page.Locator("[data-testid='upload-result']");
+        await Assertions.Expect(resultArea).ToBeAttachedAsync();
+    }
+
+    [Test]
+    public async Task WhenUploadSubmittedWithoutFileThenValidationMessageShown()
+    {
+        // Arrange
+        await Page.GotoAsync(Url("/upload"));
+
+        // Act — click upload without selecting a file.
+        await Page.Locator("[data-testid='upload-submit']").ClickAsync();
+
+        // Assert — a validation message should tell the user a file is required.
+        var validation = Page.Locator("[data-testid='upload-validation']");
+        await Assertions.Expect(validation).ToBeVisibleAsync();
+    }
+
+    [Test]
+    public async Task WhenUploadSubmittedWithoutItsmSourceThenValidationMessageShown()
+    {
+        // Arrange
+        await Page.GotoAsync(Url("/upload"));
+
+        // Act — click upload without selecting an ITSM source.
+        await Page.Locator("[data-testid='upload-submit']").ClickAsync();
+
+        // Assert
+        var validation = Page.Locator("[data-testid='upload-validation']");
+        await Assertions.Expect(validation).ToBeVisibleAsync();
+    }
+}

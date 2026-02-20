@@ -1,0 +1,80 @@
+@page "/upload"
+@rendermode InteractiveServer
+
+<PageTitle>Upload - UPMS</PageTitle>
+
+<h1>Upload Ticket Dump</h1>
+
+<div>
+    <label for="itsm-source">ITSM Source</label>
+    <select id="itsm-source" data-testid="upload-itsm-source" @bind="selectedItsmSource">
+        <option value="">-- Select ITSM Source --</option>
+        <option value="servicenow">ServiceNow</option>
+        <option value="jira">Jira</option>
+    </select>
+</div>
+
+<div>
+    <label for="file-input">Ticket Dump File (CSV or JSON)</label>
+    <InputFile id="file-input" data-testid="upload-file-input" OnChange="OnFileSelected" accept=".csv,.json" />
+</div>
+
+<button data-testid="upload-submit" @onclick="OnUploadAsync">Upload</button>
+
+@if (!string.IsNullOrEmpty(validationMessage))
+{
+    <div data-testid="upload-validation">@validationMessage</div>
+}
+
+<div data-testid="upload-result">
+    @if (!string.IsNullOrEmpty(resultMessage))
+    {
+        <p>@resultMessage</p>
+    }
+</div>
+
+@code {
+    [Inject]
+    private TicketDataServiceInstance DataService { get; set; } = default!;
+
+    private string selectedItsmSource = string.Empty;
+    private IBrowserFile? selectedFile;
+    private string? validationMessage;
+    private string? resultMessage;
+
+    private void OnFileSelected(InputFileChangeEventArgs e)
+    {
+        selectedFile = e.File;
+        validationMessage = null;
+    }
+
+    private async Task OnUploadAsync()
+    {
+        validationMessage = null;
+        resultMessage = null;
+
+        if (string.IsNullOrEmpty(selectedItsmSource) || selectedFile is null)
+        {
+            validationMessage = string.IsNullOrEmpty(selectedItsmSource) && selectedFile is null
+                ? "Please select an ITSM source and a file."
+                : string.IsNullOrEmpty(selectedItsmSource)
+                    ? "Please select an ITSM source."
+                    : "Please select a file.";
+            return;
+        }
+
+        try
+        {
+            Guid snapshotId = await DataService.CreateSnapshotAsync(
+                selectedItsmSource,
+                DateTime.UtcNow,
+                uploadedBy: "web-upload");
+
+            resultMessage = $"Snapshot {snapshotId} created successfully.";
+        }
+        catch
+        {
+            resultMessage = "Upload failed. Please try again.";
+        }
+    }
+}

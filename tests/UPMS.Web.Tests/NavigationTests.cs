@@ -89,4 +89,29 @@ public class NavigationTests : PageTestBase
         var ticketsLink = Page.Locator("nav a[href='/tickets']");
         await Assertions.Expect(ticketsLink).ToHaveAttributeAsync("aria-current", "page");
     }
+
+    [Test]
+    public async Task WhenPageLoadsThenNavContainsUploadLink()
+    {
+        // Act
+        await Page.GotoAsync(Url("/"));
+
+        // Assert
+        var uploadLink = Page.Locator("nav a[href='/upload']");
+        await Assertions.Expect(uploadLink).ToBeVisibleAsync();
+    }
+
+    [Test]
+    public async Task WhenUploadLinkClickedThenNavigatesToUploadPage()
+    {
+        // Arrange
+        await Page.GotoAsync(Url("/"));
+
+        // Act
+        await Page.Locator("nav a[href='/upload']").ClickAsync();
+
+        // Assert
+        await Page.WaitForURLAsync("**/upload");
+        Assert.That(Page.Url, Does.Contain("/upload"));
+    }
 }
