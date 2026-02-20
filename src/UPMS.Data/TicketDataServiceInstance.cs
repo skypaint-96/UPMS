@@ -42,14 +42,14 @@ public class TicketDataServiceInstance
     /// Records a field change for a ticket.
     /// </summary>
     public async Task RecordFieldChangeAsync(
-        string ticketKey,
         string companyName,
+        string ticketKey,
         string fieldName,
         string? fieldValue,
         DateTime observedAt,
         Guid snapshotId)
     {
-        await TicketDataService.RecordFieldChangeAsync(ticketKey, companyName, fieldName, fieldValue, observedAt, snapshotId);
+        await TicketDataService.RecordFieldChangeAsync(companyName, ticketKey, fieldName, fieldValue, observedAt, snapshotId);
     }
 
     /// <summary>

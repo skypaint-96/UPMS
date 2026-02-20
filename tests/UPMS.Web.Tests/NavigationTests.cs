@@ -73,7 +73,7 @@ public class NavigationTests : PageTestBase
         // Act
         await Page.GotoAsync(Url("/this-route-does-not-exist"));
 
-        // Assert — the not-found page should be shown with an informative message.
+        // Assert ï¿½ the not-found page should be shown with an informative message.
         var notFoundHeading = Page.Locator("text=Not Found");
         await Assertions.Expect(notFoundHeading).ToBeVisibleAsync();
     }
@@ -84,7 +84,7 @@ public class NavigationTests : PageTestBase
         // Act
         await Page.GotoAsync(Url("/tickets"));
 
-        // Assert — the active nav link should have an "active" CSS class or
+        // Assert ï¿½ the active nav link should have an "active" CSS class or
         // aria-current attribute to indicate the current page.
         var ticketsLink = Page.Locator("nav a[href='/tickets']");
         await Assertions.Expect(ticketsLink).ToHaveAttributeAsync("aria-current", "page");
@@ -113,5 +113,12 @@ public class NavigationTests : PageTestBase
         // Assert
         await Page.WaitForURLAsync("**/upload");
         Assert.That(Page.Url, Does.Contain("/upload"));
+    }
+
+    [Test]
+    public Task Navigation_HasReportStoreLink_WhenImplemented()
+    {
+        Assert.Ignore("Stage 5 not yet implemented â€” nav should include a link to /reports");
+        return Task.CompletedTask;
     }
 }

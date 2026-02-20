@@ -94,6 +94,13 @@ public class TestDatabaseFixture
                 created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
+            CREATE TABLE IF NOT EXISTS itsm_field_mapping (
+                itsm_source VARCHAR(100) NOT NULL,
+                source_field_name VARCHAR(255) NOT NULL,
+                canonical_field_name VARCHAR(255) NOT NULL,
+                PRIMARY KEY (itsm_source, source_field_name)
+            );
+
             CREATE INDEX IF NOT EXISTS idx_snapshot_ticket_snapshot_id ON snapshot_ticket (snapshot_id);
             CREATE INDEX IF NOT EXISTS idx_snapshot_ticket_company_name ON snapshot_ticket (company_name);
             CREATE INDEX IF NOT EXISTS idx_field_change_company_ticket_time ON field_change (company_name, ticket_key, observed_at DESC);
@@ -103,6 +110,11 @@ public class TestDatabaseFixture
         using SqliteCommand cmd = connection.CreateCommand();
         cmd.CommandText = createTablesSQL;
         int unused = await cmd.ExecuteNonQueryAsync();
+    }
+
+    public static IItsmFieldMappingService GetMappingService()
+    {
+        return new ItsmFieldMappingService(() => new SqliteConnection($"Data Source={TestDatabasePath}"));
     }
 
     private static async Task SeedTestDataAsync(SqliteConnection connection)
@@ -187,6 +199,15 @@ public class TestDatabaseFixture
             await InsertFieldChangeAsync(connection, company3Name, ticketKey, TestData.Fields.Status, TestData.FieldValues.StatusResolved, testSnapshotDate, Company3SnapshotId);
             await InsertFieldChangeAsync(connection, company3Name, ticketKey, TestData.Fields.Resolution, "Fixed", testSnapshotDate, Company3SnapshotId);
         }
+
+        // Seed canonical field mappings for ServiceNow
+        await InsertFieldMappingAsync(connection, "servicenow", "incident_state", "Status");
+        await InsertFieldMappingAsync(connection, "servicenow", "assigned_to", "Assignee");
+        await InsertFieldMappingAsync(connection, "servicenow", "short_description", "Summary");
+        // Seed canonical field mappings for Jira
+        await InsertFieldMappingAsync(connection, "jira", "status", "Status");
+        await InsertFieldMappingAsync(connection, "jira", "assignee", "Assignee");
+        await InsertFieldMappingAsync(connection, "jira", "summary", "Summary");
     }
 
     private static async Task InsertSnapshotAsync(SqliteConnection connection, string snapshotId, string itsmSource, DateTime snapshotDate)
@@ -215,6 +236,16 @@ public class TestDatabaseFixture
         cmd.Parameters.AddWithValue("SnapshotId", snapshotId);
         cmd.Parameters.AddWithValue("CompanyName", companyName);
         cmd.Parameters.AddWithValue("TicketKey", ticketKey);
+        await cmd.ExecuteNonQueryAsync();
+    }
+
+    private static async Task InsertFieldMappingAsync(SqliteConnection connection, string itsmSource, string sourceFieldName, string canonicalFieldName)
+    {
+        using SqliteCommand cmd = connection.CreateCommand();
+        cmd.CommandText = "INSERT OR REPLACE INTO itsm_field_mapping (itsm_source, source_field_name, canonical_field_name) VALUES (@ItsmSource, @SourceFieldName, @CanonicalFieldName)";
+        cmd.Parameters.AddWithValue("ItsmSource", itsmSource);
+        cmd.Parameters.AddWithValue("SourceFieldName", sourceFieldName);
+        cmd.Parameters.AddWithValue("CanonicalFieldName", canonicalFieldName);
         await cmd.ExecuteNonQueryAsync();
     }
 

@@ -35,7 +35,7 @@ public class UploadPageTests : PageTestBase
         // Act
         await Page.GotoAsync(Url("/upload"));
 
-        // Assert — users must select which ITSM source the dump originates from.
+        // Assert ï¿½ users must select which ITSM source the dump originates from.
         var selector = Page.Locator("[data-testid='upload-itsm-source']");
         await Assertions.Expect(selector).ToBeVisibleAsync();
     }
@@ -46,7 +46,7 @@ public class UploadPageTests : PageTestBase
         // Act
         await Page.GotoAsync(Url("/upload"));
 
-        // Assert — a file input must be available for selecting CSV or JSON files.
+        // Assert ï¿½ a file input must be available for selecting CSV or JSON files.
         var fileInput = Page.Locator("[data-testid='upload-file-input']");
         await Assertions.Expect(fileInput).ToBeAttachedAsync();
     }
@@ -68,7 +68,7 @@ public class UploadPageTests : PageTestBase
         // Act
         await Page.GotoAsync(Url("/upload"));
 
-        // Assert — an area must exist to display upload results or status messages.
+        // Assert ï¿½ an area must exist to display upload results or status messages.
         var resultArea = Page.Locator("[data-testid='upload-result']");
         await Assertions.Expect(resultArea).ToBeAttachedAsync();
     }
@@ -79,10 +79,10 @@ public class UploadPageTests : PageTestBase
         // Arrange
         await Page.GotoAsync(Url("/upload"));
 
-        // Act — click upload without selecting a file.
+        // Act ï¿½ click upload without selecting a file.
         await Page.Locator("[data-testid='upload-submit']").ClickAsync();
 
-        // Assert — a validation message should tell the user a file is required.
+        // Assert ï¿½ a validation message should tell the user a file is required.
         var validation = Page.Locator("[data-testid='upload-validation']");
         await Assertions.Expect(validation).ToBeVisibleAsync();
     }
@@ -93,10 +93,74 @@ public class UploadPageTests : PageTestBase
         // Arrange
         await Page.GotoAsync(Url("/upload"));
 
-        // Act — click upload without selecting an ITSM source.
+        // Act ï¿½ click upload without selecting an ITSM source.
         await Page.Locator("[data-testid='upload-submit']").ClickAsync();
 
         // Assert
+        var validation = Page.Locator("[data-testid='upload-validation']");
+        await Assertions.Expect(validation).ToBeVisibleAsync();
+    }
+    [Test]
+    public async Task UploadPage_HasCompanyNameInput()
+    {
+        // Act
+        await Page.GotoAsync(Url("/upload"));
+
+        // Assert â€” users must supply a company name so tickets are attributed correctly.
+        var companyInput = Page.Locator("[data-testid='company-name-input'], input[name='companyName']");
+        var hasTestId = await companyInput.CountAsync() > 0;
+        var hasLabel = await Page.Locator("label", new() { HasText = "Company" }).CountAsync() > 0;
+        Assert.That(hasTestId || hasLabel, Is.True, "Expected a company name input or a label containing 'Company'.");
+    }
+
+    [Test]
+    public async Task UploadPage_HasSnapshotDateInput()
+    {
+        // Act
+        await Page.GotoAsync(Url("/upload"));
+
+        // Assert â€” users must supply the date the snapshot was taken.
+        var dateInput = Page.Locator("[data-testid='snapshot-date-input'], input[type='date']");
+        await Assertions.Expect(dateInput.First).ToBeAttachedAsync();
+    }
+
+    [Test]
+    [Description("Stage 4 requirement â€” ingest summary is shown after a successful upload. Not yet implemented.")]
+    public Task UploadPage_ShowsIngestSummary_AfterSuccessfulUpload()
+    {
+        Assert.Ignore("Stage 4 not yet implemented â€” this test documents the requirement: " +
+                      "after a successful upload the page must show [data-testid='ingest-summary'].");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    [Description("Stage 4 requirement â€” summary must display how many tickets were ingested.")]
+    public Task UploadPage_ShowsTicketCount_InSummary()
+    {
+        Assert.Ignore("Stage 4 not yet implemented â€” this test documents the requirement: " +
+                      "the ingest summary must contain text matching 'ticket' (singular or plural).");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    [Description("Stage 4 requirement â€” summary must display how many field changes were recorded.")]
+    public Task UploadPage_ShowsFieldChangeCount_InSummary()
+    {
+        Assert.Ignore("Stage 4 not yet implemented â€” this test documents the requirement: " +
+                      "the ingest summary must contain text matching 'field change'.");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task UploadPage_ValidationMessage_ShownForMissingCompanyName()
+    {
+        // Arrange
+        await Page.GotoAsync(Url("/upload"));
+
+        // Act â€” click upload without entering a company name.
+        await Page.Locator("[data-testid='upload-submit']").ClickAsync();
+
+        // Assert â€” validation message should indicate company name is required.
         var validation = Page.Locator("[data-testid='upload-validation']");
         await Assertions.Expect(validation).ToBeVisibleAsync();
     }

@@ -1,6 +1,9 @@
 namespace UPMS.Web
 {
+    using Microsoft.Extensions.Options;
     using UPMS.Web.Components;
+    using UPMS.Web.Plugins;
+    using UPMS.Web.Services;
     using UPMS.Data;
 
     public class Program
@@ -17,6 +20,20 @@ namespace UPMS.Web
             builder.Services.Configure<DatabaseOptions>(
                 builder.Configuration.GetSection(DatabaseOptions.SectionName));
             builder.Services.AddSingleton<TicketDataServiceInstance>();
+
+            // Register canonical field mapping service
+            builder.Services.AddSingleton<IItsmFieldMappingService>(sp =>
+                ItsmFieldMappingService.CreateFromOptions(
+                    sp.GetRequiredService<IOptions<DatabaseOptions>>()));
+
+            // Register report plugins
+            builder.Services.AddSingleton<IReportPlugin, StubReportPlugin>();
+
+            // Register plugin registry (receives all IReportPlugin registrations via IEnumerable)
+            builder.Services.AddSingleton<PluginRegistry>();
+
+            // Register ingest service
+            builder.Services.AddScoped<ISnapshotIngestService, SnapshotIngestService>();
 
             var app = builder.Build();
 

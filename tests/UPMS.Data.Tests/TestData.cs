@@ -60,4 +60,28 @@ public static class TestData
         public static readonly DateTime NewSnapshotDate = new(2025, 1, 15, 12, 0, 0, DateTimeKind.Utc);
         public static readonly DateTime ReferenceDate = NewSnapshotDate;
     }
+
+    // Canonical field mapping test data
+    public static class SourceFields
+    {
+        // ServiceNow source field names
+        public const string ServiceNowIncidentState = "incident_state";
+        public const string ServiceNowAssignedTo = "assigned_to";
+        public const string ServiceNowShortDescription = "short_description";
+
+        // Jira source field names
+        public const string JiraStatus = "status";
+        public const string JiraAssignee = "assignee";
+        public const string JiraSummary = "summary";
+
+        // Unknown field (no mapping)
+        public const string UnknownField = "custom_field_xyz";
+    }
+
+    public static class CanonicalFields
+    {
+        public const string Status = "Status";
+        public const string Assignee = "Assignee";
+        public const string Summary = "Summary";
+    }
 }
