@@ -103,7 +103,7 @@ public static class TicketDataService
                 sql,
                 new
                 {
-                    Id = snapshotId.ToString(),
+                    Id = snapshotId,
                     ItsmSource = itsmSource,
                     SnapshotDate = snapshotDate,
                     UploadedBy = uploadedBy,
@@ -156,8 +156,8 @@ public static class TicketDataService
                 insertSql,
                 new
                 {
-                    Id = Guid.NewGuid().ToString(),
-                    SnapshotId = snapshotId.ToString(),
+                    Id = Guid.NewGuid(),
+                    SnapshotId = snapshotId,
                     CompanyName = companyName,
                     TicketKey = ticketKey
                 },
@@ -219,7 +219,7 @@ public static class TicketDataService
                 FieldName = fieldName,
                 FieldValue = fieldValue,
                 ObservedAt = observedAt,
-                SnapshotId = snapshotId.ToString()
+                SnapshotId = snapshotId
             }
         );
     }
@@ -348,7 +348,7 @@ public static class TicketDataService
         using IDbConnection connection = GetConnection();
         IEnumerable<TicketQueryResult> ticketRows = await connection.QueryAsync<TicketQueryResult>(
             sql,
-            new { SnapshotId = snapshotId.ToString() }
+            new { SnapshotId = snapshotId }
         );
 
         List<Ticket> tickets = [];
@@ -466,7 +466,7 @@ public static class TicketDataService
 
         return rows.Select(row => new Snapshot
         {
-            Id = Guid.Parse(row.Id),
+            Id = row.Id,
             ItsmSource = row.ItsmSource,
             SnapshotDate = ParseDateTime(row.SnapshotDate),
             UploadedBy = row.UploadedBy,
@@ -521,7 +521,7 @@ public static class TicketDataService
 
         return rows.Select(row => new Snapshot
         {
-            Id = Guid.Parse(row.Id),
+            Id = row.Id,
             ItsmSource = row.ItsmSource,
             SnapshotDate = ParseDateTime(row.SnapshotDate),
             UploadedBy = row.UploadedBy,

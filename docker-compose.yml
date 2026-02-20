@@ -10,6 +10,8 @@ services:
       - ASPNETCORE_ENVIRONMENT=Production
       - ASPNETCORE_URLS=http://+:8080
       - UPMS_CONNECTION_STRING=Host=db;Port=5432;Database=upms;Username=upms;Password=upms
+    volumes:
+      - upms_keys:/app/keys
     depends_on:
       db:
         condition: service_healthy
@@ -33,3 +35,4 @@ services:
 
 volumes:
   pgdata:
+  upms_keys:

@@ -1,5 +1,7 @@
 namespace UPMS.Web
 {
+    using System.IO;
+    using Microsoft.AspNetCore.DataProtection;
     using Microsoft.Extensions.Options;
     using Npgsql;
     using UPMS.Web.Components;
@@ -68,6 +70,15 @@ namespace UPMS.Web
             // Register report download store (scoped per-connection)
             builder.Services.AddScoped<ReportDownloadStore>();
 
+            // ------------------------------------------------------------------
+            // Data Protection: persist keys to a directory so they survive
+            // container restarts. In Docker the directory is backed by the
+            // named volume 'upms_keys' mounted at /app/keys.
+            // ------------------------------------------------------------------
+            builder.Services.AddDataProtection()
+                .PersistKeysToFileSystem(new DirectoryInfo("/app/keys"))
+                .SetApplicationName("UPMS");
+
             var app = builder.Build();
 
             // ------------------------------------------------------------------
@@ -91,7 +102,16 @@ namespace UPMS.Web
             }
 
             app.UseStatusCodePagesWithReExecute("/not-found", createScopeForStatusCodePages: true);
-            app.UseHttpsRedirection();
+
+            // Only redirect to HTTPS when a certificate / HTTPS port is actually
+            // configured (i.e. local development). Inside Docker the container
+            // runs plain HTTP behind a reverse proxy, so redirecting would loop
+            // forever and also causes the "Failed to determine the https port"
+            // warning in logs.
+            if (app.Environment.IsDevelopment())
+            {
+                app.UseHttpsRedirection();
+            }
 
             app.UseAntiforgery();
 

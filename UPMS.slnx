@@ -1,20 +1,4 @@
 <Solution>
-  <Folder Name="/Docs/">
-    <File Path="DOCKER.md" />
-    <File Path="Docs/Build Stages.md" />
-    <File Path="Docs/Envionment.md" />
-    <File Path="Docs/Project Overview.md" />
-    <File Path="Docs/Technical Architecture.md" />
-    <File Path="Docs/UPMS_DATA_CONSUMER_GUIDE.md" />
-    <File Path="README.md" />
-  </Folder>
-  <Folder Name="/SQL/">
-    <File Path="sql/migrations/001_initial_schema.sql" />
-    <File Path="sql/migrations/002_indexes.sql" />
-    <File Path="sql/stored-procedures/batch_reconstruct_tickets.sql" />
-    <File Path="sql/stored-procedures/get_tickets_for_snapshot.sql" />
-    <File Path="sql/stored-procedures/get_ticket_at_time.sql" />
-  </Folder>
   <Project Path="docker-compose.dcproj">
     <Build />
   </Project>

@@ -5,7 +5,7 @@ namespace UPMS.Data;
 /// </summary>
 internal class SnapshotQueryResult
 {
-    public string Id { get; set; } = string.Empty;
+    public Guid Id { get; set; }
     public string ItsmSource { get; set; } = string.Empty;
     public string SnapshotDate { get; set; } = string.Empty;
     public string UploadedBy { get; set; } = string.Empty;
