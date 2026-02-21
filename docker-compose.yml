@@ -1,5 +1,5 @@
 services:
-  web:
+  UPMS_web:
     image: ${DOCKER_REGISTRY-}upmsweb
     build:
       context: .
@@ -9,19 +9,15 @@ services:
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
       - ASPNETCORE_URLS=http://+:8080
-      - UPMS_CONNECTION_STRING=Host=db;Port=5432;Database=upms;Username=upms;Password=upms
+      - UPMS_CONNECTION_STRING=<Production connection string here>
     volumes:
       - upms_keys:/app/keys
     depends_on:
-      db:
+      UPMS_db:
         condition: service_healthy
 
-  db:
+  UPMS_db:
     image: postgres:16-alpine
-    environment:
-      POSTGRES_USER: upms
-      POSTGRES_PASSWORD: upms
-      POSTGRES_DB: upms
     ports:
       - "5432:5432"
     volumes:
