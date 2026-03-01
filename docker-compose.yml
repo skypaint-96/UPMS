@@ -18,9 +18,9 @@ services:
       - AzureAd__ClientId=${AZUREAD__CLIENTID}
       - AzureAd__TenantId=${AZUREAD__TENANTID}
       - AzureAd__ClientSecret_FILE=/run/secrets/upms_azure_client_secret
-    secrets:
-      - upms_connection_string
-      - upms_azure_client_secret
+    # Removed `secrets:` here because docker compose (non-swarm) does not support external secrets.
+    # In Swarm/Kubernetes you can mount secrets to /run/secrets and keep the `secrets:` mapping.
+    # The app reads secret files from /run/secrets when available (see *_FILE env vars above).
     volumes:
       - upms_keys:/app/keys
     depends_on:
@@ -36,8 +36,8 @@ services:
       - POSTGRES_USER=upms
       - POSTGRES_PASSWORD_FILE=/run/secrets/upms_db_password
       - POSTGRES_DB=upms
-    secrets:
-      - upms_db_password
+    # Removed `secrets:` here because docker compose (non-swarm) does not support external secrets.
+    # For Swarm, provide the DB password as a Docker secret mounted at /run/secrets/upms_db_password.
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -51,12 +51,20 @@ volumes:
   pgdata:
   upms_keys:
 
-secrets:
-  # These secrets are examples. In production the orchestrator (Docker Swarm / Kubernetes / cloud)
-  # should provide the secret values. Marked external to indicate they are managed outside this repo.
-  upms_connection_string:
-    external: true
-  upms_azure_client_secret:
-    external: true
-  upms_db_password:
-    external: true
+# Swarm-only: example secret definitions (commented out for local compose)
+# To enable secrets in Docker Swarm, uncomment and manage secrets externally:
+# secrets:
+#   upms_connection_string:
+#     external: true
+#   upms_azure_client_secret:
+#     external: true
+#   upms_db_password:
+#     external: true
+#
+# Example commands to create secrets in Swarm:
+# docker secret create upms_connection_string ./secrets/upms_connection_string
+# docker secret create upms_azure_client_secret ./secrets/upms_azure_client_secret
+# docker secret create upms_db_password ./secrets/upms_db_password
+#
+# Local development: provide secrets via environment variables, a .env file, or mount host files to ./secrets/.
+# Warning: do NOT commit .env or files in ./secrets/ to version control.

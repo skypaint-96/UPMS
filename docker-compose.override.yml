@@ -6,13 +6,21 @@ services:
       - ASPNETCORE_ENVIRONMENT=Development
       - ASPNETCORE_URLS=http://+:8080
       - AUTH_MODE=None
-      # For local development you may set UPMS_CONNECTION_STRING directly or use a .env file.
+      # For local development you may set UPMS_CONNECTION_STRING directly, via a .env file,
+      # or mount a host file into ./secrets/ and map to /run/secrets/ in production only.
       - UPMS_CONNECTION_STRING=Host=UPMS_db;Port=5432;Database=upms;Username=upms;Password=upms
+      # Dev-friendly direct secrets (avoid committing these):
+      - UPMS_DB_PASSWORD=upms
+      - AZURE_CLIENT_SECRET=dev_secret
+      - AUTH_MODE=None
+      - ASPNETCORE_ENVIRONMENT=Development
     ports:
       - "8081:8080"
     volumes:
       # Mount source for live editing / dotnet watch in dev
       - ./src/UPMS.Web:/app/src/UPMS.Web:ro
+      # Optional: mount local secret files for testing (create ./secrets/upms_db_password etc.)
+      # - ./secrets:/run/secrets:ro
 
   UPMS_db:
     environment:
