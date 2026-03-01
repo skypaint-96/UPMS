@@ -1,21 +1,25 @@
+# Development override - mounts source and enables permissive auth mode.
+# Do NOT commit local secret files or .env files to VCS.
 services:
   UPMS_web:
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
       - ASPNETCORE_URLS=http://+:8080
+      - AUTH_MODE=None
+      # For local development you may set UPMS_CONNECTION_STRING directly or use a .env file.
       - UPMS_CONNECTION_STRING=Host=UPMS_db;Port=5432;Database=upms;Username=upms;Password=upms
     ports:
       - "8081:8080"
     volumes:
-      - ${APPDATA}/Microsoft/UserSecrets:/home/app/.microsoft/usersecrets:ro
-      - ${APPDATA}/Microsoft/UserSecrets:/root/.microsoft/usersecrets:ro
+      # Mount source for live editing / dotnet watch in dev
+      - ./src/UPMS.Web:/app/src/UPMS.Web:ro
 
   UPMS_db:
     environment:
-      POSTGRES_USER: upms1
-      POSTGRES_PASSWORD: upms
-      POSTGRES_DB: upms
-
+      # For development only: use simple passwords or provide via environment (do NOT commit these)
+      - POSTGRES_USER=upms
+      - POSTGRES_PASSWORD=upms
+      - POSTGRES_DB=upms
 
   UPMS_db_test:
     image: postgres:16-alpine

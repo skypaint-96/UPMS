@@ -1,3 +1,5 @@
+# docker-compose for UPMS
+# NOTE: Do NOT commit secret values or .env files to version control.
 services:
   UPMS_web:
     image: ${DOCKER_REGISTRY-}upmsweb
@@ -9,7 +11,16 @@ services:
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
       - ASPNETCORE_URLS=http://+:8080
-      - UPMS_CONNECTION_STRING=<Production connection string here>
+      - AUTH_MODE=Entra
+      # Prefer supplying the DB connection string via a docker secret file.
+      - UPMS_CONNECTION_STRING_FILE=/run/secrets/upms_connection_string
+      # Azure AD settings: ClientId / TenantId may be provided as env vars; ClientSecret should be provided as a docker secret.
+      - AzureAd__ClientId=${AZUREAD__CLIENTID}
+      - AzureAd__TenantId=${AZUREAD__TENANTID}
+      - AzureAd__ClientSecret_FILE=/run/secrets/upms_azure_client_secret
+    secrets:
+      - upms_connection_string
+      - upms_azure_client_secret
     volumes:
       - upms_keys:/app/keys
     depends_on:
@@ -20,6 +31,13 @@ services:
     image: postgres:16-alpine
     ports:
       - "5432:5432"
+    environment:
+      # Use POSTGRES_PASSWORD_FILE so password can be supplied via docker secret
+      - POSTGRES_USER=upms
+      - POSTGRES_PASSWORD_FILE=/run/secrets/upms_db_password
+      - POSTGRES_DB=upms
+    secrets:
+      - upms_db_password
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -32,3 +50,13 @@ services:
 volumes:
   pgdata:
   upms_keys:
+
+secrets:
+  # These secrets are examples. In production the orchestrator (Docker Swarm / Kubernetes / cloud)
+  # should provide the secret values. Marked external to indicate they are managed outside this repo.
+  upms_connection_string:
+    external: true
+  upms_azure_client_secret:
+    external: true
+  upms_db_password:
+    external: true

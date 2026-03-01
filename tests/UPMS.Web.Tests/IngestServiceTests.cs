@@ -1,13 +1,12 @@
 namespace UPMS.Web.Tests;
 
-using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Options;
 using UPMS.Data;
 using UPMS.Web.Services;
 
 /// <summary>
 /// Unit / integration tests for <see cref="SnapshotIngestService"/>.
-/// All database-backed tests use an isolated SQLite in-memory database.
+/// All write-path calls go through <see cref="FakeCommandRepository"/> — no database required.
 /// </summary>
 [TestFixture]
 public class IngestServiceTests
@@ -256,11 +255,10 @@ public class IngestServiceTests
     [Test]
     public void SnapshotIngestService_RequiresSourceService_ThrowsOnNull()
     {
-        var fakeOptions = Options.Create(new DatabaseOptions { ConnectionString = "Host=localhost;Database=test;" });
-        var fakeDataService = new TicketDataServiceInstance(fakeOptions);
+        var fakeCommandRepository = new FakeCommandRepository();
 
         Assert.Throws<ArgumentNullException>(() =>
-            new SnapshotIngestService(fakeDataService, null!));
+            new SnapshotIngestService(fakeCommandRepository, null!));
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────
@@ -269,51 +267,13 @@ public class IngestServiceTests
         new MemoryStream(System.Text.Encoding.UTF8.GetBytes(text));
 
     /// <summary>
-    /// Builds a <see cref="SnapshotIngestService"/> backed by a fresh SQLite in-memory DB.
+    /// Builds a <see cref="SnapshotIngestService"/> backed by a <see cref="FakeCommandRepository"/>.
     /// The supplied mappings are seeded into the fake source service.
     /// </summary>
-    private static (SnapshotIngestService Service, SqliteConnection Connection) BuildServiceWithMappings(
+    private static (SnapshotIngestService Service, FakeCommandRepository Repository) BuildServiceWithMappings(
         IEnumerable<(string SourceField, string Canonical, bool IsRequired)> mappings)
     {
-        var dbName = $"ingest_test_{Guid.NewGuid():N}";
-        var connectionString = $"Data Source={dbName};Mode=Memory;Cache=Shared";
-
-        var connection = new SqliteConnection(connectionString);
-        connection.Open();
-
-        using var cmd = connection.CreateCommand();
-        cmd.CommandText = """
-            CREATE TABLE IF NOT EXISTS raw_snapshot (
-                id TEXT PRIMARY KEY,
-                itsm_source TEXT NOT NULL,
-                snapshot_date TEXT NOT NULL,
-                uploaded_by TEXT NOT NULL,
-                uploaded_at TEXT NOT NULL,
-                upload_metadata TEXT);
-
-            CREATE TABLE IF NOT EXISTS snapshot_ticket (
-                id TEXT PRIMARY KEY,
-                snapshot_id TEXT NOT NULL,
-                company_name TEXT NOT NULL,
-                ticket_key TEXT NOT NULL,
-                UNIQUE(snapshot_id, ticket_key));
-
-            CREATE TABLE IF NOT EXISTS field_change (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                company_name TEXT NOT NULL,
-                ticket_key TEXT NOT NULL,
-                field_name TEXT NOT NULL,
-                field_value TEXT,
-                observed_at TEXT NOT NULL,
-                snapshot_id TEXT NOT NULL);
-            """;
-        cmd.ExecuteNonQuery();
-
-        // Wire TicketDataService to this SQLite connection
-        TicketDataService.Initialize(() => new SqliteConnection(connectionString));
-        var options = Options.Create(new DatabaseOptions { ConnectionString = connectionString });
-        var dataServiceInstance = new TicketDataServiceInstance(options);
-        TicketDataService.Initialize(() => new SqliteConnection(connectionString));
+        var fakeCommandRepository = new FakeCommandRepository();
 
         var fakeSourceService = new FakeItsmSourceService();
         foreach (var (src, canonical, required) in mappings)
@@ -321,8 +281,47 @@ public class IngestServiceTests
             fakeSourceService.AddMapping("test-source", src, canonical, required);
         }
 
-        var service = new SnapshotIngestService(dataServiceInstance, fakeSourceService);
-        return (service, connection);
+        var service = new SnapshotIngestService(fakeCommandRepository, fakeSourceService);
+        return (service, fakeCommandRepository);
+    }
+
+    // ── Fake ICommandRepository ────────────────────────────────────────────
+
+    private class FakeCommandRepository : ICommandRepository
+    {
+        public List<Snapshot> CreatedSnapshots { get; } = new();
+        public List<SnapshotTicket> AddedTickets { get; } = new();
+        public List<FieldChange> RecordedChanges { get; } = new();
+
+        public Task<Snapshot> CreateSnapshotAsync(Snapshot snapshot, CancellationToken ct = default)
+        {
+            CreatedSnapshots.Add(snapshot);
+            return Task.FromResult(snapshot);
+        }
+
+        public Task AddSnapshotTicketAsync(SnapshotTicket ticket, CancellationToken ct = default)
+        {
+            AddedTickets.Add(ticket);
+            return Task.CompletedTask;
+        }
+
+        public Task AddSnapshotTicketsAsync(IEnumerable<SnapshotTicket> tickets, CancellationToken ct = default)
+        {
+            AddedTickets.AddRange(tickets);
+            return Task.CompletedTask;
+        }
+
+        public Task RecordFieldChangeAsync(FieldChange fieldChange, CancellationToken ct = default)
+        {
+            RecordedChanges.Add(fieldChange);
+            return Task.CompletedTask;
+        }
+
+        public Task RecordFieldChangesAsync(IEnumerable<FieldChange> changes, CancellationToken ct = default)
+        {
+            RecordedChanges.AddRange(changes);
+            return Task.CompletedTask;
+        }
     }
 
     // ── Fake IItsmSourceService ────────────────────────────────────────────

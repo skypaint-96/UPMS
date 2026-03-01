@@ -5,7 +5,10 @@ namespace UPMS.Data;
 /// </summary>
 public class ItsmSource
 {
-    public required int Id { get; init; }
-    public required string Name { get; init; }
-    public required string DisplayLabel { get; init; }
+    /// <summary>Parameterless constructor required by EF Core and Dapper.</summary>
+    public ItsmSource() { }
+
+    public int Id { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public string DisplayLabel { get; set; } = string.Empty;
 }

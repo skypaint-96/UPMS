@@ -2,6 +2,9 @@ namespace UPMS.Web.Services;
 
 using System.Text;
 using System.Text.Json;
+using System.Security.Claims;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Logging;
 using UPMS.Data;
 
 /// <summary>
@@ -12,15 +15,21 @@ using UPMS.Data;
 /// </summary>
 public class SnapshotIngestService : ISnapshotIngestService
 {
-    private readonly TicketDataServiceInstance _dataService;
+    private readonly ICommandRepository _commandRepository;
     private readonly IItsmSourceService _sourceService;
+    private readonly ILogger<SnapshotIngestService> _logger;
+    private readonly IHttpContextAccessor? _httpContextAccessor;
 
     public SnapshotIngestService(
-        TicketDataServiceInstance dataService,
-        IItsmSourceService sourceService)
+        ICommandRepository commandRepository,
+        IItsmSourceService sourceService,
+        ILogger<SnapshotIngestService> logger,
+        IHttpContextAccessor? httpContextAccessor = null)
     {
-        _dataService   = dataService   ?? throw new ArgumentNullException(nameof(dataService));
-        _sourceService = sourceService ?? throw new ArgumentNullException(nameof(sourceService));
+        _commandRepository = commandRepository ?? throw new ArgumentNullException(nameof(commandRepository));
+        _sourceService     = sourceService     ?? throw new ArgumentNullException(nameof(sourceService));
+        _logger            = logger ?? throw new ArgumentNullException(nameof(logger));
+        _httpContextAccessor = httpContextAccessor;
     }
 
     /// <inheritdoc />
@@ -135,6 +144,7 @@ public class SnapshotIngestService : ISnapshotIngestService
         }
         catch (Exception ex)
         {
+            _logger.LogError(ex, "Failed to ingest CSV for source {Source}", itsmSourceName);
             return IngestResult.Failure(ex.Message);
         }
     }
@@ -218,10 +228,12 @@ public class SnapshotIngestService : ISnapshotIngestService
         }
         catch (JsonException ex)
         {
+            _logger.LogError(ex, "Invalid JSON for source {Source}", itsmSourceName);
             return IngestResult.Failure($"Invalid JSON: {ex.Message}");
         }
         catch (Exception ex)
         {
+            _logger.LogError(ex, "Failed to ingest JSON for source {Source}", itsmSourceName);
             return IngestResult.Failure(ex.Message);
         }
     }
@@ -237,8 +249,6 @@ public class SnapshotIngestService : ISnapshotIngestService
         List<string> warnings,
         CancellationToken ct)
     {
-        _ = ct;
-
         if (rows.Count == 0)
         {
             return new IngestResult
@@ -253,20 +263,40 @@ public class SnapshotIngestService : ISnapshotIngestService
 
         DateTime snapshotDateTime = snapshotDate.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
 
-        // Create snapshot record
-        Guid snapshotId = await _dataService.CreateSnapshotAsync(
-            itsmSourceName, snapshotDateTime, uploadedBy: "web-upload");
+        // Create snapshot record via ICommandRepository
+        var snapshot = await _commandRepository.CreateSnapshotAsync(
+            new Snapshot
+            {
+                Id           = Guid.NewGuid(),
+                ItsmSource   = itsmSourceName,
+                SnapshotDate = snapshotDateTime,
+                UploadedBy   = "web-upload",
+                UploadedAt   = DateTime.UtcNow,
+            },
+            ct);
 
-        // Collect distinct (ticketKey, companyName) pairs
+        Guid snapshotId = snapshot.Id;
+
+        // Collect distinct (ticketKey, companyName) pairs and build SnapshotTicket entities
         var ticketEntries = rows
             .Select(r => (TicketKey: r.TicketKey, CompanyName: r.CompanyName))
             .Distinct()
             .ToList();
 
-        await _dataService.AddTicketsToSnapshotAsync(snapshotId, ticketEntries);
+        var snapshotTickets = ticketEntries
+            .Select(e => new SnapshotTicket
+            {
+                Id          = Guid.NewGuid(),
+                SnapshotId  = snapshotId,
+                CompanyName = e.CompanyName,
+                TicketKey   = e.TicketKey,
+            })
+            .ToList();
 
-        // Record field changes
-        int fieldChangesRecorded = 0;
+        await _commandRepository.AddSnapshotTicketsAsync(snapshotTickets, ct);
+
+        // Batch-build and persist field changes
+        var fieldChanges = new List<FieldChange>();
         foreach (var (ticketKey, companyName, cols) in rows)
         {
             for (int i = 0; i < headers.Length; i++)
@@ -276,20 +306,36 @@ public class SnapshotIngestService : ISnapshotIngestService
                     ? (string.IsNullOrEmpty(cols[i]) ? null : cols[i])
                     : null;
 
-                await _dataService.RecordFieldChangeAsync(
-                    companyName, ticketKey, fieldName, fieldValue,
-                    snapshotDateTime, snapshotId);
-
-                fieldChangesRecorded++;
+                fieldChanges.Add(new FieldChange
+                {
+                    CompanyName = companyName,
+                    TicketKey   = ticketKey,
+                    FieldName   = fieldName,
+                    FieldValue  = fieldValue,
+                    ObservedAt  = snapshotDateTime,
+                    SnapshotId  = snapshotId,
+                });
             }
         }
+
+        await _commandRepository.RecordFieldChangesAsync(fieldChanges, ct);
+
+        // Log acting user and correlation will be included from logging scope middleware
+        string? actor = _httpContextAccessor?.HttpContext?.User?.FindFirst("preferred_username")?.Value
+                        ?? _httpContextAccessor?.HttpContext?.User?.FindFirst(ClaimTypes.Upn)?.Value
+                        ?? _httpContextAccessor?.HttpContext?.User?.FindFirst("name")?.Value
+                        ?? _httpContextAccessor?.HttpContext?.User?.FindFirst("oid")?.Value
+                        ?? "anonymous";
+
+        _logger.LogInformation("Snapshot {SnapshotId} ingested by {Actor}: {Tickets} tickets, {Changes} field changes",
+            snapshotId, actor, ticketEntries.Count, fieldChanges.Count);
 
         return new IngestResult
         {
             Success = true,
             SnapshotId = snapshotId,
             TicketsIngested = ticketEntries.Count,
-            FieldChangesRecorded = fieldChangesRecorded,
+            FieldChangesRecorded = fieldChanges.Count,
             Warnings = warnings.AsReadOnly()
         };
     }
@@ -301,8 +347,6 @@ public class SnapshotIngestService : ISnapshotIngestService
         List<string> warnings,
         CancellationToken ct)
     {
-        _ = ct;
-
         if (rows.Count == 0)
         {
             return new IngestResult
@@ -317,17 +361,39 @@ public class SnapshotIngestService : ISnapshotIngestService
 
         DateTime snapshotDateTime = snapshotDate.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
 
-        Guid snapshotId = await _dataService.CreateSnapshotAsync(
-            itsmSourceName, snapshotDateTime, uploadedBy: "web-upload");
+        // Create snapshot record via ICommandRepository
+        var snapshot = await _commandRepository.CreateSnapshotAsync(
+            new Snapshot
+            {
+                Id           = Guid.NewGuid(),
+                ItsmSource   = itsmSourceName,
+                SnapshotDate = snapshotDateTime,
+                UploadedBy   = "web-upload",
+                UploadedAt   = DateTime.UtcNow,
+            },
+            ct);
+
+        Guid snapshotId = snapshot.Id;
 
         var ticketEntries = rows
             .Select(r => (TicketKey: r.TicketKey, CompanyName: r.CompanyName))
             .Distinct()
             .ToList();
 
-        await _dataService.AddTicketsToSnapshotAsync(snapshotId, ticketEntries);
+        var snapshotTickets = ticketEntries
+            .Select(e => new SnapshotTicket
+            {
+                Id          = Guid.NewGuid(),
+                SnapshotId  = snapshotId,
+                CompanyName = e.CompanyName,
+                TicketKey   = e.TicketKey,
+            })
+            .ToList();
 
-        int fieldChangesRecorded = 0;
+        await _commandRepository.AddSnapshotTicketsAsync(snapshotTickets, ct);
+
+        // Resolve canonical names and batch-build field changes
+        var fieldChanges = new List<FieldChange>();
         foreach (var (ticketKey, companyName, fields) in rows)
         {
             foreach (var (sourceFieldName, fieldValue) in fields)
@@ -335,20 +401,35 @@ public class SnapshotIngestService : ISnapshotIngestService
                 string? canonical = await _sourceService.GetCanonicalNameAsync(itsmSourceName, sourceFieldName);
                 string fieldName = canonical ?? sourceFieldName;
 
-                await _dataService.RecordFieldChangeAsync(
-                    companyName, ticketKey, fieldName, fieldValue,
-                    snapshotDateTime, snapshotId);
-
-                fieldChangesRecorded++;
+                fieldChanges.Add(new FieldChange
+                {
+                    CompanyName = companyName,
+                    TicketKey   = ticketKey,
+                    FieldName   = fieldName,
+                    FieldValue  = fieldValue,
+                    ObservedAt  = snapshotDateTime,
+                    SnapshotId  = snapshotId,
+                });
             }
         }
+
+        await _commandRepository.RecordFieldChangesAsync(fieldChanges, ct);
+
+        string? actor = _httpContextAccessor?.HttpContext?.User?.FindFirst("preferred_username")?.Value
+                        ?? _httpContextAccessor?.HttpContext?.User?.FindFirst(ClaimTypes.Upn)?.Value
+                        ?? _httpContextAccessor?.HttpContext?.User?.FindFirst("name")?.Value
+                        ?? _httpContextAccessor?.HttpContext?.User?.FindFirst("oid")?.Value
+                        ?? "anonymous";
+
+        _logger.LogInformation("Snapshot {SnapshotId} ingested by {Actor}: {Tickets} tickets, {Changes} field changes",
+            snapshotId, actor, ticketEntries.Count, fieldChanges.Count);
 
         return new IngestResult
         {
             Success = true,
             SnapshotId = snapshotId,
             TicketsIngested = ticketEntries.Count,
-            FieldChangesRecorded = fieldChangesRecorded,
+            FieldChangesRecorded = fieldChanges.Count,
             Warnings = warnings.AsReadOnly()
         };
     }

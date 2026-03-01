@@ -6,8 +6,7 @@ using Microsoft.Extensions.Options;
 
 /// <summary>
 /// Database-backed implementation of <see cref="IItsmSourceService"/>.
-/// Compatible with both SQLite (tests) and PostgreSQL (production).
-/// Dialect is detected from the connection provider type at runtime.
+/// Uses PostgreSQL (Npgsql) exclusively.
 /// </summary>
 public class ItsmSourceService : IItsmSourceService
 {
@@ -24,11 +23,6 @@ public class ItsmSourceService : IItsmSourceService
         var cs = options.Value.ConnectionString;
         return new ItsmSourceService(() => new Npgsql.NpgsqlConnection(cs));
     }
-
-    // ── Helpers ────────────────────────────────────────────────────────────
-
-    private bool IsSqlite(IDbConnection conn) =>
-        conn.GetType().FullName?.Contains("Sqlite", StringComparison.OrdinalIgnoreCase) ?? false;
 
     // ── Sources ────────────────────────────────────────────────────────────
 
@@ -73,26 +67,13 @@ public class ItsmSourceService : IItsmSourceService
 
         using var conn = _connectionFactory();
 
-        if (IsSqlite(conn))
-        {
-            await conn.ExecuteAsync(
-                "INSERT INTO itsm_source (name, display_label) VALUES (@Name, @DisplayLabel)",
-                new { Name = name, DisplayLabel = displayLabel });
-
-            return await conn.QueryFirstAsync<ItsmSource>(
-                "SELECT id AS Id, name AS Name, display_label AS DisplayLabel FROM itsm_source WHERE name = @Name",
-                new { Name = name });
-        }
-        else
-        {
-            return await conn.QueryFirstAsync<ItsmSource>(
-                """
-                INSERT INTO itsm_source (name, display_label)
-                VALUES (@Name, @DisplayLabel)
-                RETURNING id AS Id, name AS Name, display_label AS DisplayLabel
-                """,
-                new { Name = name, DisplayLabel = displayLabel });
-        }
+        return await conn.QueryFirstAsync<ItsmSource>(
+            """
+            INSERT INTO itsm_source (name, display_label)
+            VALUES (@Name, @DisplayLabel)
+            RETURNING id AS Id, name AS Name, display_label AS DisplayLabel
+            """,
+            new { Name = name, DisplayLabel = displayLabel });
     }
 
     public async Task DeleteSourceAsync(string name)
@@ -100,7 +81,7 @@ public class ItsmSourceService : IItsmSourceService
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
 
         using var conn = _connectionFactory();
-        // Delete mappings first (no FK cascade defined in migration for SQLite compat)
+        // Delete mappings first (FK cascade not relied upon for all deployments)
         await conn.ExecuteAsync(
             "DELETE FROM itsm_field_mapping WHERE itsm_source = @Name",
             new { Name = name });
@@ -119,15 +100,7 @@ public class ItsmSourceService : IItsmSourceService
 
         using var conn = _connectionFactory();
 
-        string sql = IsSqlite(conn)
-            ? """
-              INSERT INTO itsm_field_mapping (itsm_source, source_field_name, canonical_field_name, is_required)
-              VALUES (@ItsmSource, @SourceFieldName, @CanonicalFieldName, @IsRequired)
-              ON CONFLICT (itsm_source, source_field_name) DO UPDATE
-                  SET canonical_field_name = excluded.canonical_field_name,
-                      is_required          = excluded.is_required
-              """
-            : """
+        const string sql = """
               INSERT INTO itsm_field_mapping (itsm_source, source_field_name, canonical_field_name, is_required)
               VALUES (@ItsmSource, @SourceFieldName, @CanonicalFieldName, @IsRequired)
               ON CONFLICT (itsm_source, source_field_name) DO UPDATE

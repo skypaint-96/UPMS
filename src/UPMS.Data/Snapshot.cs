@@ -1,14 +1,17 @@
 namespace UPMS.Data;
 
 /// <summary>
-/// Represents a raw data snapshot from an ITSM source.
+/// Represents a raw data snapshot from an ITSM source (<c>raw_snapshot</c> table).
 /// </summary>
 public class Snapshot
 {
-    public required Guid Id { get; init; }
-    public required string ItsmSource { get; init; }
-    public required DateTime SnapshotDate { get; init; }
-    public required string UploadedBy { get; init; }
-    public required DateTime UploadedAt { get; init; }
-    public string? UploadMetadata { get; init; }
+    /// <summary>Parameterless constructor required by EF Core and Dapper.</summary>
+    public Snapshot() { }
+
+    public Guid Id { get; set; }
+    public string ItsmSource { get; set; } = string.Empty;
+    public DateTime SnapshotDate { get; set; }
+    public string UploadedBy { get; set; } = string.Empty;
+    public DateTime UploadedAt { get; set; }
+    public string? UploadMetadata { get; set; }
 }

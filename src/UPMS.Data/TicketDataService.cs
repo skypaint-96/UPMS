@@ -37,6 +37,7 @@ public static class TicketDataService
 
     /// <summary>
     /// Initializes the service with a custom connection factory.
+    /// Used by the test suite to inject alternate connections; not for production use.
     /// </summary>
     public static void Initialize(Func<IDbConnection> connectionFactory)
     {
@@ -574,9 +575,6 @@ public static class TicketDataService
 
     private static string BuildSnapshotTicketInsertSql(IDbConnection connection)
     {
-        string providerName = connection.GetType().FullName ?? string.Empty;
-        return providerName.Contains("Sqlite", StringComparison.OrdinalIgnoreCase)
-            ? "INSERT OR IGNORE INTO snapshot_ticket (id, snapshot_id, company_name, ticket_key) VALUES (@Id, @SnapshotId, @CompanyName, @TicketKey);"
-            : "INSERT INTO snapshot_ticket (id, snapshot_id, company_name, ticket_key) VALUES (@Id, @SnapshotId, @CompanyName, @TicketKey) ON CONFLICT (snapshot_id, ticket_key) DO NOTHING;";
+        return "INSERT INTO snapshot_ticket (id, snapshot_id, company_name, ticket_key) VALUES (@Id, @SnapshotId, @CompanyName, @TicketKey) ON CONFLICT (snapshot_id, ticket_key) DO NOTHING;";
     }
 }

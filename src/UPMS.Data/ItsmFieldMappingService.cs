@@ -61,15 +61,7 @@ public class ItsmFieldMappingService : IItsmFieldMappingService
         ArgumentException.ThrowIfNullOrWhiteSpace(canonicalFieldName);
 
         using var conn = _connectionFactory();
-        string providerName = conn.GetType().FullName ?? string.Empty;
-        string sql = providerName.Contains("Sqlite", StringComparison.OrdinalIgnoreCase)
-            ? """
-              INSERT INTO itsm_field_mapping (itsm_source, source_field_name, canonical_field_name)
-              VALUES (@ItsmSource, @SourceFieldName, @CanonicalFieldName)
-              ON CONFLICT (itsm_source, source_field_name) DO UPDATE
-                  SET canonical_field_name = excluded.canonical_field_name
-              """
-            : """
+        const string sql = """
               INSERT INTO itsm_field_mapping (itsm_source, source_field_name, canonical_field_name)
               VALUES (@ItsmSource, @SourceFieldName, @CanonicalFieldName)
               ON CONFLICT (itsm_source, source_field_name) DO UPDATE
