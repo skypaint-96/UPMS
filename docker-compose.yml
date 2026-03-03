@@ -34,7 +34,6 @@ services:
     environment:
       # Use POSTGRES_PASSWORD_FILE so password can be supplied via docker secret
       - POSTGRES_USER=upms
-      - POSTGRES_PASSWORD_FILE=/run/secrets/upms_db_password
       - POSTGRES_DB=upms
     # Removed `secrets:` here because docker compose (non-swarm) does not support external secrets.
     # For Swarm, provide the DB password as a Docker secret mounted at /run/secrets/upms_db_password.
