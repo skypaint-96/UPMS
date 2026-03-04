@@ -1,49 +1,39 @@
 namespace UPMS.Data;
 
-using System.Data;
-using Dapper;
-using Microsoft.Extensions.Options;
+using Microsoft.EntityFrameworkCore;
 
 /// <summary>
-/// Database-backed implementation of <see cref="IItsmSourceService"/>.
-/// Uses PostgreSQL (Npgsql) exclusively.
+/// EF Core–backed implementation of <see cref="IItsmSourceService"/>.
 /// </summary>
 public class ItsmSourceService : IItsmSourceService
 {
-    private readonly Func<IDbConnection> _connectionFactory;
+    private readonly UpmsDbContext _context;
 
-    public ItsmSourceService(Func<IDbConnection> connectionFactory)
+    public ItsmSourceService(UpmsDbContext context)
     {
-        _connectionFactory = connectionFactory ?? throw new ArgumentNullException(nameof(connectionFactory));
+        _context = context ?? throw new ArgumentNullException(nameof(context));
     }
 
-    public static ItsmSourceService CreateFromOptions(IOptions<DatabaseOptions> options)
-    {
-        ArgumentNullException.ThrowIfNull(options);
-        var cs = options.Value.ConnectionString;
-        return new ItsmSourceService(() => new Npgsql.NpgsqlConnection(cs));
-    }
-
-    // ── Sources ────────────────────────────────────────────────────────────
-
+    /// <inheritdoc/>
     public async Task<IReadOnlyList<ItsmSource>> GetAllSourcesAsync()
     {
-        using var conn = _connectionFactory();
-        var rows = await conn.QueryAsync<ItsmSource>(
-            "SELECT id AS Id, name AS Name, display_label AS DisplayLabel FROM itsm_source ORDER BY name");
-        return rows.ToList().AsReadOnly();
+        return await _context.ItsmSources
+            .AsNoTracking()
+            .OrderBy(s => s.Name)
+            .ToListAsync();
     }
 
+    /// <inheritdoc/>
     public async Task<ItsmSource?> GetSourceByNameAsync(string name)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
 
-        using var conn = _connectionFactory();
-        return await conn.QueryFirstOrDefaultAsync<ItsmSource>(
-            "SELECT id AS Id, name AS Name, display_label AS DisplayLabel FROM itsm_source WHERE name = @Name",
-            new { Name = name });
+        return await _context.ItsmSources
+            .AsNoTracking()
+            .FirstOrDefaultAsync(s => s.Name == name);
     }
 
+    /// <inheritdoc/>
     public async Task<ItsmSourceDefinition> GetSourceDefinitionAsync(string name)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
@@ -51,121 +41,102 @@ public class ItsmSourceService : IItsmSourceService
         var source = await GetSourceByNameAsync(name)
             ?? throw new KeyNotFoundException($"ITSM source '{name}' was not found.");
 
-        var mappings = await GetMappingsForSourceInternalAsync(name);
+        var mappings = await _context.ItsmFieldMappings
+            .AsNoTracking()
+            .Where(m => m.ItsmSource == name)
+            .OrderBy(m => m.SourceFieldName)
+            .ToListAsync();
 
         return new ItsmSourceDefinition
         {
             Source = source,
-            Mappings = mappings
+            Mappings = mappings.AsReadOnly()
         };
     }
 
+    /// <inheritdoc/>
     public async Task<ItsmSource> CreateSourceAsync(string name, string displayLabel)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
         ArgumentException.ThrowIfNullOrWhiteSpace(displayLabel);
 
-        using var conn = _connectionFactory();
+        var source = new ItsmSource
+        {
+            Name = name,
+            DisplayLabel = displayLabel
+        };
 
-        return await conn.QueryFirstAsync<ItsmSource>(
-            """
-            INSERT INTO itsm_source (name, display_label)
-            VALUES (@Name, @DisplayLabel)
-            RETURNING id AS Id, name AS Name, display_label AS DisplayLabel
-            """,
-            new { Name = name, DisplayLabel = displayLabel });
+        _context.ItsmSources.Add(source);
+        await _context.SaveChangesAsync();
+        return source;
     }
 
+    /// <inheritdoc/>
     public async Task DeleteSourceAsync(string name)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
 
-        using var conn = _connectionFactory();
-        // Delete mappings first (FK cascade not relied upon for all deployments)
-        await conn.ExecuteAsync(
-            "DELETE FROM itsm_field_mapping WHERE itsm_source = @Name",
-            new { Name = name });
-        await conn.ExecuteAsync(
-            "DELETE FROM itsm_source WHERE name = @Name",
-            new { Name = name });
+        // Delete mappings first (no DB-level FK cascade between itsm_field_mapping and itsm_source)
+        await _context.ItsmFieldMappings
+            .Where(m => m.ItsmSource == name)
+            .ExecuteDeleteAsync();
+
+        await _context.ItsmSources
+            .Where(s => s.Name == name)
+            .ExecuteDeleteAsync();
     }
 
-    // ── Mappings ───────────────────────────────────────────────────────────
-
+    /// <inheritdoc/>
     public async Task UpsertMappingAsync(string sourceName, string sourceFieldName, string canonicalName, bool isRequired)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(sourceName);
         ArgumentException.ThrowIfNullOrWhiteSpace(sourceFieldName);
         ArgumentException.ThrowIfNullOrWhiteSpace(canonicalName);
 
-        using var conn = _connectionFactory();
-
-        const string sql = """
-              INSERT INTO itsm_field_mapping (itsm_source, source_field_name, canonical_field_name, is_required)
-              VALUES (@ItsmSource, @SourceFieldName, @CanonicalFieldName, @IsRequired)
-              ON CONFLICT (itsm_source, source_field_name) DO UPDATE
-                  SET canonical_field_name = EXCLUDED.canonical_field_name,
-                      is_required          = EXCLUDED.is_required
-              """;
-
-        await conn.ExecuteAsync(sql, new
-        {
-            ItsmSource = sourceName,
-            SourceFieldName = sourceFieldName,
-            CanonicalFieldName = canonicalName,
-            IsRequired = isRequired
-        });
+        await _context.Database.ExecuteSqlInterpolatedAsync(
+            $"""
+            INSERT INTO itsm_field_mapping (itsm_source, source_field_name, canonical_field_name, is_required)
+            VALUES ({sourceName}, {sourceFieldName}, {canonicalName}, {isRequired})
+            ON CONFLICT (itsm_source, source_field_name) DO UPDATE
+                SET canonical_field_name = EXCLUDED.canonical_field_name,
+                    is_required          = EXCLUDED.is_required
+            """);
     }
 
+    /// <inheritdoc/>
     public async Task DeleteMappingAsync(string sourceName, string sourceFieldName)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(sourceName);
         ArgumentException.ThrowIfNullOrWhiteSpace(sourceFieldName);
 
-        using var conn = _connectionFactory();
-        await conn.ExecuteAsync(
-            "DELETE FROM itsm_field_mapping WHERE itsm_source = @ItsmSource AND source_field_name = @SourceFieldName",
-            new { ItsmSource = sourceName, SourceFieldName = sourceFieldName });
+        await _context.ItsmFieldMappings
+            .Where(m => m.ItsmSource == sourceName && m.SourceFieldName == sourceFieldName)
+            .ExecuteDeleteAsync();
     }
 
+    /// <inheritdoc/>
     public async Task<IReadOnlyList<string>> GetRequiredFieldsAsync(string sourceName)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(sourceName);
 
-        using var conn = _connectionFactory();
-        var rows = await conn.QueryAsync<string>(
-            "SELECT source_field_name FROM itsm_field_mapping WHERE itsm_source = @ItsmSource AND is_required = @IsRequired ORDER BY source_field_name",
-            new { ItsmSource = sourceName, IsRequired = true });
-        return rows.ToList().AsReadOnly();
+        return await _context.ItsmFieldMappings
+            .AsNoTracking()
+            .Where(m => m.ItsmSource == sourceName && m.IsRequired)
+            .OrderBy(m => m.SourceFieldName)
+            .Select(m => m.SourceFieldName)
+            .ToListAsync();
     }
 
+    /// <inheritdoc/>
     public async Task<string?> GetCanonicalNameAsync(string sourceName, string sourceFieldName)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(sourceName);
         ArgumentException.ThrowIfNullOrWhiteSpace(sourceFieldName);
 
-        using var conn = _connectionFactory();
-        return await conn.QueryFirstOrDefaultAsync<string?>(
-            "SELECT canonical_field_name FROM itsm_field_mapping WHERE itsm_source = @ItsmSource AND source_field_name = @SourceFieldName",
-            new { ItsmSource = sourceName, SourceFieldName = sourceFieldName });
-    }
-
-    // ── Private helpers ────────────────────────────────────────────────────
-
-    private async Task<IReadOnlyList<ItsmFieldMapping>> GetMappingsForSourceInternalAsync(string sourceName)
-    {
-        using var conn = _connectionFactory();
-        var rows = await conn.QueryAsync<ItsmFieldMapping>(
-            """
-            SELECT itsm_source        AS ItsmSource,
-                   source_field_name  AS SourceFieldName,
-                   canonical_field_name AS CanonicalFieldName,
-                   is_required        AS IsRequired
-            FROM   itsm_field_mapping
-            WHERE  itsm_source = @ItsmSource
-            ORDER  BY source_field_name
-            """,
-            new { ItsmSource = sourceName });
-        return rows.ToList().AsReadOnly();
+        return await _context.ItsmFieldMappings
+            .AsNoTracking()
+            .Where(m => m.ItsmSource == sourceName && m.SourceFieldName == sourceFieldName)
+            .Select(m => m.CanonicalFieldName)
+            .FirstOrDefaultAsync();
     }
 }

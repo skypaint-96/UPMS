@@ -3,6 +3,7 @@ namespace UPMS.Data.Tests;
 using System;
 using System.Threading.Tasks;
 using NUnit.Framework;
+using UPMS.Data;
 
 /// <summary>
 /// Base class for TicketDataService tests providing common setup and utilities.
@@ -15,6 +16,8 @@ public abstract class TicketDataServiceTestBase
     protected string Company3Name { get; private set; } = string.Empty;
     protected Guid TestSnapshotId { get; private set; }
     protected DateTime TestSnapshotDate { get; private set; }
+
+    protected TicketDataService DataService { get; private set; } = null!;
 
     [OneTimeSetUp]
     public async Task OneTimeSetUp()
@@ -36,6 +39,9 @@ public abstract class TicketDataServiceTestBase
         Company3Name = TestData.Companies.Company3;
         TestSnapshotId = Guid.Parse(TestDatabaseFixture.Company1NewSnapshotId);
         TestSnapshotDate = TestData.Dates.NewSnapshotDate;
+
+        // Provide instance-based data service for tests
+        DataService = TestDatabaseFixture.CreateTicketDataService();
     }
 
     /// <summary>

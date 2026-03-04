@@ -1,7 +1,6 @@
 namespace UPMS.Data;
 
 using Microsoft.EntityFrameworkCore;
-using Npgsql;
 
 /// <summary>
 /// EF Core–backed implementation of <see cref="ICommandRepository"/>.
@@ -38,9 +37,8 @@ public class EfCommandRepository : ICommandRepository
 
     /// <inheritdoc/>
     /// <remarks>
-    /// Uses <c>INSERT … ON CONFLICT (snapshot_id, ticket_key) DO NOTHING</c> so that
-    /// duplicate rows (re-ingested snapshots) are silently ignored rather than raising
-    /// a unique-constraint violation.
+    /// Uses a single bulk <c>INSERT … unnest(…) ON CONFLICT (snapshot_id, ticket_key) DO NOTHING</c>
+    /// so that duplicate rows are silently ignored and the entire batch is sent in one round-trip.
     /// </remarks>
     public async Task AddSnapshotTicketsAsync(IEnumerable<SnapshotTicket> tickets, CancellationToken ct = default)
     {
@@ -50,22 +48,18 @@ public class EfCommandRepository : ICommandRepository
         if (list.Count == 0)
             return;
 
-        foreach (var ticket in list)
-        {
-            await _context.Database.ExecuteSqlRawAsync(
-                """
-                INSERT INTO snapshot_ticket (id, snapshot_id, company_name, ticket_key)
-                VALUES (@id, @snapshotId, @companyName, @ticketKey)
-                ON CONFLICT (snapshot_id, ticket_key) DO NOTHING
-                """,
-                [
-                    new NpgsqlParameter("id",          ticket.Id),
-                    new NpgsqlParameter("snapshotId",  ticket.SnapshotId),
-                    new NpgsqlParameter("companyName", ticket.CompanyName),
-                    new NpgsqlParameter("ticketKey",   ticket.TicketKey),
-                ],
-                ct);
-        }
+        var ids          = list.Select(t => t.Id).ToArray();
+        var snapshotIds  = list.Select(t => t.SnapshotId).ToArray();
+        var companies    = list.Select(t => t.CompanyName).ToArray();
+        var ticketKeys   = list.Select(t => t.TicketKey).ToArray();
+
+        await _context.Database.ExecuteSqlInterpolatedAsync(
+            $"""
+            INSERT INTO snapshot_ticket (id, snapshot_id, company_name, ticket_key)
+            SELECT * FROM unnest({ids}::uuid[], {snapshotIds}::uuid[], {companies}::varchar[], {ticketKeys}::varchar[])
+                AS t(id, snapshot_id, company_name, ticket_key)
+            ON CONFLICT (snapshot_id, ticket_key) DO NOTHING
+            """, ct);
     }
 
     // ── Field changes ──────────────────────────────────────────────────────

@@ -1,7 +1,7 @@
 namespace UPMS.Web.Tests;
 
 using Microsoft.Data.Sqlite;
-using Microsoft.Extensions.Options;
+using Microsoft.EntityFrameworkCore;
 using UPMS.Data;
 using UPMS.Web.Plugins;
 using UPMS.Web.Plugins.PowerPoint;
@@ -156,11 +156,12 @@ public class PowerPointPluginTests
             """;
         cmd.ExecuteNonQuery();
 
-        TicketDataService.Initialize(() => new SqliteConnection(connectionString));
+        var optionsBuilder = new DbContextOptionsBuilder<UpmsDbContext>();
+        optionsBuilder.UseSqlite(connection);
+        var db = new UpmsDbContext(optionsBuilder.Options);
 
-        IOptions<DatabaseOptions> options = Options.Create(new DatabaseOptions { ConnectionString = connectionString });
-        TicketDataServiceInstance dataService = new(options);
-        TicketDataService.Initialize(() => new SqliteConnection(connectionString));
+        var ticketSvc = new TicketDataService(db);
+        var dataService = new TicketDataServiceInstance(ticketSvc);
 
         return (dataService, connection);
     }

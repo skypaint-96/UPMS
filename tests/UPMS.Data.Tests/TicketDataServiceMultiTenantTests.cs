@@ -22,9 +22,9 @@ public class TicketDataServiceMultiTenantTests : TicketDataServiceTestBase
         string company3 = Company3Name;
 
         // Act
-        IEnumerable<Ticket> company1Tickets = await TicketDataService.GetTicketsAsync(ResolveItsmSource(company1), company1, TestSnapshotDate);
-        IEnumerable<Ticket> company2Tickets = await TicketDataService.GetTicketsAsync(ResolveItsmSource(company2), company2, TestSnapshotDate);
-        IEnumerable<Ticket> company3Tickets = await TicketDataService.GetTicketsAsync(ResolveItsmSource(company3), company3, TestSnapshotDate);
+        IEnumerable<Ticket> company1Tickets = await DataService.GetTicketsAsync(ResolveItsmSource(company1), company1, TestSnapshotDate);
+        IEnumerable<Ticket> company2Tickets = await DataService.GetTicketsAsync(ResolveItsmSource(company2), company2, TestSnapshotDate);
+        IEnumerable<Ticket> company3Tickets = await DataService.GetTicketsAsync(ResolveItsmSource(company3), company3, TestSnapshotDate);
 
         // Assert - Each company sees only its own ITSM source
         Assert.That(company1Tickets.Select(t => t.ItsmSource).Distinct(), Is.EquivalentTo(new[] { TestData.Itsm.ServiceNow }));
@@ -40,8 +40,8 @@ public class TicketDataServiceMultiTenantTests : TicketDataServiceTestBase
         string company3 = Company3Name;
 
         // Act
-        IEnumerable<Ticket> company1Tickets = await TicketDataService.GetTicketsAsync(ResolveItsmSource(company1), company1, TestSnapshotDate);
-        IEnumerable<Ticket> company3Tickets = await TicketDataService.GetTicketsAsync(ResolveItsmSource(company3), company3, TestSnapshotDate);
+        IEnumerable<Ticket> company1Tickets = await DataService.GetTicketsAsync(ResolveItsmSource(company1), company1, TestSnapshotDate);
+        IEnumerable<Ticket> company3Tickets = await DataService.GetTicketsAsync(ResolveItsmSource(company3), company3, TestSnapshotDate);
 
         // Assert - Overlapping ticket keys remain isolated per company
         Assert.That(company1Tickets.Count(t => t.TicketKey == TestData.TicketKeys.Ticket1), Is.EqualTo(1));
@@ -58,8 +58,8 @@ public class TicketDataServiceMultiTenantTests : TicketDataServiceTestBase
         string company2 = Company2Name;
 
         // Act
-        IEnumerable<Ticket> company1Tickets = await TicketDataService.GetTicketsAsync(ResolveItsmSource(company1), company1, TestSnapshotDate);
-        IEnumerable<Ticket> company2Tickets = await TicketDataService.GetTicketsAsync(ResolveItsmSource(company2), company2, TestSnapshotDate);
+        IEnumerable<Ticket> company1Tickets = await DataService.GetTicketsAsync(ResolveItsmSource(company1), company1, TestSnapshotDate);
+        IEnumerable<Ticket> company2Tickets = await DataService.GetTicketsAsync(ResolveItsmSource(company2), company2, TestSnapshotDate);
 
         // Assert - No cross-company leakage
         IEnumerable<string> intersection = company1Tickets.Select(t => t.TicketKey)

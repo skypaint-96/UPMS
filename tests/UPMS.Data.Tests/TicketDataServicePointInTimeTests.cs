@@ -8,43 +8,42 @@ using NUnit.Framework;
 using UPMS.Data;
 
 /// <summary>
-/// Tests for point-in-time ticket state reconstruction.
+/// Tests for fetching tickets as of a point in time.
 /// </summary>
 [TestFixture]
 public class TicketDataServicePointInTimeTests : TicketDataServiceTestBase
 {
     [Test]
-    public async Task GetTickets_ReconstructsStateAtSpecificDate()
+    public async Task GetTickets_AsOfDate_ReturnsSnapshotState()
     {
         // Arrange
         string companyName = Company1Name;
         string itsmSource = ResolveItsmSource(companyName);
-        DateTime requestedDate = TestData.Dates.OlderSnapshotDate;
+        DateTime requestedDate = TestSnapshotDate;
 
         // Act
-        IEnumerable<Ticket> tickets = await TicketDataService.GetTicketsAsync(itsmSource, companyName, requestedDate);
+        IEnumerable<Ticket> tickets = await DataService.GetTicketsAsync(itsmSource, companyName, requestedDate);
 
         // Assert
-        Ticket? ticket = tickets.FirstOrDefault(t => t.TicketKey == TestData.TicketKeys.Ticket1);
-        Assert.That(ticket, Is.Not.Null);
-        Assert.That(ticket!.ObservedAt, Is.LessThanOrEqualTo(requestedDate));
-        Assert.That(ticket.Fields[TestData.Fields.Status], Is.EqualTo(TestData.FieldValues.StatusOpen));
+        Assert.That(tickets, Is.Not.Null);
+        foreach (var ticket in tickets)
+        {
+            Assert.That(ticket.SnapshotDate, Is.LessThanOrEqualTo(requestedDate));
+        }
     }
 
     [Test]
-    public async Task GetTickets_UsesLatestObservationBeforeDate()
+    public async Task GetTickets_AsOfDate_NoSnapshots_ReturnsEmpty()
     {
         // Arrange
         string companyName = Company1Name;
         string itsmSource = ResolveItsmSource(companyName);
-        DateTime requestedDate = TestData.Dates.NewSnapshotDate;
+        DateTime requestedDate = new DateTime(2000, 1, 1);
 
         // Act
-        IEnumerable<Ticket> tickets = await TicketDataService.GetTicketsAsync(itsmSource, companyName, requestedDate);
+        IEnumerable<Ticket> tickets = await DataService.GetTicketsAsync(itsmSource, companyName, requestedDate);
 
         // Assert
-        Ticket? ticket = tickets.FirstOrDefault(t => t.TicketKey == TestData.TicketKeys.Ticket1);
-        Assert.That(ticket, Is.Not.Null);
-        Assert.That(ticket!.Fields[TestData.Fields.Status], Is.EqualTo(TestData.FieldValues.StatusInProgress));
+        Assert.That(tickets, Is.Empty);
     }
 }

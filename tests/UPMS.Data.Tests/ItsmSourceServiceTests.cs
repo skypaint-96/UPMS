@@ -283,8 +283,6 @@ public class ItsmSourceServiceTests : TicketDataServiceTestBase
     /// </summary>
     private static IItsmSourceService BuildIsolatedService()
     {
-        Func<System.Data.IDbConnection> factory = TestDatabaseFixture.ConnectionFactory;
-
-        return new ItsmSourceService(factory);
+        return new ItsmSourceService(TestDatabaseFixture.CreateDbContext());
     }
 }

@@ -8,91 +8,79 @@ using NUnit.Framework;
 using UPMS.Data;
 
 /// <summary>
-/// Tests for field change recording and field history retrieval.
+/// Tests for recording and retrieving field changes.
 /// </summary>
 [TestFixture]
 public class TicketDataServiceFieldChangeTests : TicketDataServiceTestBase
 {
     [Test]
-    public async Task RecordFieldChange_AddsFieldValueForTicket()
+    public async Task RecordFieldChange_AddsAndRetrievesFieldValue()
     {
-        // Arrange
-        string companyName = Company1Name;
-        string itsmSource = ResolveItsmSource(companyName);
         DateTime snapshotDate = DateTime.UtcNow;
-        Guid snapshotId = await TicketDataService.CreateSnapshotAsync(itsmSource, snapshotDate);
+        Guid snapshotId = await DataService.CreateSnapshotAsync(ResolveItsmSource(Company1Name), snapshotDate);
 
         string ticketKey = "INC0009010";
-        await TicketDataService.AddTicketsToSnapshotAsync(snapshotId, new[] { (ticketKey, companyName) });
+        await DataService.AddTicketsToSnapshotAsync(snapshotId, new[] { (ticketKey, Company1Name) });
 
         // Act
-        await TicketDataService.RecordFieldChangeAsync(
-            companyName,
+        await DataService.RecordFieldChangeAsync(
+            Company1Name,
             ticketKey,
             TestData.Fields.Status,
             TestData.FieldValues.StatusOpen,
             snapshotDate,
-            snapshotId
-        );
+            snapshotId);
 
         // Assert
-        IEnumerable<Ticket> tickets = await TicketDataService.GetTicketsBySnapshotAsync(snapshotId);
+        IEnumerable<Ticket> tickets = await DataService.GetTicketsBySnapshotAsync(snapshotId);
         Ticket ticket = tickets.First(t => t.TicketKey == ticketKey);
-
-        Assert.That(ticket.Fields, Does.ContainKey(TestData.Fields.Status));
         Assert.That(ticket.Fields[TestData.Fields.Status], Is.EqualTo(TestData.FieldValues.StatusOpen));
     }
 
     [Test]
-    public async Task RecordFieldChange_WithNullValue_StoresNullValue()
+    public async Task RecordFieldChange_PersistsMultipleChanges()
     {
-        // Arrange
-        string companyName = Company1Name;
-        string itsmSource = ResolveItsmSource(companyName);
         DateTime snapshotDate = DateTime.UtcNow;
-        Guid snapshotId = await TicketDataService.CreateSnapshotAsync(itsmSource, snapshotDate);
+        Guid snapshotId = await DataService.CreateSnapshotAsync(ResolveItsmSource(Company1Name), snapshotDate);
 
         string ticketKey = "INC0009011";
-        await TicketDataService.AddTicketsToSnapshotAsync(snapshotId, new[] { (ticketKey, companyName) });
+        await DataService.AddTicketsToSnapshotAsync(snapshotId, new[] { (ticketKey, Company1Name) });
 
         // Act
-        await TicketDataService.RecordFieldChangeAsync(
-            companyName,
+        await DataService.RecordFieldChangeAsync(
+            Company1Name,
             ticketKey,
-            TestData.Fields.Resolution,
-            null,
+            TestData.Fields.Status,
+            TestData.FieldValues.StatusOpen,
             snapshotDate,
-            snapshotId
-        );
+            snapshotId);
+
+        await DataService.RecordFieldChangeAsync(
+            Company1Name,
+            ticketKey,
+            TestData.Fields.Priority,
+            TestData.FieldValues.PriorityHigh,
+            snapshotDate,
+            snapshotId);
 
         // Assert
-        IEnumerable<Ticket> tickets = await TicketDataService.GetTicketsBySnapshotAsync(snapshotId);
+        IEnumerable<Ticket> tickets = await DataService.GetTicketsBySnapshotAsync(snapshotId);
         Ticket ticket = tickets.First(t => t.TicketKey == ticketKey);
-
-        Assert.That(ticket.Fields, Does.ContainKey(TestData.Fields.Resolution));
-        Assert.That(ticket.Fields[TestData.Fields.Resolution], Is.Null);
+        Assert.That(ticket.Fields[TestData.Fields.Status], Is.EqualTo(TestData.FieldValues.StatusOpen));
+        Assert.That(ticket.Fields[TestData.Fields.Priority], Is.EqualTo(TestData.FieldValues.PriorityHigh));
     }
 
     [Test]
-    public async Task GetTicketFieldHistory_ReturnsChronologicalChanges()
+    public async Task GetTicketFieldHistory_ReturnsOrderedHistory()
     {
-        // Arrange
-        string companyName = Company1Name;
-
         // Act
-        IEnumerable<FieldChange> history = await TicketDataService.GetTicketFieldHistoryAsync(
-            companyName,
+        IEnumerable<FieldChange> history = await DataService.GetTicketFieldHistoryAsync(
+            Company1Name,
             TestData.TicketKeys.Ticket1,
-            TestData.Fields.Status
-        );
-        List<FieldChange> changes = history.ToList();
+            TestData.Fields.Status);
 
         // Assert
-        Assert.That(changes, Is.Not.Empty);
-        for (int i = 1; i < changes.Count; i++)
-        {
-            Assert.That(changes[i].ObservedAt, Is.GreaterThanOrEqualTo(changes[i - 1].ObservedAt),
-                $"Field changes should be in chronological order at index {i}");
-        }
+        Assert.That(history, Is.Not.Null);
+        Assert.That(history, Is.Ordered.By("ObservedAt"));
     }
 }

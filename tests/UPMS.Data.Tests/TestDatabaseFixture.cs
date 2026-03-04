@@ -4,6 +4,7 @@ using System;
 using System.Data;
 using System.Threading.Tasks;
 using Microsoft.Data.Sqlite;
+using Microsoft.EntityFrameworkCore;
 using UPMS.Data;
 
 public class TestDatabaseFixture
@@ -40,9 +41,6 @@ public class TestDatabaseFixture
             await ((System.Data.Common.DbCommand)pragma).ExecuteNonQueryAsync();
         }
 
-        // Initialize the lower-level data service to use this connection
-        TicketDataService.Initialize(() => _connection);
-
         await CreateSqliteTablesAsync(_connection);
         await SeedTestDataAsync(_connection);
 
@@ -59,12 +57,24 @@ public class TestDatabaseFixture
 
     public static IItsmFieldMappingService GetMappingService()
     {
-        return new ItsmFieldMappingService(() => _connection!);
+        return new ItsmFieldMappingService(CreateDbContext());
     }
 
     public static IItsmSourceService GetSourceService()
     {
-        return new ItsmSourceService(() => _connection!);
+        return new ItsmSourceService(CreateDbContext());
+    }
+
+    public static UpmsDbContext CreateDbContext()
+    {
+        var optionsBuilder = new DbContextOptionsBuilder<UpmsDbContext>();
+        optionsBuilder.UseSqlite(_connection!);
+        return new UpmsDbContext(optionsBuilder.Options);
+    }
+
+    public static TicketDataService CreateTicketDataService()
+    {
+        return new TicketDataService(CreateDbContext());
     }
 
     // ------------------------------------------------------------------

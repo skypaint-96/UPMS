@@ -20,7 +20,7 @@ public class TicketDataServiceSnapshotTests : TicketDataServiceTestBase
         Guid snapshotId = TestSnapshotId;
 
         // Act
-        IEnumerable<Ticket> tickets = await TicketDataService.GetTicketsBySnapshotAsync(snapshotId);
+        IEnumerable<Ticket> tickets = await DataService.GetTicketsBySnapshotAsync(snapshotId);
 
         // Assert
         foreach (Ticket ticket in tickets)
@@ -37,7 +37,7 @@ public class TicketDataServiceSnapshotTests : TicketDataServiceTestBase
         Guid nonExistentSnapshotId = Guid.NewGuid();
 
         // Act
-        IEnumerable<Ticket> tickets = await TicketDataService.GetTicketsBySnapshotAsync(nonExistentSnapshotId);
+        IEnumerable<Ticket> tickets = await DataService.GetTicketsBySnapshotAsync(nonExistentSnapshotId);
 
         // Assert
         Assert.That(tickets, Is.Empty);
@@ -51,7 +51,7 @@ public class TicketDataServiceSnapshotTests : TicketDataServiceTestBase
         string itsmSource = TestData.Itsm.ServiceNow;
 
         // Act
-        Guid snapshotId = await TicketDataService.CreateSnapshotAsync(
+        Guid snapshotId = await DataService.CreateSnapshotAsync(
             itsmSource,
             snapshotDate
         );
@@ -60,7 +60,7 @@ public class TicketDataServiceSnapshotTests : TicketDataServiceTestBase
         Assert.That(snapshotId, Is.Not.EqualTo(Guid.Empty));
 
         // Verify snapshot can be retrieved (even without tickets)
-        IEnumerable<Ticket> tickets = await TicketDataService.GetTicketsBySnapshotAsync(snapshotId);
+        IEnumerable<Ticket> tickets = await DataService.GetTicketsBySnapshotAsync(snapshotId);
         Assert.That(tickets, Is.Not.Null);
     }
 
@@ -72,7 +72,7 @@ public class TicketDataServiceSnapshotTests : TicketDataServiceTestBase
 
         // Act & Assert
         Assert.ThrowsAsync<ArgumentException>(async () =>
-            await TicketDataService.CreateSnapshotAsync(null!, snapshotDate)
+            await DataService.CreateSnapshotAsync(null!, snapshotDate)
         );
     }
 
@@ -83,16 +83,16 @@ public class TicketDataServiceSnapshotTests : TicketDataServiceTestBase
         string companyName = Company1Name;
         string itsmSource = ResolveItsmSource(companyName);
         DateTime snapshotDate = DateTime.UtcNow;
-        Guid snapshotId = await TicketDataService.CreateSnapshotAsync(itsmSource, snapshotDate);
+        Guid snapshotId = await DataService.CreateSnapshotAsync(itsmSource, snapshotDate);
 
         var ticketKeys = new[] { "INC0009001", "INC0009002", "INC0009003" };
         var ticketsWithCompanies = ticketKeys.Select(key => (key, companyName)).ToArray();
 
         // Act
-        await TicketDataService.AddTicketsToSnapshotAsync(snapshotId, ticketsWithCompanies);
+        await DataService.AddTicketsToSnapshotAsync(snapshotId, ticketsWithCompanies);
 
         // Assert
-        IEnumerable<Ticket> tickets = await TicketDataService.GetTicketsBySnapshotAsync(snapshotId);
+        IEnumerable<Ticket> tickets = await DataService.GetTicketsBySnapshotAsync(snapshotId);
         string[] retrievedKeys = tickets.Select(t => t.TicketKey).ToArray();
 
         Assert.That(retrievedKeys, Is.EquivalentTo(ticketKeys));
@@ -107,7 +107,7 @@ public class TicketDataServiceSnapshotTests : TicketDataServiceTestBase
 
         // Act & Assert
         Assert.ThrowsAsync<ArgumentException>(async () =>
-            await TicketDataService.AddTicketsToSnapshotAsync(Guid.Empty, ticketsWithCompanies)
+            await DataService.AddTicketsToSnapshotAsync(Guid.Empty, ticketsWithCompanies)
         );
     }
 
@@ -118,7 +118,7 @@ public class TicketDataServiceSnapshotTests : TicketDataServiceTestBase
         string companyName = Company1Name;
         string itsmSource = ResolveItsmSource(companyName);
         DateTime snapshotDate = DateTime.UtcNow;
-        Guid snapshotId = await TicketDataService.CreateSnapshotAsync(itsmSource, snapshotDate);
+        Guid snapshotId = await DataService.CreateSnapshotAsync(itsmSource, snapshotDate);
 
         var ticketsWithCompanies = new[]
         {
@@ -128,10 +128,10 @@ public class TicketDataServiceSnapshotTests : TicketDataServiceTestBase
         };
 
         // Act
-        await TicketDataService.AddTicketsToSnapshotAsync(snapshotId, ticketsWithCompanies);
+        await DataService.AddTicketsToSnapshotAsync(snapshotId, ticketsWithCompanies);
 
         // Assert - should only have 2 unique tickets
-        IEnumerable<Ticket> tickets = await TicketDataService.GetTicketsBySnapshotAsync(snapshotId);
+        IEnumerable<Ticket> tickets = await DataService.GetTicketsBySnapshotAsync(snapshotId);
         Assert.That(tickets.Count(), Is.EqualTo(2));
     }
 }

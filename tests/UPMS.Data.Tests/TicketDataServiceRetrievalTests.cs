@@ -21,7 +21,7 @@ public class TicketDataServiceRetrievalTests : TicketDataServiceTestBase
         string itsmSource = ResolveItsmSource(companyName);
 
         // Act
-        IEnumerable<Ticket> tickets = await TicketDataService.GetTicketsAsync(itsmSource, companyName, TestSnapshotDate);
+        IEnumerable<Ticket> tickets = await DataService.GetTicketsAsync(itsmSource, companyName, TestSnapshotDate);
 
         // Assert
         Assert.That(tickets, Is.Not.Null);
@@ -43,7 +43,7 @@ public class TicketDataServiceRetrievalTests : TicketDataServiceTestBase
         string itsmSource = ResolveItsmSource(companyName);
 
         // Act
-        IEnumerable<Ticket> tickets = await TicketDataService.GetTicketsAsync(itsmSource, companyName, TestSnapshotDate);
+        IEnumerable<Ticket> tickets = await DataService.GetTicketsAsync(itsmSource, companyName, TestSnapshotDate);
 
         // Assert
         foreach (Ticket ticket in tickets)
@@ -66,7 +66,7 @@ public class TicketDataServiceRetrievalTests : TicketDataServiceTestBase
         string itsmSource = ResolveItsmSource(companyName);
 
         // Act
-        IEnumerable<Ticket> tickets = await TicketDataService.GetTicketsAsync(itsmSource, companyName, TestSnapshotDate);
+        IEnumerable<Ticket> tickets = await DataService.GetTicketsAsync(itsmSource, companyName, TestSnapshotDate);
 
         // Assert - Fields that exist in our test data will have values, not null
         // Verify that assigned fields are present and non-null
@@ -84,7 +84,7 @@ public class TicketDataServiceRetrievalTests : TicketDataServiceTestBase
         string itsmSource = ResolveItsmSource(companyName);
 
         // Act
-        IEnumerable<Ticket> tickets = await TicketDataService.GetTicketsAsync(itsmSource, companyName, TestSnapshotDate);
+        IEnumerable<Ticket> tickets = await DataService.GetTicketsAsync(itsmSource, companyName, TestSnapshotDate);
 
         // Assert
         foreach (Ticket ticket in tickets)
@@ -104,7 +104,7 @@ public class TicketDataServiceRetrievalTests : TicketDataServiceTestBase
         string itsmSource = ResolveItsmSource(companyName);
 
         // Act
-        IEnumerable<Ticket> tickets = await TicketDataService.GetTicketsAsync(itsmSource, companyName, TestSnapshotDate);
+        IEnumerable<Ticket> tickets = await DataService.GetTicketsAsync(itsmSource, companyName, TestSnapshotDate);
 
         // Assert
         IEnumerable<IGrouping<string, Ticket>> groupedByKey = tickets.GroupBy(t => t.TicketKey);
@@ -122,7 +122,7 @@ public class TicketDataServiceRetrievalTests : TicketDataServiceTestBase
         string itsmSource = ResolveItsmSource(companyName);
 
         // Act
-        IEnumerable<Ticket> tickets = await TicketDataService.GetTicketsAsync(itsmSource, companyName, TestSnapshotDate);
+        IEnumerable<Ticket> tickets = await DataService.GetTicketsAsync(itsmSource, companyName, TestSnapshotDate);
 
         // Assert
         foreach (Ticket ticket in tickets)

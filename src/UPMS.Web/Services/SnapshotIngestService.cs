@@ -173,6 +173,13 @@ public class SnapshotIngestService : ISnapshotIngestService
             // Validate required fields are available
             IReadOnlyList<string> requiredFields = await _sourceService.GetRequiredFieldsAsync(itsmSourceName);
 
+            // Pre-fetch all mappings for this source to avoid per-field DB lookups
+            var mappings = await _sourceService.GetSourceDefinitionAsync(itsmSourceName);
+            var canonicalLookup = mappings.Mappings.ToDictionary(
+                m => m.SourceFieldName,
+                m => m.CanonicalFieldName,
+                StringComparer.OrdinalIgnoreCase);
+
             int elementIndex = 0;
             foreach (JsonElement element in document.RootElement.EnumerateArray())
             {
@@ -204,9 +211,22 @@ public class SnapshotIngestService : ISnapshotIngestService
                     continue;
                 }
 
-                // Resolve ticket key: find the field whose canonical name is "ticket_key"
-                string? ticketKey  = await ResolveCanonicalFieldValueAsync(itsmSourceName, fields, "ticket_key");
-                string? companyName = await ResolveCanonicalFieldValueAsync(itsmSourceName, fields, "company");
+                // Resolve ticket key and company using pre-fetched canonical lookup
+                string? ticketKey = null;
+                string? companyName = null;
+                foreach (var (sourceField, value) in fields)
+                {
+                    if (ticketKey is null && canonicalLookup.TryGetValue(sourceField, out var can1) &&
+                        string.Equals(can1, "ticket_key", StringComparison.Ordinal))
+                        ticketKey = value;
+
+                    if (companyName is null && canonicalLookup.TryGetValue(sourceField, out var can2) &&
+                        string.Equals(can2, "company", StringComparison.Ordinal))
+                        companyName = value;
+
+                    if (ticketKey != null && companyName != null)
+                        break;
+                }
 
                 if (string.IsNullOrWhiteSpace(ticketKey))
                 {
@@ -224,7 +244,7 @@ public class SnapshotIngestService : ISnapshotIngestService
             }
 
             return await PersistJsonRowsAsync(
-                parsedRows, itsmSourceName, snapshotDate, warnings, ct);
+                parsedRows, itsmSourceName, canonicalLookup, snapshotDate, warnings, ct);
         }
         catch (JsonException ex)
         {
@@ -343,6 +363,7 @@ public class SnapshotIngestService : ISnapshotIngestService
     private async Task<IngestResult> PersistJsonRowsAsync(
         List<(string TicketKey, string CompanyName, Dictionary<string, string?> Fields)> rows,
         string itsmSourceName,
+        Dictionary<string, string> canonicalLookup,
         DateOnly snapshotDate,
         List<string> warnings,
         CancellationToken ct)
@@ -392,14 +413,15 @@ public class SnapshotIngestService : ISnapshotIngestService
 
         await _commandRepository.AddSnapshotTicketsAsync(snapshotTickets, ct);
 
+        // Use the pre-fetched canonicalLookup passed from the caller — no DB round-trips here
         // Resolve canonical names and batch-build field changes
         var fieldChanges = new List<FieldChange>();
         foreach (var (ticketKey, companyName, fields) in rows)
         {
             foreach (var (sourceFieldName, fieldValue) in fields)
             {
-                string? canonical = await _sourceService.GetCanonicalNameAsync(itsmSourceName, sourceFieldName);
-                string fieldName = canonical ?? sourceFieldName;
+                // Use pre-fetched mapping to avoid per-field DB lookups
+                string fieldName = canonicalLookup.TryGetValue(sourceFieldName, out var c) ? c : sourceFieldName;
 
                 fieldChanges.Add(new FieldChange
                 {
@@ -448,17 +470,17 @@ public class SnapshotIngestService : ISnapshotIngestService
     /// Finds the source field name whose canonical maps to <paramref name="targetCanonical"/>
     /// and returns its value from <paramref name="fields"/>.
     /// </summary>
-    private async Task<string?> ResolveCanonicalFieldValueAsync(
-        string sourceName,
+    private Task<string?> ResolveCanonicalFieldValueAsync(
         Dictionary<string, string?> fields,
+        Dictionary<string, string> canonicalLookup,
         string targetCanonical)
     {
         foreach (var (sourceField, value) in fields)
         {
-            string? canonical = await _sourceService.GetCanonicalNameAsync(sourceName, sourceField);
-            if (string.Equals(canonical, targetCanonical, StringComparison.Ordinal))
-                return value;
+            if (canonicalLookup.TryGetValue(sourceField, out var canonical) &&
+                string.Equals(canonical, targetCanonical, StringComparison.Ordinal))
+                return Task.FromResult<string?>(value);
         }
-        return null;
+        return Task.FromResult<string?>(null);
     }
 }

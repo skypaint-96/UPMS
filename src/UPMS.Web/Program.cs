@@ -104,9 +104,6 @@ namespace UPMS.Web
                     "No database connection string found. Set the UPMS_CONNECTION_STRING environment variable, provide UPMS_CONNECTION_STRING_FILE pointing to a secret file, or configure ConnectionStrings:DefaultConnection in appsettings.json.");
             }
 
-            // Bind DatabaseOptions so injected services can read the connection string.
-            builder.Services.Configure<DatabaseOptions>(opts =>
-                opts.ConnectionString = connectionString);
 
             // Add services to the container.
             builder.Services.AddRazorComponents()
@@ -117,7 +114,6 @@ namespace UPMS.Web
             builder.Services.AddUpmsData(builder.Configuration);
 
             // Register data service instance (wraps static TicketDataService — kept until Phase 3)
-            builder.Services.AddSingleton<TicketDataServiceInstance>();
 
             // Register report plugins
             builder.Services.AddSingleton<IReportPlugin, StubReportPlugin>();
@@ -145,12 +141,7 @@ namespace UPMS.Web
             var app = builder.Build();
 
             // ------------------------------------------------------------------
-            // Initialise static TicketDataService with the resolved connection string.
-            // ------------------------------------------------------------------
-            TicketDataService.Initialize(connectionString);
-
-            // ------------------------------------------------------------------
-            // Replace custom migration runner with EF Core managed migrations
+            // Initialise migration runner using EF Core migrations
             // ------------------------------------------------------------------
             using (var scope = app.Services.CreateScope())
             {
