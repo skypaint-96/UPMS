@@ -115,13 +115,13 @@ namespace UPMS.Web
 
             // Register data service instance (wraps static TicketDataService — kept until Phase 3)
 
-            // Register report plugins
-            builder.Services.AddSingleton<IReportPlugin, StubReportPlugin>();
-            builder.Services.AddSingleton<IReportPlugin, PowerPointReportPlugin>();
-            builder.Services.AddSingleton<IReportPlugin, EmailNotificationPlugin>();
+            // Register report plugins (Scoped: plugins consume TicketDataServiceInstance which is Scoped)
+            builder.Services.AddScoped<IReportPlugin, StubReportPlugin>();
+            builder.Services.AddScoped<IReportPlugin, PowerPointReportPlugin>();
+            builder.Services.AddScoped<IReportPlugin, EmailNotificationPlugin>();
 
-            // Register plugin registry (receives all IReportPlugin registrations via IEnumerable)
-            builder.Services.AddSingleton<PluginRegistry>();
+            // Register plugin registry (Scoped: receives IEnumerable<IReportPlugin> which are Scoped)
+            builder.Services.AddScoped<PluginRegistry>();
 
             // Register ingest service
             builder.Services.AddScoped<ISnapshotIngestService, SnapshotIngestService>();
