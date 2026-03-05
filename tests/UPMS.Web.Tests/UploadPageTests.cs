@@ -165,4 +165,120 @@ public class UploadPageTests : PageTestBase
         Assert.Ignore("Requires a real database connection — run against a live environment");
         return Task.CompletedTask;
     }
+
+    [Test]
+    public async Task WhenUploadPageLoadsThenTemplateDownloadSectionIsNotPresent()
+    {
+        // Act
+        await Page.GotoAsync(Url("/upload"));
+
+        // Assert — the template download help section should not be rendered when no source is selected
+        var section = Page.Locator("[data-testid='template-download-section']");
+        Assert.That(await section.CountAsync(), Is.EqualTo(0),
+            "Template download section should not be present when no ITSM source is selected.");
+    }
+
+    [Test]
+    public async Task WhenItsmSourceSelectedThenTemplateDownloadSectionIsVisible()
+    {
+        await Page.GotoAsync(Url("/upload"));
+        var select = Page.Locator("[data-testid='upload-itsm-source']");
+        var options = await select.Locator("option").AllAsync();
+        if (options.Count <= 1)
+            Assert.Ignore("Requires live database");
+
+        var firstSourceValue = await options[1].GetAttributeAsync("value");
+        await select.SelectOptionAsync(firstSourceValue!);
+
+        var section = Page.Locator("[data-testid='template-download-section']");
+        await Assertions.Expect(section).ToBeVisibleAsync();
+    }
+
+    [Test]
+    public async Task WhenItsmSourceSelectedThenRequiredTemplateDownloadLinkIsPresent()
+    {
+        await Page.GotoAsync(Url("/upload"));
+        var select = Page.Locator("[data-testid='upload-itsm-source']");
+        var options = await select.Locator("option").AllAsync();
+        if (options.Count <= 1)
+            Assert.Ignore("Requires live database");
+
+        var firstSourceValue = await options[1].GetAttributeAsync("value");
+        await select.SelectOptionAsync(firstSourceValue!);
+
+        var link = Page.Locator("[data-testid='download-template-required']");
+        await Assertions.Expect(link).ToBeVisibleAsync();
+    }
+
+    [Test]
+    public async Task WhenItsmSourceSelectedThenAllHeadersTemplateDownloadLinkIsPresent()
+    {
+        await Page.GotoAsync(Url("/upload"));
+        var select = Page.Locator("[data-testid='upload-itsm-source']");
+        var options = await select.Locator("option").AllAsync();
+        if (options.Count <= 1)
+            Assert.Ignore("Requires live database");
+
+        var firstSourceValue = await options[1].GetAttributeAsync("value");
+        await select.SelectOptionAsync(firstSourceValue!);
+
+        var link = Page.Locator("[data-testid='download-template-all']");
+        await Assertions.Expect(link).ToBeVisibleAsync();
+    }
+
+    [Test]
+    public async Task WhenItsmSourceSelectedThenRequiredTemplateLinkHasCorrectHref()
+    {
+        await Page.GotoAsync(Url("/upload"));
+        var select = Page.Locator("[data-testid='upload-itsm-source']");
+        var options = await select.Locator("option").AllAsync();
+        if (options.Count <= 1)
+            Assert.Ignore("Requires live database");
+
+        var sourceValue = await options[1].GetAttributeAsync("value");
+        await select.SelectOptionAsync(sourceValue!);
+
+        var link = Page.Locator("[data-testid='download-template-required']");
+        var href = await link.GetAttributeAsync("href");
+        Assert.That(href, Does.Contain($"/api/template/{sourceValue}/required"));
+    }
+
+    [Test]
+    public async Task WhenItsmSourceSelectedThenAllTemplatesLinkHasCorrectHref()
+    {
+        await Page.GotoAsync(Url("/upload"));
+        var select = Page.Locator("[data-testid='upload-itsm-source']");
+        var options = await select.Locator("option").AllAsync();
+        if (options.Count <= 1)
+            Assert.Ignore("Requires live database");
+
+        var sourceValue = await options[1].GetAttributeAsync("value");
+        await select.SelectOptionAsync(sourceValue!);
+
+        var link = Page.Locator("[data-testid='download-template-all']");
+        var href = await link.GetAttributeAsync("href");
+        Assert.That(href, Does.Contain($"/api/template/{sourceValue}/all"));
+    }
+
+    [Test]
+    public async Task WhenItsmSourceDeselectedThenTemplateDownloadSectionIsHidden()
+    {
+        await Page.GotoAsync(Url("/upload"));
+        var select = Page.Locator("[data-testid='upload-itsm-source']");
+        var options = await select.Locator("option").AllAsync();
+        if (options.Count <= 1)
+            Assert.Ignore("Requires live database");
+
+        // Select a real source so the section appears
+        var firstSourceValue = await options[1].GetAttributeAsync("value");
+        await select.SelectOptionAsync(firstSourceValue!);
+
+        // Now re-select the placeholder option (index 0)
+        var placeholderValue = await options[0].GetAttributeAsync("value");
+        await select.SelectOptionAsync(placeholderValue!);
+
+        var section = Page.Locator("[data-testid='template-download-section']");
+        Assert.That(await section.CountAsync(), Is.EqualTo(0),
+            "Template download section should not be present after deselecting the ITSM source.");
+    }
 }

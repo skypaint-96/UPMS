@@ -65,6 +65,26 @@
     </div>
 }
 
+@if (!string.IsNullOrEmpty(selectedItsmSource))
+{
+    <div class="template-download-section" data-testid="template-download-section">
+        <h3>Download Data Template</h3>
+        <p>If you're having trouble uploading, download a blank CSV template for the selected ITSM source:</p>
+        <a href="/api/template/@selectedItsmSource/required"
+           target="_blank"
+           data-testid="download-template-required"
+           class="btn btn-outline-secondary btn-sm me-2">
+            Download Required Headers Template
+        </a>
+        <a href="/api/template/@selectedItsmSource/all"
+           target="_blank"
+           data-testid="download-template-all"
+           class="btn btn-outline-secondary btn-sm">
+            Download All Headers Template
+        </a>
+    </div>
+}
+
 @code {
     private string selectedItsmSource = string.Empty;
     private DateOnly snapshotDate = DateOnly.FromDateTime(DateTime.Today);

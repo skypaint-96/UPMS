@@ -134,6 +134,9 @@ namespace UPMS.Web
             // Register report download store (scoped per-connection)
             builder.Services.AddScoped<ReportDownloadStore>();
 
+            // Register CsvTemplateService
+            builder.Services.AddScoped<ICsvTemplateService, CsvTemplateService>();
+
             // ------------------------------------------------------------------
             // Data Protection: persist keys to a directory so they survive
             // container restarts. In Docker the directory is backed by the
@@ -269,6 +272,21 @@ namespace UPMS.Web
                 ctx.Response.ContentType = result.ContentType ?? "application/octet-stream";
                 ctx.Response.Headers.ContentDisposition = $"attachment; filename=\"{result.FileName ?? "report"}\"";
                 await ctx.Response.Body.WriteAsync(result.FileContent);
+            });
+
+            // CSV template endpoints
+            app.MapGet("/api/template/{sourceName}/required", async (string sourceName, ICsvTemplateService templateService) =>
+            {
+                var bytes = await templateService.GetTemplateBytesAsync(sourceName, requiredOnly: true);
+                if (bytes is null) return Results.NotFound();
+                return Results.File(bytes, "text/csv", $"{sourceName}-required-template.csv");
+            });
+
+            app.MapGet("/api/template/{sourceName}/all", async (string sourceName, ICsvTemplateService templateService) =>
+            {
+                var bytes = await templateService.GetTemplateBytesAsync(sourceName, requiredOnly: false);
+                if (bytes is null) return Results.NotFound();
+                return Results.File(bytes, "text/csv", $"{sourceName}-template.csv");
             });
 
             app.Run();
