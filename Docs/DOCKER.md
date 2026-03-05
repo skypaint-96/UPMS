@@ -8,10 +8,10 @@ This document describes the Docker Compose setup for UPMS: the services defined,
 
 UPMS uses two containers:
 
-| Service | Description | Host Port |
-|---------|-------------|-----------|
-| `db` | PostgreSQL 16 database | `5432` |
-| `upms.web` | Blazor Server web application (.NET 10) | `8080` (HTTP), `8081` (HTTPS) |
+| Service      | Description                          | Host Port           |
+|--------------|--------------------------------------|---------------------|
+| `UPMS_db`    | PostgreSQL 16 database               | `5432`              |
+| `UPMS_web`   | Blazor Server web application (.NET) | `8081` (HTTP)       |
 
 There is no worker service, no object storage, and no separate API backend. The Blazor Server application is the only application container.
 
@@ -25,25 +25,43 @@ The base compose file defines the two services and the persistent database volum
 
 ```yaml
 services:
-  upms.web:
+  UPMS_web:
     image: ${DOCKER_REGISTRY-}upmsweb
     build:
       context: .
       dockerfile: src/UPMS.Web/Dockerfile
-
-  db:
-    image: postgres:16
+    ports:
+      - "8081:8080"
     environment:
-      POSTGRES_USER: upms
-      POSTGRES_PASSWORD: upms
-      POSTGRES_DB: upms
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ASPNETCORE_URLS=http://+:8080
+      - AUTH_MODE=Entra
+      - UPMS_CONNECTION_STRING_FILE=/run/secrets/upms_connection_string
+    volumes:
+      - upms_keys:/app/keys
+    depends_on:
+      UPMS_db:
+        condition: service_healthy
+
+  UPMS_db:
+    image: postgres:16-alpine
     ports:
       - "5432:5432"
+    environment:
+      - POSTGRES_USER=upms
+      - POSTGRES_DB=upms
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U upms -d upms"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
 
 volumes:
   pgdata:
+  upms_keys:
 ```
 
 ### [`docker-compose.override.yml`](../docker-compose.override.yml)
@@ -52,17 +70,22 @@ The override file applies development-specific settings — ASP.NET Core environ
 
 ```yaml
 services:
-  upms.web:
+  UPMS_web:
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
-      - ASPNETCORE_HTTP_PORTS=8080
-      - ASPNETCORE_HTTPS_PORTS=8081
+      - ASPNETCORE_URLS=http://+:8080
+      - AUTH_MODE=None
+      - UPMS_CONNECTION_STRING=Host=UPMS_db;Port=5432;Database=upms;Username=upms;Password=upms
     ports:
-      - "8080"
-      - "8081"
+      - "8081:8080"
     volumes:
-      - ${APPDATA}/Microsoft/UserSecrets:/home/app/.microsoft/usersecrets:ro
-      - ${APPDATA}/ASP.NET/Https:/home/app/.aspnet/https:ro
+      - ./src/UPMS.Web:/app/src/UPMS.Web:ro
+
+  UPMS_db:
+    environment:
+      - POSTGRES_USER=upms
+      - POSTGRES_PASSWORD=upms
+      - POSTGRES_DB=upms
 ```
 
 Docker Compose automatically merges both files when running `docker compose` commands in development.
@@ -73,80 +96,83 @@ Docker Compose automatically merges both files when running `docker compose` com
 
 The [`src/UPMS.Web/Dockerfile`](../src/UPMS.Web/Dockerfile) uses a standard multi-stage .NET build:
 
-| Stage | Base Image | Purpose |
-|-------|-----------|---------|
-| `base` | `mcr.microsoft.com/dotnet/aspnet:10.0` | Runtime image — exposes ports 8080 and 8081 |
-| `build` | `mcr.microsoft.com/dotnet/sdk:10.0` | Restores and builds the project |
-| `publish` | `build` | Publishes the self-contained app to `/app/publish` |
-| `final` | `base` | Copies published output and sets entrypoint |
+| Stage    | Base Image                              | Purpose                                   |
+|----------|----------------------------------------|-------------------------------------------|
+| `build`  | `mcr.microsoft.com/dotnet/sdk:10.0`    | Restores and builds the project          |
+| `final`  | `mcr.microsoft.com/dotnet/aspnet:10.0` | Copies published output and sets entrypoint |
 
 The entrypoint is `dotnet UPMS.Web.dll`.
 
-`UPMS.Data` is a referenced class library — it is compiled into `UPMS.Web` and does not have its own container or Dockerfile.
-
 ---
 
-## Database Initialisation
+## Scenarios
 
-The `db` container uses a named Docker volume (`pgdata`) for persistence. On first startup (when the volume is empty), PostgreSQL will run any `.sql` files mounted at `/docker-entrypoint-initdb.d/`.
+### 1. Start the Project (Persisting Existing Data)
 
-To wire up the migration scripts for automatic initialisation, mount the migrations directory in the compose file:
-
-```yaml
-db:
-  volumes:
-    - pgdata:/var/lib/postgresql/data
-    - ./sql/migrations:/docker-entrypoint-initdb.d:ro
-```
-
-> **Note:** The current `docker-compose.yml` does not yet mount the migrations directory. Migrations must be applied manually or this mount must be added. See [`sql/migrations/`](../sql/migrations/) for the migration scripts.
-
-To apply migrations manually against the running container:
-
-```bash
-docker compose exec db psql -U upms -d upms -f /path/to/migration.sql
-```
-
-Or from the host, piping the file in:
-
-```bash
-docker compose exec -T db psql -U upms -d upms < sql/migrations/001_initial_schema.sql
-docker compose exec -T db psql -U upms -d upms < sql/migrations/002_indexes.sql
-```
-
----
-
-## Common Commands
-
-### Start all services
+To start the project while keeping the existing database volume intact:
 
 ```bash
 docker compose up -d
 ```
 
-Application: **http://localhost:8080**
+This command starts all services defined in the `docker-compose.yml` and `docker-compose.override.yml` files. The database volume (`pgdata`) is preserved, ensuring existing data remains intact.
 
-### View logs
+### 2. Stop the Service
 
-```bash
-docker compose logs -f upms.web
-docker compose logs -f db
-```
-
-### Rebuild the web application
+To stop the services without removing containers or data:
 
 ```bash
-docker compose build upms.web
-docker compose up -d upms.web
+docker compose stop
 ```
 
-### Connect to the database
+To stop and remove containers (but keep volumes):
 
 ```bash
-docker compose exec db psql -U upms -d upms
+docker compose down
 ```
 
-### Reset the database (destroys all data)
+### 3. Full Fresh Start — Persisting Data
+
+To rebuild the application image and restart services while keeping the existing database data:
+
+```bash
+docker compose up --build -d
+```
+
+This command rebuilds the `UPMS_web` image and restarts all services, preserving the database volume.
+
+### 4. Full Fresh Start — Clean Slate
+
+To rebuild the application image and wipe the database:
+
+```bash
+docker compose down -v
+```
+
+```bash
+docker compose up --build -d
+```
+
+The `-v` flag removes all volumes, including the database volume (`pgdata`). On the next startup, the database will be reinitialized from EF Core migrations.
+
+---
+
+## Common Commands
+
+### View Logs
+
+```bash
+docker compose logs -f UPMS_web
+docker compose logs -f UPMS_db
+```
+
+### Connect to the Database
+
+```bash
+docker compose exec UPMS_db psql -U upms -d upms
+```
+
+### Reset the Database (Destroys All Data)
 
 ```bash
 docker compose down -v
@@ -157,13 +183,13 @@ docker compose up -d
 
 ## Connection String
 
-The `upms.web` container connects to the `db` container using the Docker service name as the hostname:
+The `UPMS_web` container connects to the `UPMS_db` container using the Docker service name as the hostname:
 
 ```
-Host=db;Port=5432;Database=upms;Username=upms;Password=upms
+Host=UPMS_db;Port=5432;Database=upms;Username=upms;Password=upms
 ```
 
-This is configured via the `ConnectionStrings__Default` environment variable (or `appsettings.json` for local development using `Host=localhost`).
+This is configured via the `UPMS_CONNECTION_STRING` environment variable in development or `UPMS_CONNECTION_STRING_FILE` in production.
 
 ---
 
@@ -179,12 +205,13 @@ adminer:
   profiles:
     - tools
   depends_on:
-    - db
+    - UPMS_db
 ```
 
 Start with:
+
 ```bash
 docker compose --profile tools up -d
 ```
 
-Access at **http://localhost:8090** — connect with system `PostgreSQL`, server `db`, username `upms`, password `upms`, database `upms`.
+Access at **http://localhost:8090** — connect with system `PostgreSQL`, server `UPMS_db`, username `upms`, password `upms`, database `upms`.

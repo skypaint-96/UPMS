@@ -30,7 +30,6 @@ public static class DataServiceExtensions
         services.AddScoped<IItsmSourceService, ItsmSourceService>();
         services.AddScoped<IItsmFieldMappingService, ItsmFieldMappingService>();
         services.AddScoped<TicketDataService>();
-        services.AddScoped<TicketDataServiceInstance>();
 
         return services;
     }

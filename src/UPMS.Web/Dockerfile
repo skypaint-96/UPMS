@@ -20,9 +20,6 @@ WORKDIR /app
 # Copy published application
 COPY --from=build /app/publish .
 
-# Copy SQL migrations so the startup migration runner can apply them
-COPY sql/migrations/ /app/sql/migrations/
-
 # Kestrel listens on HTTP 8080 inside the container
 ENV ASPNETCORE_URLS=http://+:8080
 EXPOSE 8080

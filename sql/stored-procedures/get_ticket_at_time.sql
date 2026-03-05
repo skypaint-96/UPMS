@@ -33,26 +33,6 @@ COMMENT ON FUNCTION get_ticket_at_time(UUID, VARCHAR, TIMESTAMPTZ) IS
     'Reconstructs a ticket''s complete state at a specific point in time. '
     'Returns the latest value for each field observed before or at the given time.';
 
-CREATE OR REPLACE FUNCTION get_ticket_at_time_jsonb(
-    p_company_id UUID,
-    p_ticket_key VARCHAR(255),
-    p_as_of_time TIMESTAMPTZ
-)
-RETURNS JSONB
-LANGUAGE SQL
-STABLE
-PARALLEL SAFE
-AS $$
-    SELECT COALESCE(
-        jsonb_object_agg(t.field_name, t.field_value),
-        '{}'::jsonb
-    )
-    FROM get_ticket_at_time(p_company_id, p_ticket_key, p_as_of_time) t;
-$$;
-
-COMMENT ON FUNCTION get_ticket_at_time_jsonb(UUID, VARCHAR, TIMESTAMPTZ) IS
-    'Returns a ticket''s state as a JSONB object. Wrapper around get_ticket_at_time.';
-
 CREATE OR REPLACE FUNCTION get_ticket_at_time_with_metadata(
     p_company_id UUID,
     p_ticket_key VARCHAR(255),

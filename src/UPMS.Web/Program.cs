@@ -114,6 +114,11 @@ namespace UPMS.Web
             builder.Services.AddUpmsData(builder.Configuration);
 
             // Register data service instance (wraps static TicketDataService — kept until Phase 3)
+            builder.Services.AddScoped<TicketDataServiceInstance>(sp =>
+            {
+                var inner = sp.GetRequiredService<TicketDataService>();
+                return new TicketDataServiceInstance(inner);
+            });
 
             // Register report plugins (Scoped: plugins consume TicketDataServiceInstance which is Scoped)
             builder.Services.AddScoped<IReportPlugin, StubReportPlugin>();
