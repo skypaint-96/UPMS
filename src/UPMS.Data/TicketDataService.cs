@@ -214,6 +214,106 @@ public class TicketDataService
     /// Retrieves all tickets from a specific snapshot.
     /// Uses a single bulk field fetch to avoid N+1 queries.
     /// </summary>
+    public async Task<IEnumerable<Ticket>> GetTicketsFilteredAsync(
+        string itsmSource,
+        DateTime asOfDate,
+        IEnumerable<TicketFieldFilter>? fieldFilters = null)
+    {
+        if (string.IsNullOrWhiteSpace(itsmSource))
+            throw new ArgumentException("ITSM source is required.", nameof(itsmSource));
+        if (asOfDate == default)
+            throw new ArgumentException("asOfDate is required.", nameof(asOfDate));
+    
+        // Step 1: Find all snapshots for this source up to asOfDate
+        var snapshotIds = await _context.Snapshots
+            .AsNoTracking()
+            .Where(s => s.ItsmSource == itsmSource && s.SnapshotDate <= asOfDate)
+            .Select(s => new { s.Id, s.SnapshotDate })
+            .ToListAsync();
+    
+        if (snapshotIds.Count == 0)
+            return [];
+    
+        var snapshotIdSet = snapshotIds.Select(s => s.Id).ToHashSet();
+        var snapshotDateLookup = snapshotIds.ToDictionary(s => s.Id, s => s.SnapshotDate);
+    
+        // Step 2: Find latest snapshot per ticket key (across all companies)
+        var ticketRows = await _context.SnapshotTickets
+            .AsNoTracking()
+            .Where(st => snapshotIdSet.Contains(st.SnapshotId))
+            .GroupBy(st => st.TicketKey)
+            .Select(g => new
+            {
+                TicketKey = g.Key,
+                SnapshotId = g.OrderByDescending(x => snapshotDateLookup.ContainsKey(x.SnapshotId) ? snapshotDateLookup[x.SnapshotId] : DateTime.MinValue)
+                              .Select(x => x.SnapshotId)
+                              .First(),
+                CompanyName = g.OrderByDescending(x => snapshotDateLookup.ContainsKey(x.SnapshotId) ? snapshotDateLookup[x.SnapshotId] : DateTime.MinValue)
+                              .Select(x => x.CompanyName)
+                              .First()
+            })
+            .ToListAsync();
+    
+        if (ticketRows.Count == 0)
+            return [];
+    
+        var ticketKeys = ticketRows.Select(t => t.TicketKey).Distinct().ToList();
+    
+        // Step 3: Bulk fetch all field values for all tickets at once
+        var allFields = await _context.FieldChanges
+            .AsNoTracking()
+            .Where(fc => ticketKeys.Contains(fc.TicketKey)
+                      && fc.ObservedAt <= asOfDate)
+            .GroupBy(fc => new { fc.CompanyName, fc.TicketKey, fc.FieldName })
+            .Select(g => new
+            {
+                g.Key.CompanyName,
+                g.Key.TicketKey,
+                g.Key.FieldName,
+                FieldValue = g.OrderByDescending(x => x.ObservedAt).Select(x => x.FieldValue).First(),
+                ObservedAt = g.Max(x => x.ObservedAt)
+            })
+            .ToListAsync();
+    
+        // Group fields by (company, ticketKey)
+        var fieldsByCompanyTicket = allFields
+            .GroupBy(f => (f.CompanyName, f.TicketKey))
+            .ToDictionary(
+                g => g.Key,
+                g => (IDictionary<string, string?>)g.ToDictionary(f => f.FieldName, f => f.FieldValue));
+    
+        var maxObservedByCompanyTicket = allFields
+            .GroupBy(f => (f.CompanyName, f.TicketKey))
+            .ToDictionary(g => g.Key, g => g.Max(f => f.ObservedAt));
+    
+        var results = ticketRows.Select(row =>
+        {
+            var key = (row.CompanyName, row.TicketKey);
+            return new Ticket
+            {
+                TicketKey = row.TicketKey,
+                CompanyName = row.CompanyName,
+                ItsmSource = itsmSource,
+                Fields = fieldsByCompanyTicket.TryGetValue(key, out var fields) ? fields : new Dictionary<string, string?>(),
+                ObservedAt = maxObservedByCompanyTicket.TryGetValue(key, out var obs) ? obs : DateTime.MinValue,
+                SnapshotId = row.SnapshotId,
+                SnapshotDate = snapshotDateLookup.TryGetValue(row.SnapshotId, out var sd) ? sd : DateTime.MinValue
+            };
+        }).ToList();
+    
+        // Apply field filters if provided
+        if (fieldFilters != null && fieldFilters.Any())
+        {
+            var filters = fieldFilters.ToList();
+            results = results.Where(ticket =>
+                filters.All(ff => ticket.Fields.TryGetValue(ff.FieldName, out var v) &&
+                    string.Equals(v, ff.Value, StringComparison.OrdinalIgnoreCase)))
+                .ToList();
+        }
+    
+        return results;
+    }
+    
     public async Task<IEnumerable<Ticket>> GetTicketsBySnapshotAsync(Guid snapshotId)
     {
         var snapshot = await _context.Snapshots

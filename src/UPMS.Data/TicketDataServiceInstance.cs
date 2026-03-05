@@ -25,6 +25,9 @@ public class TicketDataServiceInstance
     public Task<IEnumerable<Ticket>> GetTicketsAsync(string itsmSource, string companyName, DateTime asOfDate)
         => _inner.GetTicketsAsync(itsmSource, companyName, asOfDate);
 
+    public Task<IEnumerable<Ticket>> GetTicketsFilteredAsync(string itsmSource, DateTime asOfDate, IEnumerable<TicketFieldFilter>? fieldFilters = null)
+        => _inner.GetTicketsFilteredAsync(itsmSource, asOfDate, fieldFilters);
+
     public Task<IEnumerable<Ticket>> GetTicketsBySnapshotAsync(Guid snapshotId)
         => _inner.GetTicketsBySnapshotAsync(snapshotId);
 

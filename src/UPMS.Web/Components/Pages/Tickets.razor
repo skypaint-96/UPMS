@@ -1,65 +1,101 @@
 @page "/tickets"
 
-<PageTitle>Tickets - UPMS</PageTitle>
+@using System.Globalization
+@inject TicketDataServiceInstance DataService
+@inject IItsmSourceService ItsmSourceService
+@inject IItsmFieldMappingService FieldMappingService
+
+<PageTitle>Tickets</PageTitle>
 
 <h1>Tickets</h1>
 
 <div>
-    <input type="text" data-testid="company-filter" placeholder="Company name" @bind="companyName" @bind:after="LoadTicketsAsync" />
-
-    <select data-testid="itsm-source-filter" @bind="itsmSource" @bind:after="LoadTicketsAsync">
-        <option value="">All ITSM Sources</option>
-        @foreach (string source in itsmSources)
+    <select data-testid="itsm-source-filter" @bind="itsmSource" @bind:after="OnItsmSourceChanged">
+        <option value="" disabled>-- Select ITSM Source --</option>
+        @foreach (var source in itsmSources)
         {
-            <option value="@source">@source</option>
+            <option value="@source.Name">@source.DisplayLabel</option>
         }
     </select>
+
+    <input type="datetime-local" data-testid="as-of-datetime" value="@asOfLocal" @onchange="OnAsOfLocalChanged" />
+
+    <button data-testid="search-btn" @onclick="SearchAsync" disabled="@isLoading">Search</button>
+    @if (isLoading)
+    {
+        <span data-testid="loading-indicator">Loading...</span>
+    }
 </div>
 
-@if (string.IsNullOrWhiteSpace(itsmSource) || string.IsNullOrWhiteSpace(companyName))
+@if (string.IsNullOrWhiteSpace(itsmSource))
 {
-    <p data-testid="tickets-empty-hint">Enter an ITSM source and company name to browse tickets.</p>
+    <p data-testid="tickets-empty-hint">Select an ITSM source to begin.</p>
 }
-
-<table data-testid="ticket-table">
-    <thead>
-        <tr>
-            <th>Ticket Key</th>
-            <th>Company</th>
-            <th>ITSM Source</th>
-            <th>Status</th>
-        </tr>
-    </thead>
-    <tbody>
-        @if (tickets.Count == 0)
+else
+{
+    <div data-testid="field-filters-panel">
+        <h2>Field Filters</h2>
+        @for (int i = 0; i < filterNames.Count; i++)
         {
-            <tr data-testid="ticket-table-empty">
-                <td colspan="4">No tickets found.</td>
-            </tr>
+            <div class="filter-row">
+                <select data-testid="field-filter-name-@i" @bind="filterNames[i]">
+                    <option value="" disabled>-- Field --</option>
+                    @foreach (var mapping in mappings)
+                    {
+                        <option value="@mapping.SourceFieldName">@mapping.SourceFieldName</option>
+                    }
+                </select>
+                <input type="text" data-testid="field-filter-value-@i" @bind="filterValues[i]" />
+                <button type="button" data-testid="remove-filter-@i" @onclick="() => RemoveFilter(i)">×</button>
+            </div>
         }
-        else
-        {
-            @foreach (Ticket ticket in tickets)
+
+        <button type="button" data-testid="add-filter-btn" @onclick="AddFilter">+ Add Filter</button>
+    </div>
+
+    <table data-testid="ticket-table">
+        <thead>
+            <tr>
+                <th>Ticket Key</th>
+                <th>Company</th>
+                <th>ITSM Source</th>
+                <th>Status</th>
+            </tr>
+        </thead>
+        <tbody>
+            @if (tickets.Count == 0)
             {
-                <tr>
-                    <td><a href="/tickets/@Uri.EscapeDataString(ticket.CompanyName)/@Uri.EscapeDataString(ticket.ItsmSource)/@Uri.EscapeDataString(ticket.TicketKey)">@ticket.TicketKey</a></td>
-                    <td>@ticket.CompanyName</td>
-                    <td>@ticket.ItsmSource</td>
-                    <td>@(ticket.Fields.TryGetValue("Status", out string? status) ? status : "—")</td>
+                <tr data-testid="ticket-table-empty">
+                    <td colspan="4">No tickets found.</td>
                 </tr>
             }
-        }
-    </tbody>
-</table>
+            else
+            {
+                @foreach (var ticket in tickets)
+                {
+                    <tr>
+                        <td><a href="/tickets/@Uri.EscapeDataString(ticket.CompanyName)/@Uri.EscapeDataString(ticket.ItsmSource)/@Uri.EscapeDataString(ticket.TicketKey)">@ticket.TicketKey</a></td>
+                        <td>@ticket.CompanyName</td>
+                        <td>@ticket.ItsmSource</td>
+                        <td>@(ticket.Fields.TryGetValue("Status", out string? status) ? status : "—")</td>
+                    </tr>
+                }
+            }
+        </tbody>
+    </table>
+}
 
 @code {
-    [Inject]
-    private TicketDataServiceInstance DataService { get; set; } = default!;
+    private List<Ticket> tickets = new();
+    private List<ItsmSource> itsmSources = new();
+    private List<ItsmFieldMapping> mappings = new();
+    private List<string> filterNames = new();
+    private List<string> filterValues = new();
 
-    private List<Ticket> tickets = [];
-    private List<string> itsmSources = [];
-    private string companyName = string.Empty;
     private string itsmSource = string.Empty;
+    private string asOfLocal = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm");
+    private bool isLoading = false;
+    private DateTime asOfDateTime = DateTime.UtcNow;
 
     protected override async Task OnInitializedAsync()
     {
@@ -70,35 +106,113 @@
     {
         try
         {
-            IEnumerable<Snapshot> snapshots = await DataService.GetSnapshotsAsync();
-            itsmSources = snapshots.Select(s => s.ItsmSource).Distinct().OrderBy(s => s).ToList();
+            var sources = await ItsmSourceService.GetAllSourcesAsync();
+            itsmSources = sources.OrderBy(s => s.DisplayLabel).ToList();
         }
         catch
         {
-            itsmSources = [];
+            itsmSources = new();
         }
     }
 
-    private async Task LoadTicketsAsync()
+    private async Task OnItsmSourceChanged()
     {
-        if (string.IsNullOrWhiteSpace(itsmSource) || string.IsNullOrWhiteSpace(companyName))
-        {
-            tickets = [];
+        // Reset filters and tickets
+        filterNames.Clear();
+        filterValues.Clear();
+        tickets.Clear();
+        mappings.Clear();
+
+        if (string.IsNullOrWhiteSpace(itsmSource))
             return;
-        }
 
         try
         {
-            IEnumerable<Ticket> results = await DataService.GetTicketsAsync(
-                itsmSource,
-                companyName,
-                DateTime.UtcNow);
+            mappings = FieldMappingService.GetMappingsForSource(itsmSource).ToList();
+        }
+        catch
+        {
+            mappings = new();
+        }
 
+        StateHasChanged();
+    }
+
+    private void AddFilter()
+    {
+        filterNames.Add(string.Empty);
+        filterValues.Add(string.Empty);
+    }
+
+    private void RemoveFilter(int index)
+    {
+        if (index < 0 || index >= filterNames.Count) return;
+        filterNames.RemoveAt(index);
+        filterValues.RemoveAt(index);
+    }
+
+    private async Task SearchAsync()
+    {
+        if (string.IsNullOrWhiteSpace(itsmSource))
+            return;
+
+        DateTime asOf;
+        try
+        {
+            asOf = DateTime.ParseExact(asOfLocal, "yyyy-MM-ddTHH:mm", CultureInfo.InvariantCulture);
+            asOf = DateTime.SpecifyKind(asOf, DateTimeKind.Utc);
+        }
+        catch
+        {
+            asOf = DateTime.UtcNow;
+        }
+
+        var activeFilters = new List<TicketFieldFilter>();
+        for (int i = 0; i < filterNames.Count; i++)
+        {
+            var name = filterNames[i]?.Trim();
+            var value = filterValues[i]?.Trim();
+            if (!string.IsNullOrEmpty(name) && !string.IsNullOrEmpty(value))
+            {
+                activeFilters.Add(new TicketFieldFilter(name, value));
+            }
+        }
+
+        isLoading = true;
+        try
+        {
+            var results = await DataService.GetTicketsFilteredAsync(itsmSource, asOf, activeFilters);
             tickets = results.ToList();
         }
         catch
         {
-            tickets = [];
+            tickets = new();
         }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private void OnAsOfLocalChanged(ChangeEventArgs e)
+    {
+        var value = e?.Value?.ToString();
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            if (DateTime.TryParseExact(value, "yyyy-MM-ddTHH:mm", CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var dt))
+            {
+                asOfDateTime = DateTime.SpecifyKind(dt, DateTimeKind.Utc);
+                asOfLocal = value;
+                return;
+            }
+            if (DateTime.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out dt))
+            {
+                asOfDateTime = DateTime.SpecifyKind(dt, DateTimeKind.Utc);
+                asOfLocal = value;
+                return;
+            }
+        }
+        asOfDateTime = DateTime.UtcNow;
+        asOfLocal = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm");
     }
 }
