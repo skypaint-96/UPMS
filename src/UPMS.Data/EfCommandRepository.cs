@@ -14,8 +14,6 @@ public class EfCommandRepository : ICommandRepository
         _context = context ?? throw new ArgumentNullException(nameof(context));
     }
 
-    // ── Snapshots ──────────────────────────────────────────────────────────
-
     /// <inheritdoc/>
     public async Task<Snapshot> CreateSnapshotAsync(Snapshot snapshot, CancellationToken ct = default)
     {
@@ -26,8 +24,6 @@ public class EfCommandRepository : ICommandRepository
         return snapshot;
     }
 
-    // ── Snapshot tickets ───────────────────────────────────────────────────
-
     /// <inheritdoc/>
     public Task AddSnapshotTicketAsync(SnapshotTicket ticket, CancellationToken ct = default)
     {
@@ -37,32 +33,32 @@ public class EfCommandRepository : ICommandRepository
 
     /// <inheritdoc/>
     /// <remarks>
-    /// Uses a single bulk <c>INSERT … unnest(…) ON CONFLICT (snapshot_id, ticket_key) DO NOTHING</c>
-    /// so that duplicate rows are silently ignored and the entire batch is sent in one round-trip.
+    /// EF Core doesn't natively support Postgres <c>ON CONFLICT DO NOTHING</c> inserts.
+    /// To keep behavior equivalent to the previous raw SQL implementation, we de-duplicate
+    /// rows in-memory and then insert in one transaction.
     /// </remarks>
     public async Task AddSnapshotTicketsAsync(IEnumerable<SnapshotTicket> tickets, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(tickets);
 
-        var list = tickets.ToList();
+        var list = tickets
+            .Where(t => t.SnapshotId != Guid.Empty && !string.IsNullOrWhiteSpace(t.TicketKey))
+            .Select(t =>
+            {
+                t.TicketKey = t.TicketKey.Trim();
+                t.CompanyName = t.CompanyName?.Trim() ?? string.Empty;
+                return t;
+            })
+            .GroupBy(t => new { t.SnapshotId, t.TicketKey })
+            .Select(g => g.First())
+            .ToList();
+
         if (list.Count == 0)
             return;
 
-        var ids          = list.Select(t => t.Id).ToArray();
-        var snapshotIds  = list.Select(t => t.SnapshotId).ToArray();
-        var companies    = list.Select(t => t.CompanyName).ToArray();
-        var ticketKeys   = list.Select(t => t.TicketKey).ToArray();
-
-        await _context.Database.ExecuteSqlInterpolatedAsync(
-            $"""
-            INSERT INTO snapshot_ticket (id, snapshot_id, company_name, ticket_key)
-            SELECT * FROM unnest({ids}::uuid[], {snapshotIds}::uuid[], {companies}::varchar[], {ticketKeys}::varchar[])
-                AS t(id, snapshot_id, company_name, ticket_key)
-            ON CONFLICT (snapshot_id, ticket_key) DO NOTHING
-            """, ct);
+        _context.SnapshotTickets.AddRange(list);
+        await _context.SaveChangesAsync(ct);
     }
-
-    // ── Field changes ──────────────────────────────────────────────────────
 
     /// <inheritdoc/>
     public async Task RecordFieldChangeAsync(FieldChange fieldChange, CancellationToken ct = default)

@@ -75,67 +75,51 @@ public class TicketDataService
     {
         if (snapshotId == Guid.Empty)
             throw new ArgumentException("Snapshot ID cannot be empty.", nameof(snapshotId));
+
         ArgumentNullException.ThrowIfNull(ticketsWithCompanies);
 
-        var validTickets = ticketsWithCompanies
+        // Normalize and de-duplicate input. The DB enforces uniqueness on (snapshot_id, ticket_key),
+        // so we group by ticket key and keep the first company name we see for that key.
+        var normalized = ticketsWithCompanies
             .Where(t => !string.IsNullOrWhiteSpace(t.TicketKey) && !string.IsNullOrWhiteSpace(t.CompanyName))
-            .Select(t => (t.TicketKey.Trim(), t.CompanyName.Trim()))
-            .Distinct()
+            .Select(t => (TicketKey: t.TicketKey.Trim(), CompanyName: t.CompanyName.Trim()))
+            .GroupBy(t => t.TicketKey)
+            .Select(g => g.First())
             .ToList();
 
-        if (validTickets.Count == 0)
+        if (normalized.Count == 0)
             return;
 
-        // Provider-specific fast path:
-        // - Postgres (docker-compose) supports array UNNEST + ON CONFLICT.
-        // - SQLite (unit tests) does not support UNNEST, so we fall back.
-        string? provider = _context.Database.ProviderName;
-        bool isPostgres = provider?.Contains("Npgsql", StringComparison.OrdinalIgnoreCase) == true;
+        var keys = normalized.Select(t => t.TicketKey).Distinct().ToList();
 
-        if (isPostgres)
-        {
-            // Use a single bulk INSERT with ON CONFLICT DO NOTHING via array unnesting
-            var ids = validTickets.Select(_ => Guid.NewGuid()).ToArray();
-            var snapshotIds = validTickets.Select(_ => snapshotId).ToArray();
-            var companies = validTickets.Select(t => t.Item2).ToArray();
-            var ticketKeys = validTickets.Select(t => t.Item1).ToArray();
+        // Idempotent behavior: skip keys that already exist for this snapshot.
+        var existingKeys = await _context.SnapshotTickets
+            .AsNoTracking()
+            .Where(st => st.SnapshotId == snapshotId && keys.Contains(st.TicketKey))
+            .Select(st => st.TicketKey)
+            .ToListAsync();
 
-            await _context.Database.ExecuteSqlInterpolatedAsync(
-                $"""
-                INSERT INTO snapshot_ticket (id, snapshot_id, company_name, ticket_key)
-                SELECT * FROM unnest({ids}::uuid[], {snapshotIds}::uuid[], {companies}::varchar[], {ticketKeys}::varchar[])
-                    AS t(id, snapshot_id, company_name, ticket_key)
-                ON CONFLICT (snapshot_id, ticket_key) DO NOTHING
-                """);
-            return;
-        }
+        var existingSet = existingKeys.ToHashSet();
 
-        // Generic fallback (SQLite tests / non-Postgres): insert row-by-row and
-        // ignore unique constraint violations.
-        foreach (var (ticketKey, companyName) in validTickets)
-        {
-            _context.SnapshotTickets.Add(new SnapshotTicket
+        var newSnapshotTickets = normalized
+            .Where(t => !existingSet.Contains(t.TicketKey))
+            .Select(t => new SnapshotTicket
             {
                 Id = Guid.NewGuid(),
                 SnapshotId = snapshotId,
-                CompanyName = companyName,
-                TicketKey = ticketKey,
-            });
+                CompanyName = t.CompanyName,
+                TicketKey = t.TicketKey
+            })
+            .ToList();
 
-            try
-            {
-                await _context.SaveChangesAsync();
-            }
-            catch (DbUpdateException)
-            {
-                // Likely (snapshot_id, ticket_key) unique violation.
-                _context.ChangeTracker.Clear();
-            }
-        }
+        if (newSnapshotTickets.Count == 0)
+            return;
+
+        _context.SnapshotTickets.AddRange(newSnapshotTickets);
+        await _context.SaveChangesAsync();
     }
 
-    /// <summary>Records a field change for a ticket.</summary>
-    public async Task RecordFieldChangeAsync(
+public async Task RecordFieldChangeAsync(
         string companyName,
         string ticketKey,
         string fieldName,

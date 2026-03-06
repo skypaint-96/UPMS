@@ -2,9 +2,6 @@ namespace UPMS.Data;
 
 using Microsoft.EntityFrameworkCore;
 
-/// <summary>
-/// EF Core–backed implementation of <see cref="IItsmSourceService"/>.
-/// </summary>
 public class ItsmSourceService : IItsmSourceService
 {
     private readonly UpmsDbContext _context;
@@ -14,7 +11,6 @@ public class ItsmSourceService : IItsmSourceService
         _context = context ?? throw new ArgumentNullException(nameof(context));
     }
 
-    /// <inheritdoc/>
     public async Task<IReadOnlyList<ItsmSource>> GetAllSourcesAsync()
     {
         return await _context.ItsmSources
@@ -23,7 +19,6 @@ public class ItsmSourceService : IItsmSourceService
             .ToListAsync();
     }
 
-    /// <inheritdoc/>
     public async Task<ItsmSource?> GetSourceByNameAsync(string name)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
@@ -33,12 +28,13 @@ public class ItsmSourceService : IItsmSourceService
             .FirstOrDefaultAsync(s => s.Name == name);
     }
 
-    /// <inheritdoc/>
     public async Task<ItsmSourceDefinition> GetSourceDefinitionAsync(string name)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
 
-        var source = await GetSourceByNameAsync(name)
+        var source = await _context.ItsmSources
+            .AsNoTracking()
+            .FirstOrDefaultAsync(s => s.Name == name)
             ?? throw new KeyNotFoundException($"ITSM source '{name}' was not found.");
 
         var mappings = await _context.ItsmFieldMappings
@@ -54,7 +50,6 @@ public class ItsmSourceService : IItsmSourceService
         };
     }
 
-    /// <inheritdoc/>
     public async Task<ItsmSource> CreateSourceAsync(string name, string displayLabel)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
@@ -71,12 +66,10 @@ public class ItsmSourceService : IItsmSourceService
         return source;
     }
 
-    /// <inheritdoc/>
     public async Task DeleteSourceAsync(string name)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
 
-        // Delete mappings first (no DB-level FK cascade between itsm_field_mapping and itsm_source)
         await _context.ItsmFieldMappings
             .Where(m => m.ItsmSource == name)
             .ExecuteDeleteAsync();
@@ -86,24 +79,34 @@ public class ItsmSourceService : IItsmSourceService
             .ExecuteDeleteAsync();
     }
 
-    /// <inheritdoc/>
     public async Task UpsertMappingAsync(string sourceName, string sourceFieldName, string canonicalName, bool isRequired)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(sourceName);
         ArgumentException.ThrowIfNullOrWhiteSpace(sourceFieldName);
         ArgumentException.ThrowIfNullOrWhiteSpace(canonicalName);
 
-        await _context.Database.ExecuteSqlInterpolatedAsync(
-            $"""
-            INSERT INTO itsm_field_mapping (itsm_source, source_field_name, canonical_field_name, is_required)
-            VALUES ({sourceName}, {sourceFieldName}, {canonicalName}, {isRequired})
-            ON CONFLICT (itsm_source, source_field_name) DO UPDATE
-                SET canonical_field_name = EXCLUDED.canonical_field_name,
-                    is_required          = EXCLUDED.is_required
-            """);
+        var existing = await _context.ItsmFieldMappings
+            .FirstOrDefaultAsync(m => m.ItsmSource == sourceName && m.SourceFieldName == sourceFieldName);
+
+        if (existing is null)
+        {
+            _context.ItsmFieldMappings.Add(new ItsmFieldMapping
+            {
+                ItsmSource = sourceName,
+                SourceFieldName = sourceFieldName,
+                CanonicalFieldName = canonicalName,
+                IsRequired = isRequired
+            });
+        }
+        else
+        {
+            existing.CanonicalFieldName = canonicalName;
+            existing.IsRequired = isRequired;
+        }
+
+        await _context.SaveChangesAsync();
     }
 
-    /// <inheritdoc/>
     public async Task DeleteMappingAsync(string sourceName, string sourceFieldName)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(sourceName);
@@ -114,7 +117,6 @@ public class ItsmSourceService : IItsmSourceService
             .ExecuteDeleteAsync();
     }
 
-    /// <inheritdoc/>
     public async Task<IReadOnlyList<string>> GetRequiredFieldsAsync(string sourceName)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(sourceName);
@@ -127,7 +129,6 @@ public class ItsmSourceService : IItsmSourceService
             .ToListAsync();
     }
 
-    /// <inheritdoc/>
     public async Task<string?> GetCanonicalNameAsync(string sourceName, string sourceFieldName)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(sourceName);
