@@ -12,14 +12,14 @@ public interface IReadModelService
     /// Backed by <c>get_ticket_at_time</c>.
     /// </summary>
     Task<IReadOnlyList<TicketFieldAtTimeDto>> GetTicketFieldsAtTimeAsync(
-        Guid companyId, string ticketKey, DateTimeOffset asOfTime, CancellationToken ct = default);
+        string companyName, string ticketKey, DateTimeOffset asOfTime, CancellationToken ct = default);
 
     /// <summary>
     /// Same as <see cref="GetTicketFieldsAtTimeAsync"/> but also returns the originating snapshot ID.
     /// Backed by <c>get_ticket_at_time_with_metadata</c>.
     /// </summary>
     Task<IReadOnlyList<TicketFieldWithMetadataDto>> GetTicketFieldsAtTimeWithMetadataAsync(
-        Guid companyId, string ticketKey, DateTimeOffset asOfTime, CancellationToken ct = default);
+        string companyName, string ticketKey, DateTimeOffset asOfTime, CancellationToken ct = default);
 
     /// <summary>
     /// Returns all ticket keys present in the given snapshot.
@@ -46,7 +46,7 @@ public interface IReadModelService
     /// Backed by <c>batch_reconstruct_tickets</c>.
     /// </summary>
     Task<IReadOnlyList<ReconstructedFieldDto>> BatchReconstructTicketsAsync(
-        Guid companyId, IEnumerable<string> ticketKeys, DateTimeOffset asOfTime, CancellationToken ct = default);
+        string companyName, IEnumerable<string> ticketKeys, DateTimeOffset asOfTime, CancellationToken ct = default);
 
     /// <summary>
     /// Reconstructs field state for every ticket in the given snapshot.

@@ -9,23 +9,36 @@
 
 <h1>Tickets</h1>
 
-<div>
-    <select data-testid="itsm-source-filter" @bind="itsmSource" @bind:after="OnItsmSourceChanged">
+<div class="d-flex flex-wrap gap-2 align-items-end">
+    <div>
+        <label class="form-label" for="itsm-source">ITSM source</label>
+        <select id="itsm-source" class="form-select" data-testid="itsm-source-filter" @bind="itsmSource" @bind:after="OnItsmSourceChanged">
         <option value="" disabled>-- Select ITSM Source --</option>
         @foreach (var source in itsmSources)
         {
             <option value="@source.Name">@source.DisplayLabel</option>
         }
-    </select>
+        </select>
+    </div>
 
-    <input type="datetime-local" data-testid="as-of-datetime" value="@asOfLocal" @onchange="OnAsOfLocalChanged" />
+    <div>
+        <label class="form-label" for="as-of">As of</label>
+        <input id="as-of" class="form-control" type="datetime-local" data-testid="as-of-datetime" value="@asOfLocal" @onchange="OnAsOfLocalChanged" />
+    </div>
 
-    <button data-testid="search-btn" @onclick="SearchAsync" disabled="@isLoading">Search</button>
+    <button class="btn btn-primary" data-testid="search-btn" @onclick="SearchAsync" disabled="@isLoading">Search</button>
     @if (isLoading)
     {
-        <span data-testid="loading-indicator">Loading...</span>
+        <span class="ms-2" data-testid="loading-indicator">Loading...</span>
     }
 </div>
+
+@if (!string.IsNullOrWhiteSpace(searchError))
+{
+    <div class="alert alert-danger mt-3" role="alert" data-testid="tickets-search-error">
+        @searchError
+    </div>
+}
 
 @if (string.IsNullOrWhiteSpace(itsmSource))
 {
@@ -35,25 +48,28 @@ else
 {
     <div data-testid="field-filters-panel">
         <h2>Field Filters</h2>
+        <p class="text-muted" style="max-width: 80ch">
+            Filters match against the <em>canonical</em> field names for this ITSM source.
+        </p>
         @for (int i = 0; i < filterNames.Count; i++)
         {
-            <div class="filter-row">
-                <select data-testid="field-filter-name-@i" @bind="filterNames[i]">
+            <div class="filter-row d-flex gap-2 align-items-center mb-2">
+                <select class="form-select" style="max-width: 18rem" data-testid="field-filter-name-@i" @bind="filterNames[i]">
                     <option value="" disabled>-- Field --</option>
-                    @foreach (var mapping in mappings)
+                    @foreach (var field in availableFilterFields)
                     {
-                        <option value="@mapping.SourceFieldName">@mapping.SourceFieldName</option>
+                        <option value="@field">@field</option>
                     }
                 </select>
-                <input type="text" data-testid="field-filter-value-@i" @bind="filterValues[i]" />
-                <button type="button" data-testid="remove-filter-@i" @onclick="() => RemoveFilter(i)">×</button>
+                <input class="form-control" style="max-width: 24rem" type="text" placeholder="contains…" data-testid="field-filter-value-@i" @bind="filterValues[i]" />
+                <button type="button" class="btn btn-outline-secondary" data-testid="remove-filter-@i" @onclick="() => RemoveFilter(i)">Remove</button>
             </div>
         }
 
-        <button type="button" data-testid="add-filter-btn" @onclick="AddFilter">+ Add Filter</button>
+        <button type="button" class="btn btn-outline-primary" data-testid="add-filter-btn" @onclick="AddFilter">+ Add Filter</button>
     </div>
 
-    <table data-testid="ticket-table">
+    <table class="table table-striped table-hover" data-testid="ticket-table">
         <thead>
             <tr>
                 <th>Ticket Key</th>
@@ -73,11 +89,19 @@ else
             {
                 @foreach (var ticket in tickets)
                 {
+                    var ticketNumber = TryGetFieldValue(ticket.Fields, "ticket_number");
+                    var status = TryGetFieldValue(ticket.Fields, "status");
                     <tr>
-                        <td><a href="/tickets/@Uri.EscapeDataString(ticket.CompanyName)/@Uri.EscapeDataString(ticket.ItsmSource)/@Uri.EscapeDataString(ticket.TicketKey)">@ticket.TicketKey</a></td>
+                        <td>
+                            <a href="/tickets/@Uri.EscapeDataString(ticket.CompanyName)/@Uri.EscapeDataString(ticket.ItsmSource)/@Uri.EscapeDataString(ticket.TicketKey)">@(ticketNumber ?? ticket.TicketKey)</a>
+                            @if (!string.IsNullOrWhiteSpace(ticketNumber) && !string.Equals(ticketNumber, ticket.TicketKey, StringComparison.Ordinal))
+                            {
+                                <div class="text-muted small">@ticket.TicketKey</div>
+                            }
+                        </td>
                         <td>@ticket.CompanyName</td>
                         <td>@ticket.ItsmSource</td>
-                        <td>@(ticket.Fields.TryGetValue("Status", out string? status) ? status : "—")</td>
+                        <td>@(string.IsNullOrWhiteSpace(status) ? "—" : status)</td>
                     </tr>
                 }
             }
@@ -89,6 +113,7 @@ else
     private List<Ticket> tickets = new();
     private List<ItsmSource> itsmSources = new();
     private List<ItsmFieldMapping> mappings = new();
+    private List<string> availableFilterFields = new();
     private List<string> filterNames = new();
     private List<string> filterValues = new();
 
@@ -96,6 +121,7 @@ else
     private string asOfLocal = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm");
     private bool isLoading = false;
     private DateTime asOfDateTime = DateTime.UtcNow;
+    private string? searchError;
 
     protected override async Task OnInitializedAsync()
     {
@@ -122,6 +148,8 @@ else
         filterValues.Clear();
         tickets.Clear();
         mappings.Clear();
+        availableFilterFields.Clear();
+        searchError = null;
 
         if (string.IsNullOrWhiteSpace(itsmSource))
             return;
@@ -129,10 +157,17 @@ else
         try
         {
             mappings = FieldMappingService.GetMappingsForSource(itsmSource).ToList();
+            availableFilterFields = mappings
+                .Select(m => m.CanonicalFieldName)
+                .Where(n => !string.IsNullOrWhiteSpace(n))
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(n => n)
+                .ToList();
         }
         catch
         {
             mappings = new();
+            availableFilterFields = new();
         }
 
         StateHasChanged();
@@ -155,6 +190,8 @@ else
     {
         if (string.IsNullOrWhiteSpace(itsmSource))
             return;
+
+        searchError = null;
 
         DateTime asOf;
         try
@@ -184,14 +221,30 @@ else
             var results = await DataService.GetTicketsFilteredAsync(itsmSource, asOf, activeFilters);
             tickets = results.ToList();
         }
-        catch
+        catch (Exception ex)
         {
             tickets = new();
+            searchError = $"Search failed: {ex.Message}";
         }
         finally
         {
             isLoading = false;
         }
+    }
+
+    private static string? TryGetFieldValue(IDictionary<string, string?> fields, string fieldName)
+    {
+        if (fields.TryGetValue(fieldName, out var v))
+            return v;
+
+        // Cheap case-insensitive fallback (dictionary is Ordinal in most of our paths)
+        foreach (var kv in fields)
+        {
+            if (string.Equals(kv.Key, fieldName, StringComparison.OrdinalIgnoreCase))
+                return kv.Value;
+        }
+
+        return null;
     }
 
     private void OnAsOfLocalChanged(ChangeEventArgs e)

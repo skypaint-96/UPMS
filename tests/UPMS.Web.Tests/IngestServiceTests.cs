@@ -81,7 +81,8 @@ public class IngestServiceTests
         // Assert
         Assert.That(result.Success, Is.True, result.ErrorMessage);
         Assert.That(result.TicketsIngested, Is.EqualTo(3));
-        Assert.That(result.FieldChangesRecorded, Is.EqualTo(15)); // 3 tickets × 5 columns
+        // company is stored as metadata (snapshot_ticket/company_name) and is not stored as a ticket field.
+        Assert.That(result.FieldChangesRecorded, Is.EqualTo(12)); // 3 tickets × 4 stored fields (ticket_number + 3 other columns)
     }
 
     // ... rest of file unchanged ...

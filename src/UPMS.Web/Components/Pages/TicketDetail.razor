@@ -8,19 +8,43 @@
 <p data-testid="ticket-company">Company: @Company</p>
 <p data-testid="ticket-itsm-source">ITSM Source: @resolvedItsmSource</p>
 
+@if (!string.IsNullOrWhiteSpace(snapshotContextText))
+{
+    <div class="alert alert-info" role="alert" data-testid="ticket-snapshot-context">
+        @snapshotContextText
+    </div>
+}
+
+@if (!string.IsNullOrWhiteSpace(loadError))
+{
+    <div class="alert alert-danger" role="alert" data-testid="ticket-load-error">
+        @loadError
+    </div>
+}
+
 <a href="/tickets">Back to Tickets</a>
 
 <section data-testid="ticket-fields">
     <h2>Fields</h2>
     @if (fields.Count > 0)
     {
-        <dl>
-            @foreach (KeyValuePair<string, string?> field in fields)
-            {
-                <dt>@field.Key</dt>
-                <dd>@(field.Value ?? "—")</dd>
-            }
-        </dl>
+        <table class="table table-sm">
+            <thead>
+                <tr>
+                    <th style="width: 16rem">Field</th>
+                    <th>Value</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (KeyValuePair<string, string?> field in fields.OrderBy(k => k.Key, StringComparer.OrdinalIgnoreCase))
+                {
+                    <tr>
+                        <td><strong>@field.Key</strong></td>
+                        <td>@(field.Value ?? "—")</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
     }
     else
     {
@@ -28,11 +52,41 @@
     }
 </section>
 
+@if (snapshotFieldDeltas.Count > 0)
+{
+    <section data-testid="ticket-snapshot-deltas">
+        <h2>Changes in this Snapshot</h2>
+        <p class="text-muted" style="max-width: 80ch">
+            These are the fields whose values differ compared to the previous snapshot for this ticket.
+        </p>
+
+        <table class="table table-striped table-hover">
+            <thead>
+                <tr>
+                    <th>Field</th>
+                    <th>Previous</th>
+                    <th>Current</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var delta in snapshotFieldDeltas)
+                {
+                    <tr>
+                        <td><strong>@delta.FieldName</strong></td>
+                        <td>@(delta.PreviousValue ?? "—")</td>
+                        <td>@(delta.CurrentValue ?? "—")</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </section>
+}
+
 <section data-testid="field-history">
     <h2>Field Change History</h2>
     @if (fieldChanges.Count > 0)
     {
-        <table>
+        <table class="table table-striped table-hover">
             <thead>
                 <tr>
                     <th>Field</th>
@@ -68,57 +122,123 @@
     [Parameter]
     public string TicketKey { get; set; } = string.Empty;
 
+    [SupplyParameterFromQuery(Name = "snapshotId")]
+    public string? SnapshotIdQuery { get; set; }
+
     [Inject]
     private TicketDataServiceInstance DataService { get; set; } = default!;
 
     private string resolvedItsmSource = string.Empty;
     private Dictionary<string, string?> fields = [];
     private List<FieldChange> fieldChanges = [];
+    private string? loadError;
+    private string? snapshotContextText;
+    private DateTime? asOf;
+
+    private record FieldDelta(string FieldName, string? PreviousValue, string? CurrentValue);
+    private List<FieldDelta> snapshotFieldDeltas = [];
 
     protected override async Task OnInitializedAsync()
     {
+        loadError = null;
+        snapshotContextText = null;
+        snapshotFieldDeltas.Clear();
+
         try
         {
             string decodedCompany = Uri.UnescapeDataString(Company);
             string decodedTicketKey = Uri.UnescapeDataString(TicketKey);
             string? decodedItsmSource = ItsmSource is not null ? Uri.UnescapeDataString(ItsmSource) : null;
 
-            // If no ITSM source provided in route, look it up from snapshots
+            // Snapshot context (optional): when navigating from a snapshot, we pass ?snapshotId=...
+            Guid snapshotId;
+            bool hasSnapshotContext = Guid.TryParse(SnapshotIdQuery, out snapshotId) && snapshotId != Guid.Empty;
+
+            Ticket? ticket = null;
+            if (hasSnapshotContext)
+            {
+                var snapshotTickets = await DataService.GetTicketsBySnapshotAsync(snapshotId);
+                ticket = snapshotTickets.FirstOrDefault(t => t.TicketKey == decodedTicketKey);
+                if (ticket is not null)
+                {
+                    decodedItsmSource = ticket.ItsmSource;
+                    asOf = ticket.SnapshotDate;
+                    snapshotContextText = $"Viewing ticket as of snapshot {ticket.SnapshotDate:yyyy-MM-dd HH:mm} (SnapshotId: {snapshotId}).";
+                }
+            }
+
+            // If no ITSM source provided in route (or snapshot didn't resolve), try to infer.
             if (string.IsNullOrWhiteSpace(decodedItsmSource))
             {
-                IEnumerable<Snapshot> snapshots = await DataService.GetSnapshotsAsync();
-                decodedItsmSource = snapshots.FirstOrDefault()?.ItsmSource ?? string.Empty;
+                // 1) Try parsing it from the generated ticket key.
+                if (TicketKeyFactory.TryParse(decodedTicketKey, out var parsedSrc, out _, out _))
+                {
+                    decodedItsmSource = parsedSrc;
+                }
+                else
+                {
+                    // 2) Fallback: pick the first known snapshot source.
+                    IEnumerable<Snapshot> snapshots = await DataService.GetSnapshotsAsync();
+                    decodedItsmSource = snapshots.FirstOrDefault()?.ItsmSource ?? string.Empty;
+                }
             }
 
             resolvedItsmSource = decodedItsmSource;
 
-            if (!string.IsNullOrWhiteSpace(decodedItsmSource))
+            // If we didn't get the ticket via snapshot context, load it as-of now.
+            if (ticket is null && !string.IsNullOrWhiteSpace(decodedItsmSource))
             {
-                IEnumerable<Ticket> tickets = await DataService.GetTicketsAsync(
-                    decodedItsmSource,
-                    decodedCompany,
-                    DateTime.UtcNow);
+                asOf = DateTime.UtcNow;
+                var tickets = await DataService.GetTicketsAsync(decodedItsmSource, decodedCompany, asOf.Value);
+                ticket = tickets.FirstOrDefault(t => t.TicketKey == decodedTicketKey);
+            }
 
-                Ticket? ticket = tickets.FirstOrDefault(t => t.TicketKey == decodedTicketKey);
-                if (ticket is not null)
+            if (ticket is null)
+            {
+                loadError = "Ticket not found for the selected context.";
+                return;
+            }
+
+            fields = new Dictionary<string, string?>(ticket.Fields, StringComparer.Ordinal);
+
+            // If we have snapshot context, compute deltas versus previous snapshot.
+            if (hasSnapshotContext && asOf.HasValue)
+            {
+                var prevTickets = await DataService.GetTicketsAsync(resolvedItsmSource, decodedCompany, asOf.Value.AddTicks(-1));
+                var prev = prevTickets.FirstOrDefault(t => t.TicketKey == decodedTicketKey);
+
+                if (prev is not null)
                 {
-                    resolvedItsmSource = ticket.ItsmSource;
-                    fields = new Dictionary<string, string?>(ticket.Fields);
-
-                    foreach (string fieldName in ticket.Fields.Keys)
-                    {
-                        IEnumerable<FieldChange> history = await DataService.GetTicketFieldHistoryAsync(
-                            decodedCompany,
-                            decodedTicketKey,
-                            fieldName);
-                        fieldChanges.AddRange(history);
-                    }
+                    snapshotFieldDeltas = BuildDeltas(prev.Fields, ticket.Fields);
                 }
             }
+
+            // Load full field history for this ticket.
+            fieldChanges = (await DataService.GetTicketHistoryAsync(decodedCompany, decodedTicketKey)).ToList();
         }
-        catch
+        catch (Exception ex)
         {
-            // Gracefully handle missing database connection
+            loadError = ex.Message;
         }
+    }
+
+    private static List<FieldDelta> BuildDeltas(IDictionary<string, string?> previous, IDictionary<string, string?> current)
+    {
+        var keys = new HashSet<string>(previous.Keys, StringComparer.OrdinalIgnoreCase);
+        keys.UnionWith(current.Keys);
+
+        var deltas = new List<FieldDelta>();
+        foreach (var key in keys)
+        {
+            previous.TryGetValue(key, out var prevVal);
+            current.TryGetValue(key, out var curVal);
+
+            if (!string.Equals(prevVal ?? string.Empty, curVal ?? string.Empty, StringComparison.Ordinal))
+            {
+                deltas.Add(new FieldDelta(key, prevVal, curVal));
+            }
+        }
+
+        return deltas.OrderBy(d => d.FieldName, StringComparer.OrdinalIgnoreCase).ToList();
     }
 }

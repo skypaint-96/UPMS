@@ -83,7 +83,8 @@ public class SnapshotIngestServiceCommandTests
         // assert — result
         Assert.That(result.Success, Is.True, result.ErrorMessage);
         Assert.That(result.TicketsIngested, Is.EqualTo(2));
-        Assert.That(result.FieldChangesRecorded, Is.EqualTo(6)); // 2 tickets × 3 columns
+        // company is stored as metadata (snapshot_ticket/company_name) and is not stored as a ticket field.
+        Assert.That(result.FieldChangesRecorded, Is.EqualTo(4)); // 2 tickets × 2 stored fields (ticket_number + state)
 
         // assert — snapshot created with correct source name
         Assert.That(capturedSnapshot, Is.Not.Null);

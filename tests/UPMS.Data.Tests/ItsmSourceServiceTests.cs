@@ -120,11 +120,11 @@ public class ItsmSourceServiceTests : TicketDataServiceTestBase
         await service.CreateSourceAsync(sourceName, "Map Source");
 
         // Act
-        await service.UpsertMappingAsync(sourceName, "number", "ticket_key", isRequired: true);
+        await service.UpsertMappingAsync(sourceName, "number", "ticket_number", isRequired: true);
 
         // Assert
         string? canonical = await service.GetCanonicalNameAsync(sourceName, "number");
-        Assert.That(canonical, Is.EqualTo("ticket_key"));
+        Assert.That(canonical, Is.EqualTo("ticket_number"));
     }
 
     [Test]
@@ -151,7 +151,7 @@ public class ItsmSourceServiceTests : TicketDataServiceTestBase
         IItsmSourceService service = BuildIsolatedService();
         string sourceName = $"req-source-{Guid.NewGuid():N}";
         await service.CreateSourceAsync(sourceName, "Required Source");
-        await service.UpsertMappingAsync(sourceName, "number",  "ticket_key", isRequired: true);
+        await service.UpsertMappingAsync(sourceName, "number",  "ticket_number", isRequired: true);
         await service.UpsertMappingAsync(sourceName, "company", "company",    isRequired: true);
         await service.UpsertMappingAsync(sourceName, "state",   "status",     isRequired: false);
 
@@ -234,7 +234,7 @@ public class ItsmSourceServiceTests : TicketDataServiceTestBase
         IItsmSourceService service = BuildIsolatedService();
         string sourceName = $"def-source-{Guid.NewGuid():N}";
         await service.CreateSourceAsync(sourceName, "Def Source");
-        await service.UpsertMappingAsync(sourceName, "number",  "ticket_key", isRequired: true);
+        await service.UpsertMappingAsync(sourceName, "number",  "ticket_number", isRequired: true);
         await service.UpsertMappingAsync(sourceName, "company", "company",    isRequired: true);
         await service.UpsertMappingAsync(sourceName, "state",   "status",     isRequired: false);
 

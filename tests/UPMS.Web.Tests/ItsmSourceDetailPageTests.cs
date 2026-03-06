@@ -71,7 +71,7 @@ public class ItsmSourceDetailPageTests : PageTestBase
 
         // Act — fill in the add-mapping form
         await Page.Locator("[data-testid='add-mapping-source-field']").FillAsync("number");
-        await Page.Locator("[data-testid='add-mapping-canonical-name']").SelectOptionAsync("ticket_key");
+        await Page.Locator("[data-testid='add-mapping-canonical-name']").SelectOptionAsync("ticket_number");
         await Page.Locator("[data-testid='add-mapping-submit']").ClickAsync();
 
         // Assert — mapping row appears

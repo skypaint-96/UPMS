@@ -24,12 +24,12 @@ public class EfReadModelService : IReadModelService
 
     /// <inheritdoc/>
     public async Task<IReadOnlyList<TicketFieldAtTimeDto>> GetTicketFieldsAtTimeAsync(
-        Guid companyId, string ticketKey, DateTimeOffset asOfTime, CancellationToken ct = default)
+        string companyName, string ticketKey, DateTimeOffset asOfTime, CancellationToken ct = default)
     {
         var results = await _context.TicketFieldAtTimeResults
             .FromSqlRaw(
-                "SELECT * FROM get_ticket_at_time(@p_company_id, @p_ticket_key, @p_as_of_time)",
-                new NpgsqlParameter("p_company_id",   companyId),
+                "SELECT * FROM get_ticket_at_time(@p_company_name, @p_ticket_key, @p_as_of_time)",
+                new NpgsqlParameter("p_company_name", companyName),
                 new NpgsqlParameter("p_ticket_key",   ticketKey),
                 new NpgsqlParameter("p_as_of_time",   asOfTime))
             .ToListAsync(ct);
@@ -41,12 +41,12 @@ public class EfReadModelService : IReadModelService
 
     /// <inheritdoc/>
     public async Task<IReadOnlyList<TicketFieldWithMetadataDto>> GetTicketFieldsAtTimeWithMetadataAsync(
-        Guid companyId, string ticketKey, DateTimeOffset asOfTime, CancellationToken ct = default)
+        string companyName, string ticketKey, DateTimeOffset asOfTime, CancellationToken ct = default)
     {
         var results = await _context.TicketFieldWithMetadataResults
             .FromSqlRaw(
-                "SELECT * FROM get_ticket_at_time_with_metadata(@p_company_id, @p_ticket_key, @p_as_of_time)",
-                new NpgsqlParameter("p_company_id",   companyId),
+                "SELECT * FROM get_ticket_at_time_with_metadata(@p_company_name, @p_ticket_key, @p_as_of_time)",
+                new NpgsqlParameter("p_company_name", companyName),
                 new NpgsqlParameter("p_ticket_key",   ticketKey),
                 new NpgsqlParameter("p_as_of_time",   asOfTime))
             .ToListAsync(ct);
@@ -111,12 +111,12 @@ public class EfReadModelService : IReadModelService
 
     /// <inheritdoc/>
     public async Task<IReadOnlyList<ReconstructedFieldDto>> BatchReconstructTicketsAsync(
-        Guid companyId, IEnumerable<string> ticketKeys, DateTimeOffset asOfTime, CancellationToken ct = default)
+        string companyName, IEnumerable<string> ticketKeys, DateTimeOffset asOfTime, CancellationToken ct = default)
     {
         var results = await _context.ReconstructedFieldResults
             .FromSqlRaw(
-                "SELECT * FROM batch_reconstruct_tickets(@p_company_id, @p_ticket_keys, @p_as_of_time)",
-                new NpgsqlParameter("p_company_id",   companyId),
+                "SELECT * FROM batch_reconstruct_tickets(@p_company_name, @p_ticket_keys, @p_as_of_time)",
+                new NpgsqlParameter("p_company_name", companyName),
                 new NpgsqlParameter("p_ticket_keys",  ticketKeys.ToArray()) { DataTypeName = "text[]" },
                 new NpgsqlParameter("p_as_of_time",   asOfTime))
             .ToListAsync(ct);

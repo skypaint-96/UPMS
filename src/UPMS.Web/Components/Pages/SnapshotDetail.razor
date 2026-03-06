@@ -9,7 +9,7 @@
 
 <a href="/snapshots">Back to Snapshots</a>
 
-<table data-testid="snapshot-ticket-table">
+<table class="table table-striped table-hover" data-testid="snapshot-ticket-table">
     <thead>
         <tr>
             <th>Ticket Key</th>
@@ -29,11 +29,23 @@
         {
             @foreach (Ticket ticket in tickets)
             {
+                ticket.Fields.TryGetValue("ticket_number", out var ticketNumber);
+                string? status = null;
+                if (!ticket.Fields.TryGetValue("status", out status))
+                {
+                    ticket.Fields.TryGetValue("Status", out status);
+                }
                 <tr>
-                    <td><a href="/tickets/@Uri.EscapeDataString(ticket.CompanyName)/@Uri.EscapeDataString(ticket.ItsmSource)/@Uri.EscapeDataString(ticket.TicketKey)">@ticket.TicketKey</a></td>
+                    <td>
+                        <a href="/tickets/@Uri.EscapeDataString(ticket.CompanyName)/@Uri.EscapeDataString(ticket.ItsmSource)/@Uri.EscapeDataString(ticket.TicketKey)?snapshotId=@SnapshotId">@(string.IsNullOrWhiteSpace(ticketNumber) ? ticket.TicketKey : ticketNumber)</a>
+                        @if (!string.IsNullOrWhiteSpace(ticketNumber))
+                        {
+                            <div class="text-muted small">@ticket.TicketKey</div>
+                        }
+                    </td>
                     <td>@ticket.CompanyName</td>
                     <td>@ticket.ItsmSource</td>
-                    <td>@(ticket.Fields.TryGetValue("Status", out string? status) ? status : "�")</td>
+                    <td>@(string.IsNullOrWhiteSpace(status) ? "—" : status)</td>
                 </tr>
             }
         }

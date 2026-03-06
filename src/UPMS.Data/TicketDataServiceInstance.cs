@@ -34,6 +34,9 @@ public class TicketDataServiceInstance
     public Task<IEnumerable<FieldChange>> GetTicketFieldHistoryAsync(string companyName, string ticketKey, string fieldName)
         => _inner.GetTicketFieldHistoryAsync(companyName, ticketKey, fieldName);
 
+    public Task<IEnumerable<FieldChange>> GetTicketHistoryAsync(string companyName, string ticketKey)
+        => _inner.GetTicketHistoryAsync(companyName, ticketKey);
+
     public Task<IEnumerable<Snapshot>> GetSnapshotsAsync(string? itsmSource = null)
         => _inner.GetSnapshotsAsync(itsmSource);
 

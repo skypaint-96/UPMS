@@ -11,7 +11,7 @@ public partial class StoredProcedures : Migration
         // -- Stored procedure: get_ticket_at_time.sql
         migrationBuilder.Sql("""
             CREATE OR REPLACE FUNCTION get_ticket_at_time(
-                p_company_id UUID,
+                p_company_name TEXT,
                 p_ticket_key VARCHAR(255),
                 p_as_of_time TIMESTAMPTZ
             )
@@ -29,20 +29,20 @@ public partial class StoredProcedures : Migration
                     fc.field_value,
                     fc.observed_at
                 FROM field_change fc
-                WHERE fc.company_name = p_company_id::text
+                WHERE fc.company_name = p_company_name
                   AND fc.ticket_key = p_ticket_key
                   AND fc.observed_at <= p_as_of_time
                 ORDER BY fc.field_name, fc.observed_at DESC;
             $$;
 
-            COMMENT ON FUNCTION get_ticket_at_time(UUID, VARCHAR, TIMESTAMPTZ) IS
+            COMMENT ON FUNCTION get_ticket_at_time(TEXT, VARCHAR, TIMESTAMPTZ) IS
                 'Reconstructs a ticket''s complete state at a specific point in time. '
                 'Returns the latest value for each field observed before or at the given time.';
             """);
 
         migrationBuilder.Sql("""
             CREATE OR REPLACE FUNCTION get_ticket_at_time_with_metadata(
-                p_company_id UUID,
+                p_company_name TEXT,
                 p_ticket_key VARCHAR(255),
                 p_as_of_time TIMESTAMPTZ
             )
@@ -62,13 +62,13 @@ public partial class StoredProcedures : Migration
                     fc.observed_at,
                     fc.snapshot_id
                 FROM field_change fc
-                WHERE fc.company_name = p_company_id::text
+                WHERE fc.company_name = p_company_name
                   AND fc.ticket_key = p_ticket_key
                   AND fc.observed_at <= p_as_of_time
                 ORDER BY fc.field_name, fc.observed_at DESC;
             $$;
 
-            COMMENT ON FUNCTION get_ticket_at_time_with_metadata(UUID, VARCHAR, TIMESTAMPTZ) IS
+            COMMENT ON FUNCTION get_ticket_at_time_with_metadata(TEXT, VARCHAR, TIMESTAMPTZ) IS
                 'Extended reconstruction with source snapshot metadata for auditing.';
             """);
 
@@ -140,8 +140,8 @@ public partial class StoredProcedures : Migration
         // -- Stored procedure: batch_reconstruct_tickets.sql
         migrationBuilder.Sql("""
             CREATE OR REPLACE FUNCTION batch_reconstruct_tickets(
-                p_company_id   UUID,
-                p_ticket_keys  VARCHAR(255)[],
+                p_company_name TEXT,
+                p_ticket_keys  TEXT[],
                 p_as_of_time   TIMESTAMPTZ
             )
             RETURNS TABLE (
@@ -158,13 +158,13 @@ public partial class StoredProcedures : Migration
                     fc.field_name,
                     fc.field_value
                 FROM field_change fc
-                WHERE fc.company_name = p_company_id::text
+                WHERE fc.company_name = p_company_name
                   AND fc.ticket_key = ANY(p_ticket_keys)
                   AND fc.observed_at <= p_as_of_time
                 ORDER BY fc.ticket_key, fc.field_name, fc.observed_at DESC;
             $$;
 
-            COMMENT ON FUNCTION batch_reconstruct_tickets(UUID, VARCHAR[], TIMESTAMPTZ) IS
+            COMMENT ON FUNCTION batch_reconstruct_tickets(TEXT, TEXT[], TIMESTAMPTZ) IS
                 'Batch reconstruct multiple tickets at a point in time. '
                 'More efficient than individual calls for reporting.';
             """);
@@ -208,50 +208,20 @@ public partial class StoredProcedures : Migration
                 'Reconstruct all tickets in a snapshot at the snapshot timestamp.';
             """);
 
-        migrationBuilder.Sql("""
-            CREATE OR REPLACE FUNCTION batch_reconstruct_tickets(
-                p_company_id   UUID,
-                p_ticket_keys  VARCHAR(255)[],
-                p_as_of_time   TIMESTAMPTZ
-            )
-            RETURNS TABLE (
-                ticket_key   VARCHAR(255),
-                field_name   VARCHAR(255),
-                field_value  TEXT
-            )
-            LANGUAGE SQL
-            STABLE
-            PARALLEL SAFE
-            AS $$
-                SELECT DISTINCT ON (fc.ticket_key, fc.field_name)
-                    fc.ticket_key,
-                    fc.field_name,
-                    fc.field_value
-                FROM field_change fc
-                WHERE fc.company_name = p_company_id::text
-                  AND fc.ticket_key = ANY(p_ticket_keys)
-                  AND fc.observed_at <= p_as_of_time
-                ORDER BY fc.ticket_key, fc.field_name, fc.observed_at DESC;
-            $$;
-
-            COMMENT ON FUNCTION batch_reconstruct_tickets(UUID, VARCHAR[], TIMESTAMPTZ) IS
-                'Batch reconstruct multiple tickets at a point in time. '
-                'More efficient than individual calls for reporting.';
-            """);
+        // (the batch_reconstruct_tickets function is defined once above)
     }
 
     /// <inheritdoc />
     protected override void Down(MigrationBuilder migrationBuilder)
     {
-        // DROP only functions removed from this migration
-        migrationBuilder.Sql("DROP FUNCTION IF EXISTS get_ticket_at_time_jsonb(UUID, VARCHAR, TIMESTAMPTZ) CASCADE;");
+        migrationBuilder.Sql("DROP FUNCTION IF EXISTS get_ticket_at_time(TEXT, VARCHAR, TIMESTAMPTZ) CASCADE;");
+        migrationBuilder.Sql("DROP FUNCTION IF EXISTS get_ticket_at_time_with_metadata(TEXT, VARCHAR, TIMESTAMPTZ) CASCADE;");
 
-        migrationBuilder.Sql("DROP FUNCTION IF EXISTS get_tickets_for_snapshot_cursor(UUID, INTEGER, VARCHAR) CASCADE;");
-        migrationBuilder.Sql("DROP FUNCTION IF EXISTS get_tickets_for_snapshots(UUID[]) CASCADE;");
+        migrationBuilder.Sql("DROP FUNCTION IF EXISTS get_tickets_for_snapshot(UUID) CASCADE;");
+        migrationBuilder.Sql("DROP FUNCTION IF EXISTS get_tickets_for_snapshot_paged(UUID, INTEGER, INTEGER) CASCADE;");
+        migrationBuilder.Sql("DROP FUNCTION IF EXISTS get_snapshot_ticket_count(UUID) CASCADE;");
 
-        migrationBuilder.Sql("DROP FUNCTION IF EXISTS batch_reconstruct_for_snapshot_at_time(UUID, TIMESTAMPTZ) CASCADE;");
-        migrationBuilder.Sql("DROP FUNCTION IF EXISTS batch_reconstruct_paged(UUID, VARCHAR[], TIMESTAMPTZ, INTEGER, INTEGER) CASCADE;");
-        migrationBuilder.Sql("DROP FUNCTION IF EXISTS batch_reconstruct_for_snapshot_paged(UUID, INTEGER, INTEGER) CASCADE;");
-        migrationBuilder.Sql("DROP FUNCTION IF EXISTS batch_reconstruct_as_jsonb(UUID, VARCHAR[], TIMESTAMPTZ) CASCADE;");
+        migrationBuilder.Sql("DROP FUNCTION IF EXISTS batch_reconstruct_tickets(TEXT, TEXT[], TIMESTAMPTZ) CASCADE;");
+        migrationBuilder.Sql("DROP FUNCTION IF EXISTS batch_reconstruct_for_snapshot(UUID) CASCADE;");
     }
 }
