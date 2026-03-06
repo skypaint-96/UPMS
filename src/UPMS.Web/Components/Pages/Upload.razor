@@ -1,0 +1,163 @@
+@page "/upload"
+@rendermode InteractiveServer
+
+@using UPMS.Web.Services
+@using UPMS.Data
+
+@inject ISnapshotIngestService IngestService
+@inject IItsmSourceService ItsmSourceService
+
+<PageTitle>Upload - UPMS</PageTitle>
+
+<h1>Upload Ticket Dump</h1>
+
+<div>
+    <label for="itsm-source">ITSM Source</label>
+    <select id="itsm-source" data-testid="upload-itsm-source" @bind="selectedItsmSource">
+        <option value="">-- Select ITSM Source --</option>
+        @foreach (var source in itsmSources)
+        {
+            <option value="@source.Name">@source.DisplayLabel</option>
+        }
+    </select>
+</div>
+
+<div>
+    <label for="snapshot-date">Snapshot Date</label>
+    <input type="date"
+           id="snapshot-date"
+           data-testid="snapshot-date-input"
+           @bind="snapshotDate" />
+</div>
+
+<div>
+    <label for="file-input">Ticket Dump File (CSV or JSON)</label>
+    <InputFile id="file-input" data-testid="upload-file-input" OnChange="OnFileSelected" accept=".csv,.json" />
+</div>
+
+<button data-testid="upload-submit" @onclick="OnUploadAsync">Upload</button>
+
+@if (!string.IsNullOrEmpty(validationMessage))
+{
+    <div data-testid="upload-validation">@validationMessage</div>
+}
+
+<div data-testid="upload-result">
+    @if (!string.IsNullOrEmpty(resultMessage))
+    {
+        <p>@resultMessage</p>
+    }
+</div>
+
+@if (ingestResult is not null && ingestResult.Success)
+{
+    <div data-testid="ingest-summary">
+        <p>Successfully ingested @ingestResult.TicketsIngested ticket@(ingestResult.TicketsIngested == 1 ? "" : "s") and @ingestResult.FieldChangesRecorded field change@(ingestResult.FieldChangesRecorded == 1 ? "" : "s").</p>
+        @if (ingestResult.Warnings.Count > 0)
+        {
+            <ul>
+                @foreach (string warning in ingestResult.Warnings)
+                {
+                    <li>@warning</li>
+                }
+            </ul>
+        }
+    </div>
+}
+
+@if (!string.IsNullOrEmpty(selectedItsmSource))
+{
+    <div class="template-download-section" data-testid="template-download-section">
+        <h3>Download Data Template</h3>
+        <p>If you're having trouble uploading, download a blank CSV template for the selected ITSM source:</p>
+        <a href="/api/template/@selectedItsmSource/required"
+           target="_blank"
+           data-testid="download-template-required"
+           class="btn btn-outline-secondary btn-sm me-2">
+            Download Required Headers Template
+        </a>
+        <a href="/api/template/@selectedItsmSource/all"
+           target="_blank"
+           data-testid="download-template-all"
+           class="btn btn-outline-secondary btn-sm">
+            Download All Headers Template
+        </a>
+    </div>
+}
+
+@code {
+    private string selectedItsmSource = string.Empty;
+    private DateOnly snapshotDate = DateOnly.FromDateTime(DateTime.Today);
+    private IBrowserFile? selectedFile;
+    private string? validationMessage;
+    private string? resultMessage;
+    private IngestResult? ingestResult;
+    private IReadOnlyList<ItsmSource> itsmSources = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        itsmSources = await ItsmSourceService.GetAllSourcesAsync();
+    }
+
+    private void OnFileSelected(InputFileChangeEventArgs e)
+    {
+        selectedFile = e.File;
+        validationMessage = null;
+        ingestResult = null;
+    }
+
+    private async Task OnUploadAsync()
+    {
+        validationMessage = null;
+        resultMessage = null;
+        ingestResult = null;
+
+        if (string.IsNullOrEmpty(selectedItsmSource))
+        {
+            validationMessage = "Please select an ITSM source.";
+            return;
+        }
+
+        if (selectedFile is null)
+        {
+            validationMessage = "Please select a file.";
+            return;
+        }
+
+        if (snapshotDate == default)
+        {
+            validationMessage = "Please select a snapshot date.";
+            return;
+        }
+
+        // Determine format from file extension
+        string extension = Path.GetExtension(selectedFile.Name).ToLowerInvariant();
+        if (extension is not ".csv" and not ".json")
+        {
+            validationMessage = $"Unrecognised file format '{extension}'. Please upload a .csv or .json file.";
+            return;
+        }
+
+        try
+        {
+            await using Stream fileStream = selectedFile.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024);
+
+            IngestResult result = extension == ".csv"
+                ? await IngestService.IngestCsvAsync(fileStream, selectedItsmSource, snapshotDate)
+                : await IngestService.IngestJsonAsync(fileStream, selectedItsmSource, snapshotDate);
+
+            if (result.Success)
+            {
+                ingestResult = result;
+            }
+            else
+            {
+                validationMessage = result.ErrorMessage;
+            }
+        }
+        catch (Exception ex)
+        {
+            resultMessage = $"Upload failed: {ex.Message}";
+        }
+    }
+}

@@ -1,228 +1,200 @@
-# DEV_ENVIRONMENT.md
-**Docker-first development environment**
+# Development Environment
 
-This document defines the **authoritative development environment** for the Snapshot-Based Reporting & Analysis Platform.
+**Docker-first development environment for UPMS**
 
-GitHub Copilot, contributors, and CI pipelines should assume:
-- all services run in Docker containers,
-- local development mirrors containerised execution,
-- no component relies on host-installed databases or infrastructure.
+This document defines the authoritative development environment for the Unified Problem Management System. All contributors and CI pipelines should assume this specification.
 
 ---
 
-## Core principle
+## Core Principle
 
-> **Everything must be runnable via Docker.**
+> **Everything must be runnable via `docker compose up`.**
 
-Developers may optionally run parts locally for debugging, but:
-- Docker containers are the source of truth,
-- Docker Compose defines how services interact,
-- production-like behaviour should always be testable locally using containers.
+- All services run in Docker containers.
+- Local development mirrors containerised execution.
+- No component relies on a host-installed database or any external infrastructure.
+
+Developers may optionally run `UPMS.Web` locally with the .NET SDK for faster iteration, but must point it at the Docker-hosted PostgreSQL instance.
 
 ---
 
-## Technology stack (preferred)
+## Technology Stack
 
-### Backend
-- **Runtime:** .NET 10 (LTS or latest stable)
-- **Framework:** ASP.NET Core Web API
+### Web Application
+- **Framework:** Blazor Server (.NET 10)
 - **Language:** C#
-- **Execution model:** containerised service
-- **DB access:** Dapper or EF Core (stored-procedure first)
-- **Background processing:** `IHostedService` / worker service (separate container)
+- **Rendering model:** Interactive Server (SignalR-based)
+- **Container:** single `upms.web` container
+
+### Data Access Library
+- **Type:** .NET class library (.NET 10)
+- **ORM:** Dapper + Npgsql
+- **Referenced by:** `UPMS.Web` as a project dependency (not a separate container)
 
 ### Database
 - **Engine:** PostgreSQL 15+
-- **Execution:** Docker container
-- **Schema management:** SQL migrations (Flyway / EF migrations)
-- **Primary access pattern:** stored procedures / functions
-- **No direct table access from reporting code**
-
-### Object / Artifact Storage
-- **Dev:** MinIO (S3-compatible)
-- **Prod:** S3 / Azure Blob / compatible service
-- **Purpose:** store generated report artifacts (CSV, XLSX, PPTX, PDF)
-- **Execution:** Docker container (MinIO)
-
-### Frontend (Admin + Report Runner UI)
-- **Framework:** React + TypeScript
-- **Dev server:** Vite
-- **Execution:** Docker container
-- **Prod:** static build served via Nginx or CDN
-- **API communication:** HTTP to backend container
+- **Container:** `db`
+- **Schema management:** SQL migration scripts in [`sql/migrations/`](../sql/migrations/), applied on container initialisation via `docker-entrypoint-initdb.d`
+- **Primary access pattern:** stored procedures for bulk reads; direct Dapper queries for writes
 
 ---
 
-## Containers & responsibilities
+## Services
 
-The Docker Compose stack must include:
+| Container | Responsibility | Port (host) |
+|-----------|---------------|-------------|
+| `db` | PostgreSQL 15 database | `5432` |
+| `upms.web` | Blazor Server web application | `8080` |
+| `adminer` *(optional)* | Database inspection UI | `8090` |
 
-| Container | Responsibility |
-|---------|----------------|
-| `db` | PostgreSQL database |
-| `backend` | ASP.NET Core API |
-| `worker` | Background job processor |
-| `frontend` | Report UI + template admin |
-| `minio` | Artifact storage |
-| `adminer` (optional) | DB inspection UI |
-
-Each container:
-- runs a single responsibility,
-- communicates via Docker networking,
-- is replaceable without code changes.
+There is no worker service, no message queue, no object storage (MinIO or otherwise), and no separate API backend. The Blazor Server application handles all server-side logic and UI.
 
 ---
 
-## Docker as the default runtime
+## Running the Application
 
-### Expectations
-- All services **must start via `docker compose up`**.
-- No service should require:
-  - a locally installed database,
-  - local blob storage,
-  - hard-coded file paths outside mounted volumes.
-- Environment configuration is provided via `.env`.
+### Prerequisites
+- Docker Desktop (or Docker Engine with Compose v2+)
+- .NET 10 SDK *(only required for local non-Docker development)*
 
-### Local-only execution (optional)
-Developers *may* run:
-- backend or frontend locally **only if** they point to Docker-hosted services.
+### Start all services
+
+```bash
+docker compose up -d
+```
+
+The application will be available at: **http://localhost:8080**
+
+### Start with the database admin UI
+
+```bash
+docker compose --profile tools up -d
+```
+
+Adminer will be available at: **http://localhost:8090**
+- System: `PostgreSQL`
+- Server: `db`
+- Username: `upms`
+- Password: `upms_dev_password`
+- Database: `upms`
+
+### Stop all services
+
+```bash
+docker compose down
+```
+
+### Reset the database (destroys all data)
+
+```bash
+docker compose down -v
+docker compose up -d
+```
+
+---
+
+## Environment Variables
+
+Configuration is provided via environment variables. For local development these are set in `docker-compose.override.yml` or a `.env` file (not committed to source control).
+
+### Database
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `POSTGRES_USER` | `upms` | PostgreSQL username |
+| `POSTGRES_PASSWORD` | `upms_dev_password` | PostgreSQL password |
+| `POSTGRES_DB` | `upms` | PostgreSQL database name |
+
+### Application (`upms.web`)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ASPNETCORE_ENVIRONMENT` | `Development` | ASP.NET Core environment name |
+| `ConnectionStrings__Default` | `Host=db;Port=5432;Database=upms;Username=upms;Password=upms_dev_password` | PostgreSQL connection string |
+
+### Connection String Convention
+
+The connection string is set via the `ConnectionStrings__Default` environment variable (double underscore = nested JSON key separator in .NET configuration). It maps to the `ConnectionStrings.Default` key in `appsettings.json`.
 
 Example:
-- backend runs locally,
-- PostgreSQL and MinIO still run in Docker.
+```
+ConnectionStrings__Default=Host=db;Port=5432;Database=upms;Username=upms;Password=upms_dev_password
+```
 
-This is optional and not the primary workflow.
-
----
-
-## Configuration & environment variables
-
-- All configuration must be injectable via environment variables.
-- `.env.example` documents required variables.
-- `.env` is used for local dev and **must not be committed**.
-
-Examples:
-- DB connection string
-- MinIO endpoint and credentials
-- Backend / frontend ports
-- ASP.NET environment
+For local (non-Docker) development, use `Host=localhost` instead of `Host=db`.
 
 ---
 
-## Database lifecycle (development)
+## Database Lifecycle
 
 ### Initialisation
-- Development DB may be initialised via:
-  - `sql/init_schema.sql` mounted into Postgres (`docker-entrypoint-initdb.d`), or
-  - migrations executed by the backend container.
 
-### Schema changes
-- Prefer migration tooling over ad-hoc SQL.
-- Migrations must be runnable inside Docker.
-- Dropping volumes is acceptable **only in dev**.
+SQL migration scripts in [`sql/migrations/`](../sql/migrations/) are mounted into the PostgreSQL container at `/docker-entrypoint-initdb.d/`. PostgreSQL runs all `.sql` files in that directory automatically on first startup (i.e. when the `pgdata` volume is empty).
 
-### Expectations
-- DB schema is reproducible from scratch.
-- No manual DB setup steps required outside Docker.
+Scripts are run in filename order:
+1. [`001_initial_schema.sql`](../sql/migrations/001_initial_schema.sql) — creates tables
+2. [`002_indexes.sql`](../sql/migrations/002_indexes.sql) — creates indexes
 
----
+Stored procedures in [`sql/stored-procedures/`](../sql/stored-procedures/) must be applied separately if needed for local development.
 
-## Reporting & storage flow (environment-level)
+### Schema Changes
 
-1. Snapshots uploaded to backend container.
-2. Backend writes:
-   - snapshot metadata to Postgres,
-   - field-level changes to Postgres.
-3. Report generation:
-   - backend / worker queries DB via stored procedures,
-   - renderer produces artifact (CSV / PPTX / etc),
-   - artifact stored in MinIO,
-   - backend returns signed download URL.
-4. Frontend consumes API responses only — never touches storage directly.
+When a new migration is needed:
+1. Add a new numbered `.sql` file to [`sql/migrations/`](../sql/migrations/).
+2. Run `docker compose down -v && docker compose up -d` to recreate the database from scratch.
+
+In development, destroying and recreating the volume is the expected workflow for schema changes.
 
 ---
 
-## Template handling (environment context)
+## Local Development (Without Docker for the Web App)
 
-- Templates (PPTX, XLSX, HTML) are:
-  - uploaded via admin UI,
-  - stored in object storage (MinIO),
-  - versioned and referenced by metadata.
-- Renderers load templates from storage, not from local disk paths.
-- Template files are **data**, not code.
+If running `UPMS.Web` locally with the .NET SDK while PostgreSQL runs in Docker:
 
----
+1. Start the database container:
+   ```bash
+   docker compose up -d db
+   ```
 
-## Health & readiness
+2. Set the connection string in `src/UPMS.Web/appsettings.Development.json` or via user secrets:
+   ```json
+   {
+     "ConnectionStrings": {
+       "Default": "Host=localhost;Port=5432;Database=upms;Username=upms;Password=upms_dev_password"
+     }
+   }
+   ```
 
-Each container should expose:
-- a health endpoint (or healthcheck command),
-- readiness for dependent services.
-
-Examples:
-- Postgres: `pg_isready`
-- Backend: `/health`
-- MinIO: `/minio/health/live`
-
-Docker Compose should use healthchecks to control startup order.
-
----
-
-## Logging & diagnostics
-
-- Logs must be written to stdout/stderr.
-- Docker logs are the primary debugging surface.
-- Structured logging preferred (JSON or key-value).
-- No reliance on local log files.
+3. Run the application:
+   ```bash
+   cd src/UPMS.Web
+   dotnet run
+   ```
 
 ---
 
-## CI / test environment alignment
+## Health Checks
 
-CI pipelines should:
-1. Start the full Docker Compose stack.
-2. Wait for healthchecks.
-3. Run integration tests against running containers.
-4. Tear down containers and volumes.
-
-There should be **no separate CI-only environment logic**.
+| Service | Health Check |
+|---------|-------------|
+| `db` | `pg_isready -U upms -d upms` |
+| `upms.web` | Depends on `db` being healthy before starting |
 
 ---
 
-## Production parity notes
+## Logging
 
-While this document focuses on development:
-- Production should reuse the same container images.
-- Differences should be limited to:
-  - managed DB instead of local Postgres,
-  - managed object storage instead of MinIO,
-  - static frontend hosting instead of Vite dev server.
-- No code changes should be required to switch environments.
+- All application logs are written to stdout/stderr.
+- `docker compose logs -f upms.web` is the primary debugging surface.
+- Structured logging is preferred (ASP.NET Core default JSON format in production).
 
 ---
 
-## Non-goals (environment)
+## Non-Goals
 
-This environment does **not** aim to:
-- optimise for minimal container count,
-- support non-Docker execution paths,
-- embed secrets directly in files,
-- run live ITSM integrations.
-
----
-
-## Summary (for Copilot context)
-
-- Docker Compose is the **authoritative runtime**.
-- PostgreSQL + stored procedures are the **only data access path**.
-- MinIO is used for artifact storage.
-- Backend, worker, and frontend are **separate containers**.
-- Templates are external assets, not code.
-- All configuration is environment-driven.
-- Local execution is optional; container execution is required.
-
-Copilot should assume all new components are:
-- containerised,
-- environment-variable configured,
-- networked via Docker,
-- and compatible with this stack by default.
+This environment does **not** include:
+- A React, TypeScript, or Vite frontend
+- A separate ASP.NET Core Web API backend
+- A .NET Worker Service container
+- MinIO or any object storage
+- Live ITSM system integrations
