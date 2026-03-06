@@ -37,7 +37,7 @@
                 }
                 <tr>
                     <td>
-                        <a href="/tickets/@Uri.EscapeDataString(ticket.CompanyName)/@Uri.EscapeDataString(ticket.ItsmSource)/@Uri.EscapeDataString(ticket.TicketKey)?snapshotId=@SnapshotId">@(string.IsNullOrWhiteSpace(ticketNumber) ? ticket.TicketKey : ticketNumber)</a>
+                        <a href="/tickets/@Uri.EscapeDataString(ticket.CompanyName)/@Uri.EscapeDataString(ticket.ItsmSource)/@Uri.EscapeDataString(ticket.TicketKey)?asOf=@Uri.EscapeDataString(ticket.SnapshotDate.ToString("yyyy-MM-ddTHH:mm"))">@(string.IsNullOrWhiteSpace(ticketNumber) ? ticket.TicketKey : ticketNumber)</a>
                         @if (!string.IsNullOrWhiteSpace(ticketNumber))
                         {
                             <div class="text-muted small">@ticket.TicketKey</div>
