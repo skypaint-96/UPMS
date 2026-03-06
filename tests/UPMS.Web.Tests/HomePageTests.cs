@@ -23,7 +23,7 @@ public class HomePageTests : PageTestBase
         // Act
         await Page.GotoAsync(Url("/"));
 
-        // Assert — the home page should contain a visible heading.
+        // Assert â€” the home page should contain a visible heading.
         var heading = Page.Locator("h1");
         await Assertions.Expect(heading).ToBeVisibleAsync();
     }
@@ -34,7 +34,7 @@ public class HomePageTests : PageTestBase
         // Act
         await Page.GotoAsync(Url("/"));
 
-        // Assert — a <nav> element should be rendered for site-wide navigation.
+        // Assert â€” a <nav> element should be rendered for site-wide navigation.
         var nav = Page.Locator("nav");
         await Assertions.Expect(nav).ToBeVisibleAsync();
     }
@@ -45,7 +45,7 @@ public class HomePageTests : PageTestBase
         // Act
         await Page.GotoAsync(Url("/"));
 
-        // Assert — the home page should contain a summary/dashboard section
+        // Assert â€” the home page should contain a summary/dashboard section
         // that will display ticket statistics or recent activity.
         var dashboard = Page.Locator("[data-testid='dashboard-summary']");
         await Assertions.Expect(dashboard).ToBeVisibleAsync();

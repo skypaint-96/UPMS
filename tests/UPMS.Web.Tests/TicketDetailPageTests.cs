@@ -1,7 +1,14 @@
 namespace UPMS.Web.Tests;
 
 /// <summary>
-/// Requirements for the ticket detail page (/tickets/{company}/{ticketKey}).
+/// Requirements for the ticket detail page.
+///
+/// Supported routes:
+/// - /tickets/{company}/{ticketKey}
+/// - /tickets/{company}/{itsmSource}/{ticketKey}
+///
+/// Point-in-time view:
+/// - /tickets/...?...&asOf=yyyy-MM-ddTHH:mm
 /// </summary>
 [TestFixture]
 public class TicketDetailPageTests : PageTestBase
@@ -10,6 +17,8 @@ public class TicketDetailPageTests : PageTestBase
     // ticket does not need to exist in the database for structural checks.
     private const string SampleCompany = "Acme-Corp";
     private const string SampleTicketKey = "INC0001234";
+
+    private const string SampleAsOf = "2026-01-10T00:00";
 
     private string TicketDetailUrl => Url($"/tickets/{SampleCompany}/{SampleTicketKey}");
 
@@ -41,7 +50,7 @@ public class TicketDetailPageTests : PageTestBase
         // Act
         await Page.GotoAsync(TicketDetailUrl);
 
-        // Assert — a section listing the ticket's current field values.
+        // Assert â€” a section listing the ticket's current field values.
         var fieldsSection = Page.Locator("[data-testid='ticket-fields']");
         await Assertions.Expect(fieldsSection).ToBeVisibleAsync();
     }
@@ -52,7 +61,7 @@ public class TicketDetailPageTests : PageTestBase
         // Act
         await Page.GotoAsync(TicketDetailUrl);
 
-        // Assert — a section showing the field change history timeline.
+        // Assert â€” a section showing the field change history timeline.
         var historySection = Page.Locator("[data-testid='field-history']");
         await Assertions.Expect(historySection).ToBeVisibleAsync();
     }
@@ -85,8 +94,19 @@ public class TicketDetailPageTests : PageTestBase
         // Act
         await Page.GotoAsync(TicketDetailUrl);
 
-        // Assert — there should be a link in the page content to navigate back to the tickets list.
+        // Assert â€” there should be a link in the page content to navigate back to the tickets list.
         var backLink = Page.Locator("main a[href='/tickets']");
         await Assertions.Expect(backLink).ToBeVisibleAsync();
+    }
+
+    [Test]
+    public async Task WhenTicketDetailHasAsOfQueryThenAsOfInputIsPrepopulated()
+    {
+        // Act
+        await Page.GotoAsync(Url($"/tickets/{SampleCompany}/{SampleTicketKey}?asOf={SampleAsOf}"));
+
+        // Assert
+        var asOfInput = Page.Locator("[data-testid='ticket-as-of-datetime']");
+        await Assertions.Expect(asOfInput).ToHaveValueAsync(SampleAsOf);
     }
 }

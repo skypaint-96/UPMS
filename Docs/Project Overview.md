@@ -105,12 +105,13 @@ Each plugin:
 
 Examples of reporting plugins:
 
-- **PowerPoint reporting pack** — generates templated slide decks where the user selects parameters (date range, company, styling options) and receives a populated PPTX file.
+- **PowerPoint reporting pack** — generates a simple PPTX report download.
 - **Email notification plugin** — gives users a choice of pre-defined email templates and generates HTML output ready to send.
+- **Example plugins** — HTML status breakdown, CSV export, and date-range “delta” reports.
 
 The plugin system is extensible by design. New report types can be added as new plugins without changes to the core application.
 
-> **Planned — not yet implemented.** The reporting plugin system is a planned feature. See [`Docs/Build Stages.md`](Build%20Stages.md) for implementation status.
+Developer contract + extension guide: [`Docs/Reporting Plugins.md`](Reporting%20Plugins.md).
 
 ---
 

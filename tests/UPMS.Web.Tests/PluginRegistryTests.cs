@@ -10,6 +10,17 @@ using UPMS.Web.Plugins;
 public class PluginRegistryTests
 {
     [Test]
+    public void PluginRegistry_WithDuplicatePluginIds_Throws()
+    {
+        // Arrange
+        var plugin1 = new StubReportPlugin();
+        var plugin2 = new StubReportPlugin();
+
+        // Act + Assert
+        Assert.Throws<InvalidOperationException>(() => new PluginRegistry([plugin1, plugin2]));
+    }
+
+    [Test]
     public void PluginRegistry_WithNoPlugins_ReturnsEmptyList()
     {
         // Arrange

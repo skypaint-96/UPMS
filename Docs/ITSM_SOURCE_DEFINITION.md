@@ -218,17 +218,14 @@ The [`ItsmFieldMapping`](../src/UPMS.Data/ItsmFieldMapping.cs) data type:
 ```csharp
 public class ItsmFieldMapping
 {
-    public required string ItsmSource { get; init; }
-    public required string SourceFieldName { get; init; }
-    public required string CanonicalFieldName { get; init; }
+    public string ItsmSource { get; set; } = string.Empty;
+    public string SourceFieldName { get; set; } = string.Empty;
+    public string CanonicalFieldName { get; set; } = string.Empty;
+    public bool IsRequired { get; set; }
 }
 ```
 
-The concrete implementation [`ItsmFieldMappingService`](../src/UPMS.Data/ItsmFieldMappingService.cs) is database-backed (Dapper + Npgsql). It is constructed via:
-
-```csharp
-ItsmFieldMappingService.CreateFromOptions(IOptions<DatabaseOptions> options)
-```
+The concrete implementation [`ItsmFieldMappingService`](../src/UPMS.Data/ItsmFieldMappingService.cs) is database-backed (EF Core + Npgsql) and is registered with DI by `UPMS.Web` when calling `AddUpmsData(...)`.
 
 ---
 

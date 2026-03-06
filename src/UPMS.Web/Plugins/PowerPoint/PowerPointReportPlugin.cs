@@ -25,9 +25,9 @@ public class PowerPointReportPlugin : IReportPlugin
         {
             Key = "itsm_source",
             DisplayName = "ITSM Source",
-            Type = ReportParameterType.Select,
+            Type = ReportParameterType.ItsmSource,
             IsRequired = true,
-            Options = ["servicenow", "jira"]
+            Description = "Select the ITSM source to run this report against."
         },
         new ReportParameterDefinition
         {
