@@ -233,15 +233,24 @@ public async Task RecordFieldChangeAsync(
             .ToDictionary(g => g.Key, g => g.Max(f => f.ObservedAt), StringComparer.Ordinal);
 
         return latestTickets
-            .Select(row => new Ticket
+            .Select(row =>
             {
-                TicketKey = row.TicketKey,
-                CompanyName = companyName,
-                ItsmSource = itsmSource,
-                Fields = fieldsByTicket.TryGetValue(row.TicketKey, out var fields) ? fields : new Dictionary<string, string?>(),
-                ObservedAt = maxObservedByTicket.TryGetValue(row.TicketKey, out var obs) ? obs : DateTime.MinValue,
-                SnapshotId = row.SnapshotId,
-                SnapshotDate = row.SnapshotDate
+                var fields = fieldsByTicket.TryGetValue(row.TicketKey, out var f)
+                    ? f
+                    : new Dictionary<string, string?>();
+
+                AddDerivedSystemFields(row.TicketKey, fields);
+
+                return new Ticket
+                {
+                    TicketKey = row.TicketKey,
+                    CompanyName = companyName,
+                    ItsmSource = itsmSource,
+                    Fields = fields,
+                    ObservedAt = maxObservedByTicket.TryGetValue(row.TicketKey, out var obs) ? obs : DateTime.MinValue,
+                    SnapshotId = row.SnapshotId,
+                    SnapshotDate = row.SnapshotDate
+                };
             })
             .OrderBy(t => t.TicketKey)
             .ToList();
@@ -333,12 +342,19 @@ public async Task RecordFieldChangeAsync(
             .Select(row =>
             {
                 var key = (row.CompanyName, row.TicketKey);
+
+                var fields = fieldsByCompanyTicket.TryGetValue(key, out var f)
+                    ? f
+                    : new Dictionary<string, string?>();
+
+                AddDerivedSystemFields(row.TicketKey, fields);
+
                 return new Ticket
                 {
                     TicketKey = row.TicketKey,
                     CompanyName = row.CompanyName,
                     ItsmSource = itsmSource,
-                    Fields = fieldsByCompanyTicket.TryGetValue(key, out var fields) ? fields : new Dictionary<string, string?>(),
+                    Fields = fields,
                     ObservedAt = maxObservedByCompanyTicket.TryGetValue(key, out var obs) ? obs : DateTime.MinValue,
                     SnapshotId = row.SnapshotId,
                     SnapshotDate = row.SnapshotDate,
@@ -356,10 +372,7 @@ public async Task RecordFieldChangeAsync(
             if (filters.Count > 0)
             {
                 results = results
-                    .Where(ticket => filters.All(ff =>
-                        ticket.Fields.TryGetValue(ff.FieldName, out var v)
-                        && v is not null
-                        && v.Contains(ff.Value, StringComparison.OrdinalIgnoreCase)))
+                    .Where(ticket => filters.All(ff => TicketMatchesFilter(ticket, ff)))
                     .ToList();
             }
         }
@@ -389,10 +402,10 @@ public async Task RecordFieldChangeAsync(
         var ticketKeySet = ticketRows.Select(t => t.TicketKey).ToHashSet(StringComparer.Ordinal);
         var companySet = ticketRows.Select(t => t.CompanyName).ToHashSet(StringComparer.Ordinal);
 
-        // Bulk fetch field rows, then compute latest values in-memory.
+        // Reconstruct ticket fields as-of the snapshot timestamp.
         var fieldRows = await _context.FieldChanges
             .AsNoTracking()
-            .Where(fc => fc.SnapshotId == snapshotId
+            .Where(fc => fc.ObservedAt <= snapshot.SnapshotDate
                       && ticketKeySet.Contains(fc.TicketKey)
                       && companySet.Contains(fc.CompanyName))
             .Select(fc => new { fc.CompanyName, fc.TicketKey, fc.FieldName, fc.FieldValue, fc.ObservedAt })
@@ -418,12 +431,19 @@ public async Task RecordFieldChangeAsync(
             .Select(row =>
             {
                 var key = (row.CompanyName, row.TicketKey);
+
+                var fields = fieldsByCompanyTicket.TryGetValue(key, out var f)
+                    ? f
+                    : new Dictionary<string, string?>();
+
+                AddDerivedSystemFields(row.TicketKey, fields);
+
                 return new Ticket
                 {
                     TicketKey = row.TicketKey,
                     CompanyName = row.CompanyName,
                     ItsmSource = snapshot.ItsmSource,
-                    Fields = fieldsByCompanyTicket.TryGetValue(key, out var fields) ? fields : new Dictionary<string, string?>(),
+                    Fields = fields,
                     ObservedAt = maxObservedByCompanyTicket.TryGetValue(key, out var obs) ? obs : snapshot.SnapshotDate,
                     SnapshotId = snapshotId,
                     SnapshotDate = snapshot.SnapshotDate
@@ -500,4 +520,83 @@ public async Task RecordFieldChangeAsync(
 
         return await query.OrderByDescending(s => s.SnapshotDate).ToListAsync();
     }
+
+
+
+    private static void AddDerivedSystemFields(string ticketKey, IDictionary<string, string?> fields)
+    {
+        if (TicketKeyFactory.TryParse(ticketKey, out _, out _, out var ticketNumber))
+        {
+            fields["ticket_number"] = ticketNumber;
+        }
+    }
+    private static bool TicketMatchesFilter(Ticket ticket, TicketFieldFilter filter)
+    {
+        var field = (filter.FieldName ?? string.Empty).Trim();
+        var value = (filter.Value ?? string.Empty).Trim();
+
+        if (field.Length == 0 || value.Length == 0)
+            return true;
+
+        // System fields / special cases
+        if (string.Equals(field, "company", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(field, "company_name", StringComparison.OrdinalIgnoreCase))
+        {
+            return ticket.CompanyName.Contains(value, StringComparison.OrdinalIgnoreCase);
+        }
+
+        if (string.Equals(field, "itsm_source", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(field, "source", StringComparison.OrdinalIgnoreCase))
+        {
+            return ticket.ItsmSource.Contains(value, StringComparison.OrdinalIgnoreCase);
+        }
+
+        if (string.Equals(field, "ticket_key", StringComparison.OrdinalIgnoreCase))
+        {
+            // Legacy: some mappings used 'ticket_key' as the canonical name for the ticket number.
+            if (ticket.TicketKey.Contains(value, StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            if (TryGetFieldValue(ticket.Fields, "ticket_number", out var ticketNumber) && !string.IsNullOrEmpty(ticketNumber))
+                return ticketNumber.Contains(value, StringComparison.OrdinalIgnoreCase);
+
+            return false;
+        }
+
+        if (string.Equals(field, "ticket_number", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(field, "number", StringComparison.OrdinalIgnoreCase))
+        {
+            if (TryGetFieldValue(ticket.Fields, "ticket_number", out var ticketNumber) && !string.IsNullOrEmpty(ticketNumber))
+                return ticketNumber.Contains(value, StringComparison.OrdinalIgnoreCase);
+
+            // Fallback: match the composite ticket key.
+            return ticket.TicketKey.Contains(value, StringComparison.OrdinalIgnoreCase);
+        }
+
+        // Normal mapped fields
+        if (TryGetFieldValue(ticket.Fields, field, out var v) && v is not null)
+            return v.Contains(value, StringComparison.OrdinalIgnoreCase);
+
+        return false;
+    }
+
+    private static bool TryGetFieldValue(IDictionary<string, string?> fields, string fieldName, out string? value)
+    {
+        if (fields.TryGetValue(fieldName, out value))
+            return true;
+
+        // Cheap case-insensitive fallback (dictionary is Ordinal in most of our paths)
+        foreach (var kv in fields)
+        {
+            if (string.Equals(kv.Key, fieldName, StringComparison.OrdinalIgnoreCase))
+            {
+                value = kv.Value;
+                return true;
+            }
+        }
+
+        value = null;
+        return false;
+    }
+
 }

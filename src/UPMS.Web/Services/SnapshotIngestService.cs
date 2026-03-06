@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Http;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using UPMS.Data;
 
@@ -17,17 +18,20 @@ public class SnapshotIngestService : ISnapshotIngestService
 {
     private readonly ICommandRepository _commandRepository;
     private readonly IItsmSourceService _sourceService;
+    private readonly UpmsDbContext _dbContext;
     private readonly ILogger<SnapshotIngestService> _logger;
     private readonly IHttpContextAccessor? _httpContextAccessor;
 
     public SnapshotIngestService(
         ICommandRepository commandRepository,
         IItsmSourceService sourceService,
+        UpmsDbContext dbContext,
         ILogger<SnapshotIngestService> logger,
         IHttpContextAccessor? httpContextAccessor = null)
     {
         _commandRepository = commandRepository ?? throw new ArgumentNullException(nameof(commandRepository));
         _sourceService     = sourceService     ?? throw new ArgumentNullException(nameof(sourceService));
+        _dbContext         = dbContext         ?? throw new ArgumentNullException(nameof(dbContext));
         _logger            = logger ?? throw new ArgumentNullException(nameof(logger));
         _httpContextAccessor = httpContextAccessor;
     }
@@ -245,6 +249,9 @@ public class SnapshotIngestService : ISnapshotIngestService
                         break;
                 }
 
+                ticketNumber = NormalizeValue(ticketNumber);
+                companyName = NormalizeValue(companyName);
+
                 if (string.IsNullOrWhiteSpace(ticketNumber))
                 {
                     warnings.Add($"Element {elementIndex}: could not resolve ticket_number value, skipped.");
@@ -351,7 +358,30 @@ public class SnapshotIngestService : ISnapshotIngestService
 
         await _commandRepository.AddSnapshotTicketsAsync(snapshotTickets, ct);
 
-        // Batch-build and persist field changes
+        // Preload last-known values so we only record *actual* field changes (not a full re-dump each snapshot).
+        var candidateFieldNames = new HashSet<string>(StringComparer.Ordinal);
+        for (int i = 0; i < headers.Length; i++)
+        {
+            if (i == companyColIndex)
+                continue;
+
+            string? canonical = canonicalHeaders[i];
+
+            // Don't store ticket_number / ticket_key as a field change; it's part of the ticket identity.
+            if (i == ticketNumberColIndex
+                || string.Equals(canonical, "ticket_number", StringComparison.Ordinal)
+                || string.Equals(canonical, "ticket_key", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            string fieldName = canonical ?? headers[i];
+            candidateFieldNames.Add(fieldName);
+        }
+
+        var lastKnownValues = await LoadLatestFieldValuesAsync(ticketEntries, candidateFieldNames, snapshotDateTime, ct);
+
+        // Batch-build and persist only the deltas
         var fieldChanges = new List<FieldChange>();
         foreach (var (ticketKey, companyName, cols) in rows)
         {
@@ -361,25 +391,33 @@ public class SnapshotIngestService : ISnapshotIngestService
                 if (i == companyColIndex)
                     continue;
 
-                // The ticket number should be stored as a field named "ticket_number".
-                string fieldName;
-                if (i == ticketNumberColIndex)
+                string? canonical = canonicalHeaders[i];
+
+                // Don't store ticket_number / ticket_key as a field change; it's part of the ticket identity.
+                if (i == ticketNumberColIndex
+                    || string.Equals(canonical, "ticket_number", StringComparison.Ordinal)
+                    || string.Equals(canonical, "ticket_key", StringComparison.Ordinal))
                 {
-                    fieldName = "ticket_number";
+                    continue;
+                }
+
+                string fieldName = canonical ?? headers[i];
+
+                string? fieldValue = i < cols.Length ? NormalizeValue(cols[i]) : null;
+
+                var key = (CompanyName: companyName, TicketKey: ticketKey, FieldName: fieldName);
+
+                if (lastKnownValues.TryGetValue(key, out var previousValue))
+                {
+                    if (string.Equals(previousValue, fieldValue, StringComparison.Ordinal))
+                        continue;
                 }
                 else
                 {
-                    string? canonical = canonicalHeaders[i];
-
-                    // Legacy alias: if someone mapped a field to ticket_key, treat it as ticket_number.
-                    if (string.Equals(canonical, "ticket_key", StringComparison.Ordinal))
-                        canonical = "ticket_number";
-
-                    fieldName = canonical ?? headers[i];
+                    // Don't store "first value is null" noise.
+                    if (fieldValue is null)
+                        continue;
                 }
-                string? fieldValue = i < cols.Length
-                    ? (string.IsNullOrEmpty(cols[i]) ? null : cols[i])
-                    : null;
 
                 fieldChanges.Add(new FieldChange
                 {
@@ -390,6 +428,9 @@ public class SnapshotIngestService : ISnapshotIngestService
                     ObservedAt  = snapshotDateTime,
                     SnapshotId  = snapshotId,
                 });
+
+                // Keep the dictionary updated so repeated values inside the same ingest don't create duplicates.
+                lastKnownValues[key] = fieldValue;
             }
         }
 
@@ -468,28 +509,56 @@ public class SnapshotIngestService : ISnapshotIngestService
 
         await _commandRepository.AddSnapshotTicketsAsync(snapshotTickets, ct);
 
-        // Use the pre-fetched canonicalLookup passed from the caller — no DB round-trips here
-        // Resolve canonical names and batch-build field changes
+        // Figure out which canonical field names are present in this JSON payload (excluding company).
+        var candidateFieldNames = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var (_, _, fields) in rows)
+        {
+            foreach (var sourceFieldName in fields.Keys)
+            {
+                string? canonical = canonicalLookup.TryGetValue(sourceFieldName, out var c) ? c : null;
+
+                if (string.Equals(canonical, "company", StringComparison.Ordinal)
+                    || string.Equals(canonical, "ticket_number", StringComparison.Ordinal)
+                    || string.Equals(canonical, "ticket_key", StringComparison.Ordinal))
+                    continue;
+
+                string fieldName = canonical ?? sourceFieldName;
+                candidateFieldNames.Add(fieldName);
+            }
+        }
+
+        var lastKnownValues = await LoadLatestFieldValuesAsync(ticketEntries, candidateFieldNames, snapshotDateTime, ct);
+
+        // Resolve canonical names and batch-build only the deltas
         var fieldChanges = new List<FieldChange>();
         foreach (var (ticketKey, companyName, fields) in rows)
         {
-            foreach (var (sourceFieldName, fieldValue) in fields)
+            foreach (var (sourceFieldName, rawValue) in fields)
             {
-                // Use pre-fetched mapping to avoid per-field DB lookups
                 string? canonical = canonicalLookup.TryGetValue(sourceFieldName, out var c) ? c : null;
 
-                // Don't store company as a ticket field
-                if (string.Equals(canonical, "company", StringComparison.Ordinal))
+                // Don't store company or ticket identity fields as ticket fields
+                if (string.Equals(canonical, "company", StringComparison.Ordinal)
+                    || string.Equals(canonical, "ticket_number", StringComparison.Ordinal)
+                    || string.Equals(canonical, "ticket_key", StringComparison.Ordinal))
                     continue;
 
-                // Legacy alias: treat ticket_key mapping as ticket_number
-                string fieldName = canonical switch
+                string fieldName = canonical ?? sourceFieldName;
+
+                var fieldValue = NormalizeValue(rawValue);
+
+                var key = (CompanyName: companyName, TicketKey: ticketKey, FieldName: fieldName);
+
+                if (lastKnownValues.TryGetValue(key, out var previousValue))
                 {
-                    "ticket_key" => "ticket_number",
-                    "ticket_number" => "ticket_number",
-                    null => sourceFieldName,
-                    _ => canonical
-                };
+                    if (string.Equals(previousValue, fieldValue, StringComparison.Ordinal))
+                        continue;
+                }
+                else
+                {
+                    if (fieldValue is null)
+                        continue;
+                }
 
                 fieldChanges.Add(new FieldChange
                 {
@@ -500,6 +569,8 @@ public class SnapshotIngestService : ISnapshotIngestService
                     ObservedAt  = snapshotDateTime,
                     SnapshotId  = snapshotId,
                 });
+
+                lastKnownValues[key] = fieldValue;
             }
         }
 
@@ -551,4 +622,44 @@ public class SnapshotIngestService : ISnapshotIngestService
         }
         return Task.FromResult<string?>(null);
     }
+
+    private static string? NormalizeValue(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return null;
+
+        return value.Trim();
+    }
+
+    private async Task<Dictionary<(string CompanyName, string TicketKey, string FieldName), string?>> LoadLatestFieldValuesAsync(
+        IReadOnlyCollection<(string TicketKey, string CompanyName)> ticketEntries,
+        IReadOnlyCollection<string> fieldNames,
+        DateTime asOfUtc,
+        CancellationToken ct)
+    {
+        if (ticketEntries.Count == 0 || fieldNames.Count == 0)
+            return new Dictionary<(string CompanyName, string TicketKey, string FieldName), string?>();
+
+        var ticketKeySet = ticketEntries.Select(t => t.TicketKey).ToHashSet(StringComparer.Ordinal);
+        var companySet   = ticketEntries.Select(t => t.CompanyName).ToHashSet(StringComparer.Ordinal);
+        var fieldSet     = fieldNames.ToHashSet(StringComparer.Ordinal);
+
+        var rows = await _dbContext.FieldChanges
+            .AsNoTracking()
+            .Where(fc => ticketKeySet.Contains(fc.TicketKey)
+                      && companySet.Contains(fc.CompanyName)
+                      && fieldSet.Contains(fc.FieldName)
+                      && fc.ObservedAt <= asOfUtc)
+            .Select(fc => new { fc.CompanyName, fc.TicketKey, fc.FieldName, fc.FieldValue, fc.ObservedAt })
+            .ToListAsync(ct);
+
+        // Compute latest values per (company, ticket, field) in-memory.
+        return rows
+            .GroupBy(r => (r.CompanyName, r.TicketKey, r.FieldName))
+            .Select(g => g.OrderByDescending(r => r.ObservedAt).First())
+            .ToDictionary(
+                r => (r.CompanyName, r.TicketKey, r.FieldName),
+                r => NormalizeValue(r.FieldValue));
+    }
+
 }
