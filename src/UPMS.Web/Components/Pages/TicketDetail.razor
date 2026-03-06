@@ -18,9 +18,8 @@
                class="form-control"
                type="datetime-local"
                data-testid="ticket-as-of-datetime"
-               @bind="asOfLocal"
-               @bind:event="oninput"
-               @bind:after="OnAsOfLocalChanged" />
+               value="@asOfLocal"
+               @oninput="OnAsOfLocalChanged" />
     </div>
     <button class="btn btn-primary" data-testid="ticket-load-btn" @onclick="NavigateToAsOf" disabled="@isLoading">Load</button>
     @if (isLoading)
@@ -283,12 +282,12 @@
         return $"Viewing ticket as of {asOfText} (effective snapshot {snapText}).";
     }
 
-    private void OnAsOfLocalChanged()
+    private void OnAsOfLocalChanged(ChangeEventArgs args)
     {
-        var value = asOfLocal;
+        asOfLocal = args.Value?.ToString() ?? string.Empty;
 
         // If the input is invalid, keep the last valid value instead of switching to "now".
-        if (TryParseAsOfUtc(value, out var parsedUtc, out var normalizedLocal))
+        if (TryParseAsOfUtc(asOfLocal, out var parsedUtc, out var normalizedLocal))
         {
             asOfDateTime = parsedUtc;
             asOfLocal = normalizedLocal;

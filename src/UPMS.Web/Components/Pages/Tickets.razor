@@ -28,9 +28,8 @@
                class="form-control"
                type="datetime-local"
                data-testid="as-of-datetime"
-               @bind="asOfLocal"
-               @bind:event="oninput"
-               @bind:after="OnAsOfLocalChanged" />
+               value="@asOfLocal"
+               @oninput="OnAsOfLocalChanged" />
     </div>
 
     <button class="btn btn-primary" data-testid="search-btn" @onclick="SearchAsync" disabled="@(!CanSearch || isLoading)">Search</button>
@@ -158,9 +157,6 @@ else
     private bool hasAnyMappings = false;
 
     private int nextFilterSeq = 0;
-
-    // Backing nullable selection used for UI binding. Keep local-kind DateTime for input.
-    private DateTime? _selectedAsOf = null;
 
     private enum FieldNameMode
     {
@@ -400,12 +396,12 @@ else
         StateHasChanged();
     }
 
-    private void OnSelectedAsOfChanged()
+    private void OnAsOfLocalChanged(ChangeEventArgs args)
     {
-        var value = asOfLocal;
+        asOfLocal = args.Value?.ToString() ?? string.Empty;
 
         // If the input is invalid, keep the last valid value instead of switching to "now".
-        if (TryParseAsOfUtc(value, out var parsedUtc, out var normalizedLocal))
+        if (TryParseAsOfUtc(asOfLocal, out var parsedUtc, out var normalizedLocal))
         {
             asOfDateTime = parsedUtc;
             asOfLocal = normalizedLocal;
