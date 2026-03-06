@@ -3,13 +3,13 @@ name: UPMS CI/CD
 on:
   push:
     branches:
-      - production
-      - development
+      - Production
+      - Development
 
 env:
   IMAGE_NAME: upms
   PROJECT_PATH: src/UPMS.Web         # <- adjust to your repo if different
-  DOTNET_VERSION: '8.0'             # .NET 10 / adjust if needed
+  DOTNET_VERSION: '10.0'             # .NET 10 / adjust if needed
 
 jobs:
   test:
