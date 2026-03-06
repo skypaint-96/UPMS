@@ -65,7 +65,10 @@ public class EfCommandRepository : ICommandRepository
     {
         ArgumentNullException.ThrowIfNull(fieldChange);
 
-        _context.FieldChanges.Add(fieldChange);
+        // FieldChange is append-only: we never update an existing row.
+        // Clone into a fresh entity so EF Core will always generate an INSERT.
+        var insert = CloneForInsert(fieldChange);
+        _context.FieldChanges.Add(insert);
         await _context.SaveChangesAsync(ct);
     }
 
@@ -78,7 +81,24 @@ public class EfCommandRepository : ICommandRepository
         if (list.Count == 0)
             return;
 
-        _context.FieldChanges.AddRange(list);
+        // FieldChange is append-only: we never update an existing row.
+        // Clone into fresh entities so EF Core will always generate INSERTs.
+        var inserts = list.Select(CloneForInsert).ToList();
+        _context.FieldChanges.AddRange(inserts);
         await _context.SaveChangesAsync(ct);
+    }
+
+    private static FieldChange CloneForInsert(FieldChange source)
+    {
+        // Do NOT copy Id. The DB generates it.
+        return new FieldChange
+        {
+            CompanyName = source.CompanyName?.Trim() ?? string.Empty,
+            TicketKey = source.TicketKey?.Trim() ?? string.Empty,
+            FieldName = source.FieldName?.Trim() ?? string.Empty,
+            FieldValue = source.FieldValue,
+            ObservedAt = source.ObservedAt,
+            SnapshotId = source.SnapshotId,
+        };
     }
 }
