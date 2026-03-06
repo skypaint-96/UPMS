@@ -63,23 +63,25 @@ else
             </div>
         }
 
-        @for (int i = 0; i < filterNames.Count; i++)
+        @{ var rowIndex = 0; }
+        @foreach (var filter in filters)
         {
-            <div class="filter-row d-flex flex-wrap gap-2 align-items-center mb-2">
-                <select class="form-select" style="max-width: 18rem" data-testid="field-filter-name-@i" @bind="filterNames[i]">
+            var i = rowIndex++;
+            <div class="filter-row d-flex flex-wrap gap-2 align-items-center mb-2" @key="filter.Id">
+                <select class="form-select" style="max-width: 18rem" data-testid="field-filter-name-@i" @bind="filter.FieldName">
                     <option value="" disabled>-- Field --</option>
                     @foreach (var field in availableFilterFields)
                     {
                         <option value="@field">@field</option>
                     }
                 </select>
-                <input class="form-control" style="max-width: 24rem" type="text" placeholder="contains…" data-testid="field-filter-value-@i" @bind="filterValues[i]" />
-                <button type="button" class="btn btn-outline-secondary" data-testid="remove-filter-@i" @onclick="() => RemoveFilter(i)">Remove</button>
+                <input class="form-control" style="max-width: 24rem" type="text" placeholder="contains…" data-testid="field-filter-value-@i" @bind="filter.Value" />
+                <button type="button" class="btn btn-outline-secondary" data-testid="remove-filter-@i" @onclick="() => RemoveFilter(filter)">Remove</button>
             </div>
         }
 
         <button type="button" class="btn btn-outline-primary" data-testid="add-filter-btn" @onclick="AddFilter" disabled="@(availableFilterFields.Count == 0)">+ Add Filter</button>
-        <button type="button" class="btn btn-outline-secondary ms-2" data-testid="clear-filters-btn" @onclick="ClearFilters" disabled="@(filterNames.Count == 0)">Clear</button>
+        <button type="button" class="btn btn-outline-secondary ms-2" data-testid="clear-filters-btn" @onclick="ClearFilters" disabled="@(filters.Count == 0)">Clear</button>
     </div>
 
     @if (!searchPerformed)
@@ -140,8 +142,7 @@ else
     private List<ItsmSource> itsmSources = new();
     private List<ItsmFieldMapping> mappings = new();
     private List<string> availableFilterFields = new();
-    private List<string> filterNames = new();
-    private List<string> filterValues = new();
+    private List<FilterRow> filters = new();
 
     private string itsmSource = string.Empty;
     private string asOfLocal = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm");
@@ -149,6 +150,13 @@ else
     private DateTime asOfDateTime = DateTime.UtcNow;
     private string? searchError;
     private bool searchPerformed = false;
+
+    private sealed class FilterRow
+    {
+        public Guid Id { get; } = Guid.NewGuid();
+        public string FieldName { get; set; } = string.Empty;
+        public string Value { get; set; } = string.Empty;
+    }
 
     private bool CanSearch => !string.IsNullOrWhiteSpace(itsmSource);
 
@@ -173,8 +181,7 @@ else
     private async Task OnItsmSourceChanged()
     {
         // Reset filters and tickets
-        filterNames.Clear();
-        filterValues.Clear();
+        filters.Clear();
         tickets.Clear();
         mappings.Clear();
         availableFilterFields.Clear();
@@ -222,7 +229,7 @@ else
         }
 
         // Auto-add a filter row so users immediately see the available field options.
-        if (filterNames.Count == 0 && availableFilterFields.Count > 0)
+        if (filters.Count == 0 && availableFilterFields.Count > 0)
         {
             AddFilter();
         }
@@ -232,26 +239,25 @@ else
 
     private void AddFilter()
     {
-        filterNames.Add(string.Empty);
-        filterValues.Add(string.Empty);
+        filters.Add(new FilterRow());
     }
 
     private void ClearFilters()
     {
-        filterNames.Clear();
-        filterValues.Clear();
+        filters.Clear();
 
         if (availableFilterFields.Count > 0)
             AddFilter();
     }
 
-    private void RemoveFilter(int index)
+    private void RemoveFilter(FilterRow row)
     {
-        if (index < 0 || index >= filterNames.Count) return;
-        filterNames.RemoveAt(index);
-        filterValues.RemoveAt(index);
+        if (row is null)
+            return;
 
-        if (filterNames.Count == 0 && availableFilterFields.Count > 0)
+        filters.Remove(row);
+
+        if (filters.Count == 0 && availableFilterFields.Count > 0)
             AddFilter();
     }
 
@@ -277,10 +283,10 @@ else
         asOfDateTime = asOf;
 
         var activeFilters = new List<TicketFieldFilter>();
-        for (int i = 0; i < filterNames.Count; i++)
+        foreach (var f in filters)
         {
-            var name = filterNames[i]?.Trim();
-            var value = filterValues[i]?.Trim();
+            var name = f.FieldName?.Trim();
+            var value = f.Value?.Trim();
             if (!string.IsNullOrEmpty(name) && !string.IsNullOrEmpty(value))
             {
                 activeFilters.Add(new TicketFieldFilter(name, value));
