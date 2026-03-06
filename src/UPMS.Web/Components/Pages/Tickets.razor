@@ -120,7 +120,7 @@ else
                         var status = TryGetFieldValue(ticket.Fields, "status");
                         <tr>
                             <td>
-                                <a href="/tickets/@Uri.EscapeDataString(ticket.CompanyName)/@Uri.EscapeDataString(ticket.ItsmSource)/@Uri.EscapeDataString(ticket.TicketKey)">@(ticketNumber ?? ticket.TicketKey)</a>
+                                <a href="/tickets/@Uri.EscapeDataString(ticket.CompanyName)/@Uri.EscapeDataString(ticket.ItsmSource)/@Uri.EscapeDataString(ticket.TicketKey)?asOf=@Uri.EscapeDataString(asOfLocal)">@(ticketNumber ?? ticket.TicketKey)</a>
                                 @if (!string.IsNullOrWhiteSpace(ticketNumber) && !string.Equals(ticketNumber, ticket.TicketKey, StringComparison.Ordinal))
                                 {
                                     <div class="text-muted small">@ticket.TicketKey</div>
