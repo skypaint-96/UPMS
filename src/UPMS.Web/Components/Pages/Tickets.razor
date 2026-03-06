@@ -28,9 +28,8 @@
                class="form-control"
                type="datetime-local"
                data-testid="as-of-datetime"
-               @bind="asOfDateTime"
-               @bind:event="oninput"
-               @bind:after="OnAsOfLocalChanged" />
+               value="@(_selectedAsOf.HasValue ? _selectedAsOf.Value.ToString("yyyy-MM-ddTHH:mm", CultureInfo.InvariantCulture) : string.Empty)"
+               @onchange="OnAsOfInputChanged" />
     </div>
 
     <button class="btn btn-primary" data-testid="search-btn" @onclick="SearchAsync" disabled="@(!CanSearch || isLoading)">Search</button>
@@ -157,6 +156,9 @@ else
     private string? searchError;
     private bool searchPerformed = false;
 
+    // Backing nullable selection used for UI binding. Keep local-kind DateTime for input.
+    private DateTime? _selectedAsOf = null;
+
     private sealed class FilterRow
     {
         public Guid Id { get; } = Guid.NewGuid();
@@ -275,11 +277,15 @@ else
         searchError = null;
         searchPerformed = true;
 
-        // NOTE: Browsers differ in what they emit for <input type="datetime-local">.
-        // Some include seconds, fractional seconds, etc. Be lenient and never silently
-        // fall back to "now" (which makes it look like the As Of filter does nothing).
+        // Prefer the selected nullable backing value when present.
         DateTime asOf;
-        if (TryParseAsOfUtc(asOfLocal, out var parsedUtc, out var normalizedLocal))
+        if (_selectedAsOf.HasValue)
+        {
+            asOfDateTime = DateTime.SpecifyKind(_selectedAsOf.Value.ToUniversalTime(), DateTimeKind.Utc);
+            asOf = asOfDateTime;
+            asOfLocal = asOfDateTime.ToString("yyyy-MM-ddTHH:mm", CultureInfo.InvariantCulture);
+        }
+        else if (TryParseAsOfUtc(asOfLocal, out var parsedUtc, out var normalizedLocal))
         {
             asOf = parsedUtc;
             asOfDateTime = parsedUtc;
@@ -338,23 +344,47 @@ else
         return null;
     }
 
-    private void OnAsOfLocalChanged()
+    private void OnSelectedAsOfChanged()
     {
-        var value = asOfLocal;
-
-        // If the input is invalid, keep the last valid value instead of switching to "now".
-        if (TryParseAsOfUtc(value, out var parsedUtc, out var normalizedLocal))
+        // Update internal UTC representations when the user changes the UI value.
+        if (_selectedAsOf.HasValue)
         {
-            asOfDateTime = parsedUtc;
-            asOfLocal = normalizedLocal;
+            asOfDateTime = DateTime.SpecifyKind(_selectedAsOf.Value.ToUniversalTime(), DateTimeKind.Utc);
+            asOfLocal = asOfDateTime.ToString("yyyy-MM-ddTHH:mm", CultureInfo.InvariantCulture);
             return;
         }
 
-        if (string.IsNullOrWhiteSpace(asOfLocal))
+        // Do not default to "now" when the user clears or interacts with the control; leave the backing value null.
+    }
+
+    private void OnAsOfInputChanged(ChangeEventArgs e)
+    {
+        var str = e?.Value as string;
+        if (!string.IsNullOrWhiteSpace(str))
         {
-            asOfDateTime = DateTime.UtcNow;
-            asOfLocal = asOfDateTime.ToString("yyyy-MM-ddTHH:mm", CultureInfo.InvariantCulture);
+            // Parse input as local datetime in the expected format(s).
+            if (DateTime.TryParseExact(str, AsOfInputFormats, CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsedLocal))
+            {
+                // Treat parsed value as local time for binding.
+                _selectedAsOf = DateTime.SpecifyKind(parsedLocal, DateTimeKind.Local);
+                // Update internal UTC representations.
+                asOfDateTime = DateTime.SpecifyKind(_selectedAsOf.Value.ToUniversalTime(), DateTimeKind.Utc);
+                asOfLocal = asOfDateTime.ToString("yyyy-MM-ddTHH:mm", CultureInfo.InvariantCulture);
+                return;
+            }
+
+            // Lenient fallback.
+            if (DateTime.TryParse(str, CultureInfo.InvariantCulture, DateTimeStyles.None, out var lenient))
+            {
+                _selectedAsOf = DateTime.SpecifyKind(lenient, DateTimeKind.Local);
+                asOfDateTime = DateTime.SpecifyKind(_selectedAsOf.Value.ToUniversalTime(), DateTimeKind.Utc);
+                asOfLocal = asOfDateTime.ToString("yyyy-MM-ddTHH:mm", CultureInfo.InvariantCulture);
+                return;
+            }
         }
+
+        // If cleared or invalid, leave backing null and don't set to now.
+        _selectedAsOf = null;
     }
 
     private static readonly string[] AsOfInputFormats =
