@@ -1,5 +1,6 @@
 @page "/tickets/{Company}/{ItsmSource}/{TicketKey}"
 @page "/tickets/{Company}/{TicketKey}"
+@rendermode InteractiveServer
 
 @using System.Globalization
 
@@ -10,19 +11,28 @@
 <p data-testid="ticket-company">Company: @Company</p>
 <p data-testid="ticket-itsm-source">ITSM Source: @resolvedItsmSource</p>
 
-<div class="d-flex flex-wrap gap-2 align-items-end mb-3" data-testid="ticket-asof-panel">
+<div class="d-flex flex-wrap gap-2 align-items-end" style="margin: 1rem 0">
     <div>
-        <label class="form-label" for="ticket-as-of">As of (UTC)</label>
-        <input id="ticket-as-of" class="form-control" type="datetime-local" value="@asOfLocal" @onchange="OnAsOfLocalChanged" />
+        <label class="form-label" for="as-of">As of</label>
+        <input id="as-of"
+               class="form-control"
+               type="datetime-local"
+               data-testid="ticket-as-of-datetime"
+               @bind="asOfLocal"
+               @bind:event="oninput"
+               @bind:after="OnAsOfLocalChanged" />
     </div>
-    <button class="btn btn-primary" @onclick="ApplyAsOf">Apply</button>
-    <button class="btn btn-outline-secondary" @onclick="SetAsOfNow">Now</button>
+    <button class="btn btn-primary" data-testid="ticket-load-btn" @onclick="NavigateToAsOf" disabled="@isLoading">Load</button>
+    @if (isLoading)
+    {
+        <span class="ms-2" data-testid="ticket-loading-indicator">Loading...</span>
+    }
 </div>
 
-@if (!string.IsNullOrWhiteSpace(snapshotContextText))
+@if (!string.IsNullOrWhiteSpace(asOfContextText))
 {
-    <div class="alert alert-info" role="alert" data-testid="ticket-snapshot-context">
-        @snapshotContextText
+    <div class="alert alert-info" role="alert" data-testid="ticket-as-of-context">
+        @asOfContextText
     </div>
 }
 
@@ -66,7 +76,7 @@
 @if (snapshotFieldDeltas.Count > 0)
 {
     <section data-testid="ticket-snapshot-deltas">
-        <h2>Changes in this Snapshot</h2>
+        <h2>Changes since previous snapshot</h2>
         <p class="text-muted" style="max-width: 80ch">
             These are the fields whose values differ compared to the previous snapshot for this ticket.
         </p>
@@ -140,47 +150,62 @@
     private TicketDataServiceInstance DataService { get; set; } = default!;
 
     [Inject]
-    private NavigationManager NavigationManager { get; set; } = default!;
+    private NavigationManager Navigation { get; set; } = default!;
 
     private string resolvedItsmSource = string.Empty;
+    private string decodedCompany = string.Empty;
+    private string decodedTicketKey = string.Empty;
+
     private Dictionary<string, string?> fields = [];
     private List<FieldChange> fieldChanges = [];
     private string? loadError;
-    private string? snapshotContextText;
-    private DateTime? asOf;
-    private string asOfLocal = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm");
+    private string? asOfContextText;
+    private bool isLoading;
+
+    private DateTime asOfDateTime = DateTime.UtcNow;
+    private string asOfLocal = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm", CultureInfo.InvariantCulture);
 
     private record FieldDelta(string FieldName, string? PreviousValue, string? CurrentValue);
     private List<FieldDelta> snapshotFieldDeltas = [];
 
     protected override async Task OnParametersSetAsync()
     {
+        await LoadTicketAsync();
+    }
+
+    private async Task LoadTicketAsync()
+    {
+        isLoading = true;
         loadError = null;
-        snapshotContextText = null;
+        asOfContextText = null;
+        fields = [];
+        fieldChanges = [];
         snapshotFieldDeltas.Clear();
 
         try
         {
-            string decodedCompany = Uri.UnescapeDataString(Company);
-            string decodedTicketKey = Uri.UnescapeDataString(TicketKey);
+            decodedCompany = Uri.UnescapeDataString(Company);
+            decodedTicketKey = Uri.UnescapeDataString(TicketKey);
             string? decodedItsmSource = ItsmSource is not null ? Uri.UnescapeDataString(ItsmSource) : null;
 
-            // As-of context (optional): ?asOf=yyyy-MM-ddTHH:mm
-            if (!TryParseDateTimeLocal(AsOfQuery, out var parsedAsOf))
+            // Resolve "as of" (UTC) from query param (if supplied).
+            if (TryParseAsOfUtc(AsOfQuery, out var parsedUtc, out var normalizedLocal))
             {
-                parsedAsOf = DateTime.UtcNow;
+                asOfDateTime = parsedUtc;
+                asOfLocal = normalizedLocal;
+            }
+            else
+            {
+                // No (valid) query provided: keep the last valid value, and ensure
+                // the input stays in a canonical format.
+                if (asOfDateTime == default)
+                    asOfDateTime = DateTime.UtcNow;
+
+                asOfDateTime = DateTime.SpecifyKind(asOfDateTime, DateTimeKind.Utc);
+                asOfLocal = asOfDateTime.ToString("yyyy-MM-ddTHH:mm", CultureInfo.InvariantCulture);
             }
 
-            asOf = parsedAsOf;
-            asOfLocal = asOf.Value.ToString("yyyy-MM-ddTHH:mm");
-            if (!string.IsNullOrWhiteSpace(AsOfQuery))
-            {
-                snapshotContextText = $"Viewing ticket as of {asOf:yyyy-MM-dd HH:mm} (UTC).";
-            }
-
-            Ticket? ticket = null;
-
-            // If no ITSM source provided in route (or snapshot didn't resolve), try to infer.
+            // If no ITSM source provided in route, try to infer.
             if (string.IsNullOrWhiteSpace(decodedItsmSource))
             {
                 // 1) Try parsing it from the generated ticket key.
@@ -196,27 +221,30 @@
                 }
             }
 
-            resolvedItsmSource = decodedItsmSource;
+            resolvedItsmSource = decodedItsmSource ?? string.Empty;
 
-            // Load the ticket as-of the selected time.
-            if (ticket is null && !string.IsNullOrWhiteSpace(decodedItsmSource))
+            if (string.IsNullOrWhiteSpace(resolvedItsmSource))
             {
-                var tickets = await DataService.GetTicketsAsync(decodedItsmSource, decodedCompany, asOf.Value);
-                ticket = tickets.FirstOrDefault(t => t.TicketKey == decodedTicketKey);
+                loadError = "Unable to determine ITSM source for this ticket.";
+                return;
             }
+
+            // Load ticket fields as-of the requested timestamp.
+            var tickets = await DataService.GetTicketsAsync(resolvedItsmSource, decodedCompany, asOfDateTime);
+            var ticket = tickets.FirstOrDefault(t => t.TicketKey == decodedTicketKey);
 
             if (ticket is null)
             {
-                loadError = "Ticket not found for the selected context.";
+                loadError = "Ticket not found for the selected 'as of' date.";
                 return;
             }
 
             fields = new Dictionary<string, string?>(ticket.Fields, StringComparer.Ordinal);
 
-            // Compute deltas versus the immediately previous snapshot state (if any).
-            if (asOf.HasValue)
+            // Compute deltas versus the previous snapshot for this ticket (based on the effective snapshot date).
+            if (ticket.SnapshotDate != default && ticket.SnapshotDate != DateTime.MinValue)
             {
-                var prevTickets = await DataService.GetTicketsAsync(resolvedItsmSource, decodedCompany, asOf.Value.AddTicks(-1));
+                var prevTickets = await DataService.GetTicketsAsync(resolvedItsmSource, decodedCompany, ticket.SnapshotDate.AddTicks(-1));
                 var prev = prevTickets.FirstOrDefault(t => t.TicketKey == decodedTicketKey);
 
                 if (prev is not null)
@@ -225,6 +253,8 @@
                 }
             }
 
+            asOfContextText = BuildAsOfContextText(asOfDateTime, ticket.SnapshotDate);
+
             // Load full field history for this ticket.
             fieldChanges = (await DataService.GetTicketHistoryAsync(decodedCompany, decodedTicketKey)).ToList();
         }
@@ -232,34 +262,78 @@
         {
             loadError = ex.Message;
         }
+        finally
+        {
+            isLoading = false;
+        }
     }
 
-    private void OnAsOfLocalChanged(ChangeEventArgs e)
+    private static string BuildAsOfContextText(DateTime asOfUtc, DateTime effectiveSnapshotDate)
     {
-        var value = e?.Value?.ToString();
-        if (!string.IsNullOrWhiteSpace(value) && TryParseDateTimeLocal(value, out var dt))
+        var asOfText = asOfUtc.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
+
+        if (effectiveSnapshotDate == default || effectiveSnapshotDate == DateTime.MinValue)
+            return $"Viewing ticket as of {asOfText} (no snapshot context available).";
+
+        var snapText = effectiveSnapshotDate.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
+
+        if (effectiveSnapshotDate == asOfUtc)
+            return $"Viewing ticket as of snapshot {snapText}.";
+
+        return $"Viewing ticket as of {asOfText} (effective snapshot {snapText}).";
+    }
+
+    private void OnAsOfLocalChanged()
+    {
+        var value = asOfLocal;
+
+        // If the input is invalid, keep the last valid value instead of switching to "now".
+        if (TryParseAsOfUtc(value, out var parsedUtc, out var normalizedLocal))
         {
-            asOfLocal = dt.ToString("yyyy-MM-ddTHH:mm");
+            asOfDateTime = parsedUtc;
+            asOfLocal = normalizedLocal;
             return;
         }
 
-        // Revert to last known-good.
-        asOfLocal = (asOf ?? DateTime.UtcNow).ToString("yyyy-MM-ddTHH:mm");
+        if (string.IsNullOrWhiteSpace(asOfLocal))
+        {
+            asOfDateTime = DateTime.UtcNow;
+            asOfLocal = asOfDateTime.ToString("yyyy-MM-ddTHH:mm", CultureInfo.InvariantCulture);
+        }
     }
 
-    private void ApplyAsOf()
+    private void NavigateToAsOf()
     {
-        var baseUri = NavigationManager.Uri.Split('?', '#')[0];
-        NavigationManager.NavigateTo($"{baseUri}?asOf={Uri.EscapeDataString(asOfLocal)}");
+        // Parse and normalize before navigating.
+        if (TryParseAsOfUtc(asOfLocal, out var parsedUtc, out var normalizedLocal))
+        {
+            asOfDateTime = parsedUtc;
+            asOfLocal = normalizedLocal;
+        }
+        else
+        {
+            asOfLocal = asOfDateTime.ToString("yyyy-MM-ddTHH:mm", CultureInfo.InvariantCulture);
+        }
+
+        var company = Uri.EscapeDataString(decodedCompany.Length > 0 ? decodedCompany : Uri.UnescapeDataString(Company));
+        var ticketKey = Uri.EscapeDataString(decodedTicketKey.Length > 0 ? decodedTicketKey : Uri.UnescapeDataString(TicketKey));
+        var itsmResolved = resolvedItsmSource;
+
+        var query = $"asOf={Uri.EscapeDataString(asOfLocal)}";
+
+        // Prefer the full route when we have an ITSM source, but fall back to the shorter route
+        // if we can't resolve it yet.
+        if (!string.IsNullOrWhiteSpace(itsmResolved))
+        {
+            var itsm = Uri.EscapeDataString(itsmResolved);
+            Navigation.NavigateTo($"/tickets/{company}/{itsm}/{ticketKey}?{query}");
+            return;
+        }
+
+        Navigation.NavigateTo($"/tickets/{company}/{ticketKey}?{query}");
     }
 
-    private void SetAsOfNow()
-    {
-        asOfLocal = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm");
-        ApplyAsOf();
-    }
-
-    private static readonly string[] DateTimeLocalFormats =
+    private static readonly string[] AsOfInputFormats =
     [
         "yyyy-MM-ddTHH:mm",
         "yyyy-MM-ddTHH:mm:ss",
@@ -267,22 +341,34 @@
         "yyyy-MM-ddTHH:mm:ss.FFFFFFF"
     ];
 
-    private static bool TryParseDateTimeLocal(string? input, out DateTime utc)
+    private static bool TryParseAsOfUtc(string? input, out DateTime asOfUtc, out string normalizedLocal)
     {
-        utc = default;
+        asOfUtc = default;
+        normalizedLocal = string.Empty;
+
         if (string.IsNullOrWhiteSpace(input))
             return false;
 
-        if (DateTime.TryParseExact(input, DateTimeLocalFormats, CultureInfo.InvariantCulture,
-            DateTimeStyles.AllowWhiteSpaces, out var parsed))
+        if (DateTime.TryParseExact(
+            input,
+            AsOfInputFormats,
+            CultureInfo.InvariantCulture,
+            DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+            out var dt))
         {
-            utc = DateTime.SpecifyKind(parsed, DateTimeKind.Utc);
+            asOfUtc = DateTime.SpecifyKind(dt, DateTimeKind.Utc);
+            normalizedLocal = asOfUtc.ToString("yyyy-MM-ddTHH:mm", CultureInfo.InvariantCulture);
             return true;
         }
 
-        if (DateTime.TryParse(input, CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces, out parsed))
+        if (DateTime.TryParse(
+            input,
+            CultureInfo.InvariantCulture,
+            DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+            out dt))
         {
-            utc = DateTime.SpecifyKind(parsed, DateTimeKind.Utc);
+            asOfUtc = DateTime.SpecifyKind(dt, DateTimeKind.Utc);
+            normalizedLocal = asOfUtc.ToString("yyyy-MM-ddTHH:mm", CultureInfo.InvariantCulture);
             return true;
         }
 
