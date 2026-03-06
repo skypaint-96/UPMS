@@ -7,5 +7,11 @@ public enum ReportParameterType
     DateRange,
     Select,
     MultiSelect,
-    Boolean
+    Boolean,
+
+    /// <summary>
+    /// Select an ITSM source from the <c>itsm_source</c> table.
+    /// Rendered by <see cref="UPMS.Web.Components.Shared.ReportParameterForm"/>.
+    /// </summary>
+    ItsmSource
 }

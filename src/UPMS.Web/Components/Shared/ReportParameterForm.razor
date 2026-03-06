@@ -1,3 +1,5 @@
+@inject IItsmSourceService ItsmSourceService
+
 @foreach (var param in Parameters)
 {
     var fromKey = param.Key + "_from";
@@ -22,6 +24,25 @@
                    value="@GetValue(param.Key)"
                    @onchange="e => SetValue(param.Key, e.Value?.ToString() ?? string.Empty)" />
         }
+        else if (param.Type == ReportParameterType.ItsmSource)
+        {
+            <select id="@param.Key"
+                    @onchange="e => SetValue(param.Key, e.Value?.ToString() ?? string.Empty)">
+                <option value="">-- Select --</option>
+
+                @if (itsmSources.Count == 0)
+                {
+                    <option value="" disabled>(No ITSM sources defined)</option>
+                }
+                else
+                {
+                    @foreach (var src in itsmSources)
+                    {
+                        <option value="@src.Name" selected="@(GetValue(param.Key) == src.Name)">@src.DisplayLabel (@src.Name)</option>
+                    }
+                }
+            </select>
+        }
         else if (param.Type == ReportParameterType.Select)
         {
             <select id="@param.Key"
@@ -35,14 +56,30 @@
         }
         else if (param.Type == ReportParameterType.MultiSelect)
         {
-            <select id="@param.Key"
-                    multiple
-                    @onchange="e => SetValue(param.Key, e.Value?.ToString() ?? string.Empty)">
-                @foreach (var option in param.Options ?? Array.Empty<string>())
+            var selectedOptions = GetMultiSelectValues(param.Key);
+            <div class="multi-select">
+                @if ((param.Options?.Count ?? 0) == 0)
                 {
-                    <option value="@option">@option</option>
+                    <div class="text-muted small">No options available.</div>
                 }
-            </select>
+                else
+                {
+                    @for (var i = 0; i < (param.Options?.Count ?? 0); i++)
+                    {
+                        var option = param.Options![i];
+                        var id = $"{param.Key}_{i}";
+                        var isChecked = selectedOptions.Contains(option);
+
+                        <label class="multi-select-option" for="@id">
+                            <input id="@id"
+                                   type="checkbox"
+                                   checked="@isChecked"
+                                   @onchange="e => OnMultiSelectChanged(param.Key, option, e.Value)" />
+                            @option
+                        </label>
+                    }
+                }
+            </div>
         }
         else if (param.Type == ReportParameterType.Boolean)
         {
@@ -75,6 +112,24 @@
     [Parameter] public Dictionary<string, string> Values { get; set; } = new();
     [Parameter] public EventCallback OnValuesChanged { get; set; }
 
+    private IReadOnlyList<ItsmSource> itsmSources = Array.Empty<ItsmSource>();
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            itsmSources = (await ItsmSourceService.GetAllSourcesAsync())
+                .OrderBy(s => s.DisplayLabel)
+                .ThenBy(s => s.Name)
+                .ToList();
+        }
+        catch
+        {
+            // Avoid breaking the entire report form if sources cannot be loaded.
+            itsmSources = Array.Empty<ItsmSource>();
+        }
+    }
+
     private string GetValue(string key) =>
         Values.TryGetValue(key, out var v) ? v : string.Empty;
 
@@ -88,5 +143,43 @@
     {
         var boolValue = value is bool b && b;
         await SetValue(key, boolValue ? "true" : "false");
+    }
+
+    private HashSet<string> GetMultiSelectValues(string key)
+    {
+        var raw = GetValue(key);
+        if (string.IsNullOrWhiteSpace(raw))
+            return new HashSet<string>(StringComparer.Ordinal);
+
+        // Accept either comma or semicolon separated values.
+        var parts = raw
+            .Split([',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        return new HashSet<string>(parts, StringComparer.Ordinal);
+    }
+
+    private async Task OnMultiSelectChanged(string key, string option, object? value)
+    {
+        var isChecked = value is bool b && b;
+        var selected = GetMultiSelectValues(key);
+
+        if (isChecked)
+            selected.Add(option);
+        else
+            selected.Remove(option);
+
+        // Preserve the order defined by the plugin's options when possible.
+        string serialized;
+        var param = Parameters.FirstOrDefault(p => p.Key == key);
+        if (param?.Options is { Count: > 0 } options)
+        {
+            serialized = string.Join(",", options.Where(selected.Contains));
+        }
+        else
+        {
+            serialized = string.Join(",", selected.OrderBy(x => x));
+        }
+
+        await SetValue(key, serialized);
     }
 }

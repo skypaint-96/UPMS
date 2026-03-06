@@ -70,7 +70,7 @@ public class SnapshotPageTests : PageTestBase
         // Act
         await Page.GotoAsync(Url("/snapshots"));
 
-        // Assert — when no snapshots are loaded, an empty-state message should appear.
+        // Assert â€” when no snapshots are loaded, an empty-state message should appear.
         var emptyState = Page.Locator("[data-testid='snapshot-table-empty']");
         await Assertions.Expect(emptyState).ToBeVisibleAsync();
     }

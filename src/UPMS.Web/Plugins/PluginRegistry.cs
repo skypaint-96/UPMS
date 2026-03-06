@@ -9,7 +9,19 @@ public class PluginRegistry
 
     public PluginRegistry(IEnumerable<IReportPlugin> plugins)
     {
-        _plugins = plugins.ToList().AsReadOnly();
+        var list = plugins.ToList();
+
+        var duplicates = list
+            .GroupBy(p => p.PluginId, StringComparer.OrdinalIgnoreCase)
+            .Where(g => g.Count() > 1)
+            .Select(g => g.Key)
+            .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (duplicates.Count > 0)
+            throw new InvalidOperationException($"Duplicate report plugin IDs detected: {string.Join(", ", duplicates)}");
+
+        _plugins = list.AsReadOnly();
     }
 
     public IReadOnlyList<IReportPlugin> GetAll() => _plugins;

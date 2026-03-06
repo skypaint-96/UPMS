@@ -15,6 +15,7 @@ namespace UPMS.Web
     using UPMS.Web.Plugins;
     using UPMS.Web.Plugins.PowerPoint;
     using UPMS.Web.Plugins.Email;
+    using UPMS.Web.Plugins.Examples;
     using UPMS.Web.Services;
     using UPMS.Data;
 
@@ -124,6 +125,9 @@ namespace UPMS.Web
             builder.Services.AddScoped<IReportPlugin, StubReportPlugin>();
             builder.Services.AddScoped<IReportPlugin, PowerPointReportPlugin>();
             builder.Services.AddScoped<IReportPlugin, EmailNotificationPlugin>();
+            builder.Services.AddScoped<IReportPlugin, StatusBreakdownReportPlugin>();
+            builder.Services.AddScoped<IReportPlugin, TicketCsvExportReportPlugin>();
+            builder.Services.AddScoped<IReportPlugin, FieldDeltaReportPlugin>();
 
             // Register plugin registry (Scoped: receives IEnumerable<IReportPlugin> which are Scoped)
             builder.Services.AddScoped<PluginRegistry>();
