@@ -118,9 +118,10 @@ else
                     {
                         var ticketNumber = TryGetFieldValue(ticket.Fields, "ticket_number");
                         var status = TryGetFieldValue(ticket.Fields, "status");
+                        var asOfParam = Uri.EscapeDataString(asOfDateTime.ToString("yyyy-MM-ddTHH:mm"));
                         <tr>
                             <td>
-                                <a href="/tickets/@Uri.EscapeDataString(ticket.CompanyName)/@Uri.EscapeDataString(ticket.ItsmSource)/@Uri.EscapeDataString(ticket.TicketKey)?asOf=@Uri.EscapeDataString(asOfLocal)">@(ticketNumber ?? ticket.TicketKey)</a>
+                                <a href="/tickets/@Uri.EscapeDataString(ticket.CompanyName)/@Uri.EscapeDataString(ticket.ItsmSource)/@Uri.EscapeDataString(ticket.TicketKey)?asOf=@asOfParam">@(ticketNumber ?? ticket.TicketKey)</a>
                                 @if (!string.IsNullOrWhiteSpace(ticketNumber) && !string.Equals(ticketNumber, ticket.TicketKey, StringComparison.Ordinal))
                                 {
                                     <div class="text-muted small">@ticket.TicketKey</div>
@@ -269,15 +270,14 @@ else
         searchError = null;
         searchPerformed = true;
 
-        // NOTE:
-        // <input type="datetime-local"> values can legally include seconds (and even fractional seconds)
-        // depending on browser/OS settings. If we parse too strictly here, we'll fall back to UtcNow and
-        // the "As of" filter will appear to do nothing (always showing the latest values).
-        //
-        // We therefore parse leniently and then normalise back to the canonical "yyyy-MM-ddTHH:mm" format.
-        DateTime asOf = ParseAsOfUtc(asOfLocal, fallbackUtc: asOfDateTime);
-        asOfDateTime = asOf;
-        asOfLocal = asOfDateTime.ToString("yyyy-MM-ddTHH:mm");
+        if (!TryParseDateTimeLocal(asOfLocal, out var parsedAsOf))
+        {
+            // Keep the last valid value (do not silently jump to "now").
+            parsedAsOf = asOfDateTime;
+            asOfLocal = asOfDateTime.ToString("yyyy-MM-ddTHH:mm");
+        }
+
+        asOfDateTime = parsedAsOf;
 
         var activeFilters = new List<TicketFieldFilter>();
         foreach (var f in filters)
@@ -329,56 +329,48 @@ else
         var value = e?.Value?.ToString();
         if (!string.IsNullOrWhiteSpace(value))
         {
-            // Keep the UI tolerant of seconds/fractional seconds, but normalise what we store.
-            var parsed = ParseAsOfUtc(value, fallbackUtc: asOfDateTime);
-            asOfDateTime = parsed;
-            asOfLocal = asOfDateTime.ToString("yyyy-MM-ddTHH:mm");
-            return;
+            if (TryParseDateTimeLocal(value, out var dt))
+            {
+                asOfDateTime = dt;
+                asOfLocal = dt.ToString("yyyy-MM-ddTHH:mm");
+                return;
+            }
         }
-        asOfDateTime = DateTime.UtcNow;
-        asOfLocal = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm");
+
+        // Invalid input: revert the control back to the last known-good value.
+        asOfLocal = asOfDateTime.ToString("yyyy-MM-ddTHH:mm");
     }
 
-    private static readonly string[] AsOfInputFormats =
-    {
-        // Standard datetime-local value format (minutes)
+    private static readonly string[] DateTimeLocalFormats =
+    [
         "yyyy-MM-ddTHH:mm",
-        // Some browsers include seconds
         "yyyy-MM-ddTHH:mm:ss",
-        // Some browsers include fractional seconds (milliseconds)
         "yyyy-MM-ddTHH:mm:ss.fff",
-        // Be permissive in case fractional seconds are longer
-        "yyyy-MM-ddTHH:mm:ss.FFFFFFF",
-    };
+        "yyyy-MM-ddTHH:mm:ss.FFFFFFF"
+    ];
 
-    private static DateTime ParseAsOfUtc(string? input, DateTime fallbackUtc)
+    private static bool TryParseDateTimeLocal(string? input, out DateTime utc)
     {
-        if (!string.IsNullOrWhiteSpace(input))
-        {
-            // Try exact formats first (fast + avoids locale surprises)
-            if (DateTime.TryParseExact(
-                    input,
-                    AsOfInputFormats,
-                    CultureInfo.InvariantCulture,
-                    DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
-                    out var dtExact))
-            {
-                return DateTime.SpecifyKind(dtExact, DateTimeKind.Utc);
-            }
+        utc = default;
+        if (string.IsNullOrWhiteSpace(input))
+            return false;
 
-            // Fall back to a broader parse (still invariant + assume UTC)
-            if (DateTime.TryParse(
-                    input,
-                    CultureInfo.InvariantCulture,
-                    DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
-                    out var dt))
-            {
-                return DateTime.SpecifyKind(dt, DateTimeKind.Utc);
-            }
+        // datetime-local values are *local* by spec, but this app treats them as UTC.
+        // Parse as "unspecified" and then force UTC kind.
+        if (DateTime.TryParseExact(input, DateTimeLocalFormats, CultureInfo.InvariantCulture,
+            DateTimeStyles.AllowWhiteSpaces, out var parsed))
+        {
+            utc = DateTime.SpecifyKind(parsed, DateTimeKind.Utc);
+            return true;
         }
 
-        // If the input can't be parsed, keep the last-known value rather than forcing "now".
-        // This avoids the UX trap where any invalid string silently becomes "most recent".
-        return fallbackUtc.Kind == DateTimeKind.Utc ? fallbackUtc : DateTime.SpecifyKind(fallbackUtc, DateTimeKind.Utc);
+        // Fallback (covers odd browser variants).
+        if (DateTime.TryParse(input, CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces, out parsed))
+        {
+            utc = DateTime.SpecifyKind(parsed, DateTimeKind.Utc);
+            return true;
+        }
+
+        return false;
     }
 }
