@@ -1,4 +1,7 @@
 @page "/snapshots/{SnapshotId}"
+@rendermode InteractiveServer
+
+@using System.Globalization
 
 <PageTitle>Snapshot @SnapshotId - UPMS</PageTitle>
 
@@ -9,48 +12,12 @@
 
 <a href="/snapshots">Back to Snapshots</a>
 
-<table class="table table-striped table-hover" data-testid="snapshot-ticket-table">
-    <thead>
-        <tr>
-            <th>Ticket Key</th>
-            <th>Company</th>
-            <th>ITSM Source</th>
-            <th>Status</th>
-        </tr>
-    </thead>
-    <tbody>
-        @if (tickets.Count == 0)
-        {
-            <tr data-testid="snapshot-ticket-table-empty">
-                <td colspan="4">No tickets found in this snapshot.</td>
-            </tr>
-        }
-        else
-        {
-            @foreach (Ticket ticket in tickets)
-            {
-                ticket.Fields.TryGetValue("ticket_number", out var ticketNumber);
-                string? status = null;
-                if (!ticket.Fields.TryGetValue("status", out status))
-                {
-                    ticket.Fields.TryGetValue("Status", out status);
-                }
-                <tr>
-                    <td>
-                        <a href="/tickets/@Uri.EscapeDataString(ticket.CompanyName)/@Uri.EscapeDataString(ticket.ItsmSource)/@Uri.EscapeDataString(ticket.TicketKey)?asOf=@Uri.EscapeDataString(ticket.SnapshotDate.ToString("yyyy-MM-ddTHH:mm"))">@(string.IsNullOrWhiteSpace(ticketNumber) ? ticket.TicketKey : ticketNumber)</a>
-                        @if (!string.IsNullOrWhiteSpace(ticketNumber))
-                        {
-                            <div class="text-muted small">@ticket.TicketKey</div>
-                        }
-                    </td>
-                    <td>@ticket.CompanyName</td>
-                    <td>@ticket.ItsmSource</td>
-                    <td>@(string.IsNullOrWhiteSpace(status) ? "—" : status)</td>
-                </tr>
-            }
-        }
-    </tbody>
-</table>
+<TicketTable Tickets="tickets"
+            AsOfUtc="snapshotDateUtc"
+            TableTestId="snapshot-ticket-table"
+            EmptyRowTestId="snapshot-ticket-table-empty"
+            EmptyMessage="No tickets found in this snapshot."
+            CanonicalFieldOptions="availableFieldNames" />
 
 @code {
     [Parameter]
@@ -59,9 +26,14 @@
     [Inject]
     private TicketDataServiceInstance DataService { get; set; } = default!;
 
+    [Inject]
+    private IItsmFieldMappingService FieldMappingService { get; set; } = default!;
+
     private List<Ticket> tickets = [];
     private string itsmSource = string.Empty;
     private string snapshotDate = string.Empty;
+    private DateTime snapshotDateUtc = DateTime.UtcNow;
+    private List<string> availableFieldNames = new();
 
     protected override async Task OnInitializedAsync()
     {
@@ -76,7 +48,42 @@
                 if (first is not null)
                 {
                     itsmSource = first.ItsmSource;
-                    snapshotDate = first.SnapshotDate.ToString("yyyy-MM-dd HH:mm:ss");
+                    snapshotDateUtc = DateTime.SpecifyKind(first.SnapshotDate, DateTimeKind.Utc);
+                    snapshotDate = snapshotDateUtc.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
+
+                    // Build canonical field options for the column dropdown.
+                    try
+                    {
+                        var mappings = FieldMappingService.GetMappingsForSource(itsmSource).ToList();
+
+                        var canonical = mappings
+                            .Select(m => m.CanonicalFieldName)
+                            .Where(n => !string.IsNullOrWhiteSpace(n))
+                            .Select(n => string.Equals(n, "ticket_key", StringComparison.Ordinal) ? "ticket_number" : n!)
+                            .Distinct(StringComparer.Ordinal)
+                            .OrderBy(n => n, StringComparer.Ordinal)
+                            .ToList();
+
+                        // Include a few system / common fields.
+                        var ordered = new List<string>();
+                        var set = new HashSet<string>(StringComparer.Ordinal);
+
+                        void Add(string name)
+                        {
+                            if (set.Add(name))
+                                ordered.Add(name);
+                        }
+
+                        Add("status");
+                        foreach (var c in canonical)
+                            Add(c);
+
+                        availableFieldNames = ordered;
+                    }
+                    catch
+                    {
+                        availableFieldNames = new();
+                    }
                 }
             }
         }
