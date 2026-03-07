@@ -19,6 +19,7 @@ public class UpmsDbContext : DbContext
     public DbSet<FieldChange> FieldChanges => Set<FieldChange>();
     public DbSet<ItsmSource> ItsmSources => Set<ItsmSource>();
     public DbSet<ItsmFieldMapping> ItsmFieldMappings => Set<ItsmFieldMapping>();
+    public DbSet<CanonicalFieldDefinition> CanonicalFieldDefinitions => Set<CanonicalFieldDefinition>();
 
     // ── Keyless result sets (stored-procedure reads) ───────────────────────
 
@@ -74,6 +75,7 @@ public class UpmsDbContext : DbContext
             e.Property(x => x.CompanyName).HasColumnName("company_name").HasColumnType("varchar(255)").IsRequired();
             e.Property(x => x.TicketKey).HasColumnName("ticket_key").HasColumnType("varchar(255)").IsRequired();
             e.Property(x => x.FieldName).HasColumnName("field_name").HasColumnType("varchar(255)").IsRequired();
+            e.Property(x => x.CanonicalFieldName).HasColumnName("canonical_field_name").HasColumnType("varchar(255)").IsRequired(false);
             e.Property(x => x.FieldValue).HasColumnName("field_value").HasColumnType("text").IsRequired(false);
             e.Property(x => x.ObservedAt).HasColumnName("observed_at").HasColumnType("timestamptz").IsRequired();
             e.Property(x => x.SnapshotId).HasColumnName("snapshot_id").HasColumnType("uuid").IsRequired();
@@ -107,6 +109,16 @@ public class UpmsDbContext : DbContext
             e.Property(x => x.SourceFieldName).HasColumnName("source_field_name").HasColumnType("varchar(255)").IsRequired();
             e.Property(x => x.CanonicalFieldName).HasColumnName("canonical_field_name").HasColumnType("varchar(255)").IsRequired();
             e.Property(x => x.IsRequired).HasColumnName("is_required").HasColumnType("boolean").HasDefaultValue(false);
+        });
+
+        // ── canonical_field_definition ─────────────────────────────────────
+        modelBuilder.Entity<CanonicalFieldDefinition>(e =>
+        {
+            e.ToTable("canonical_field_definition");
+            e.HasKey(x => x.Name);
+            e.Property(x => x.Name).HasColumnName("name").HasColumnType("varchar(255)").IsRequired();
+            e.Property(x => x.DataType).HasColumnName("data_type").HasColumnType("varchar(50)").HasConversion<string>().IsRequired();
+            e.Property(x => x.IsSystemRequired).HasColumnName("is_system_required").HasColumnType("boolean").HasDefaultValue(false);
         });
 
         // ── Keyless DTOs (stored-procedure result sets) ────────────────────

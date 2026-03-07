@@ -7,7 +7,7 @@
     <div>
         <p class="page-eyebrow">History</p>
         <h1 class="page-title">Snapshots</h1>
-        <p class="page-description">Browse uploaded source extracts and open any snapshot to inspect the tickets as they existed on that date.</p>
+        <p class="page-description">Browse uploaded source extracts, export any point-in-time package, and open a snapshot to inspect or delete it.</p>
     </div>
     <div class="page-actions">
         <a class="btn btn-primary" href="/upload">Upload snapshot</a>
@@ -52,7 +52,7 @@
     <div class="surface-card-header">
         <div>
             <h2 class="surface-card-title">Snapshot history</h2>
-            <p class="surface-card-subtitle">Each snapshot is a point-in-time import and can be opened to review the related ticket list.</p>
+            <p class="surface-card-subtitle">Each snapshot is a point-in-time import. Export it, open it, or use the detail page to remove it permanently.</p>
         </div>
     </div>
 
@@ -63,13 +63,14 @@
                     <th>ITSM Source</th>
                     <th>Snapshot Date</th>
                     <th>Uploaded By</th>
+                    <th>Actions</th>
                 </tr>
             </thead>
             <tbody>
                 @if (snapshots.Count == 0)
                 {
                     <tr data-testid="snapshot-table-empty">
-                        <td colspan="3">
+                        <td colspan="4">
                             <div class="empty-state">
                                 <p class="empty-state-title">No snapshots found</p>
                                 <p class="empty-state-text">Try another source filter or upload a new snapshot.</p>
@@ -85,6 +86,12 @@
                             <td><a class="ticket-link" href="/snapshots/@snapshot.Id">@snapshot.ItsmSource</a></td>
                             <td>@snapshot.SnapshotDate.ToString("yyyy-MM-dd HH:mm") UTC</td>
                             <td>@snapshot.UploadedBy</td>
+                            <td>
+                                <div class="button-row wrap gap-sm">
+                                    <a class="btn btn-secondary btn-sm" href="/snapshots/@snapshot.Id">Open</a>
+                                    <a class="btn btn-secondary btn-sm" href="/api/export/snapshots/@snapshot.Id">Export</a>
+                                </div>
+                            </td>
                         </tr>
                     }
                 }

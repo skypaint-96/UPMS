@@ -1,52 +1,14 @@
 namespace UPMS.Web;
 
+using UPMS.Data;
+
 public static class CanonicalFieldCatalog
 {
-    public static readonly IReadOnlyList<string> Names =
-    [
-        "Active",
-        "Assigned To",
-        "Assignment Group",
-        "Business Service",
-        "Category",
-        "Cause Notes",
-        "Closed At",
-        "Closed By",
-        "Close Notes",
-        "Cmdb Ci",
-        "Comments",
-        "Comments And Work Notes",
-        "Company",
-        "Confirmed At",
-        "Confirmed By",
-        "Correlation Display",
-        "Correlation Id",
-        "Description",
-        "First Reported By Task",
-        "Fix Notes",
-        "Knowledge",
-        "Major Problem",
-        "Number",
-        "Opened At",
-        "Opened By",
-        "Priority",
-        "Related Incidents",
-        "Resolution Code",
-        "Resolved At",
-        "Resolved By",
-        "Service Offering",
-        "Short Description",
-        "State",
-        "Subcategory",
-        "Created By",
-        "Created On",
-        "Updated By",
-        "Updated On",
-        "Investigation Driver",
-        "Root Cause Code",
-        "Root Cause Date",
-        "Workaround"
-    ];
+    public static readonly IReadOnlyList<string> Names = CanonicalFieldDefaults.All
+        .Select(d => d.Name)
+        .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
+        .ToList()
+        .AsReadOnly();
 
     private static readonly IReadOnlyDictionary<string, IReadOnlyList<string>> AliasMap =
         new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase)

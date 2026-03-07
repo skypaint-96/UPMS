@@ -29,6 +29,8 @@ public static class DataServiceExtensions
         services.AddScoped<IReadModelService, EfReadModelService>();
         services.AddScoped<IItsmSourceService, ItsmSourceService>();
         services.AddScoped<IItsmFieldMappingService, ItsmFieldMappingService>();
+        services.AddScoped<ICanonicalFieldService, CanonicalFieldService>();
+        services.AddScoped<UpmsSchemaBootstrapper>();
         services.AddScoped<TicketDataService>();
 
         return services;

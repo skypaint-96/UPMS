@@ -165,8 +165,6 @@ public async Task RecordFieldChangeAsync(
 
         DateTime asOfUtc = NormalizeToUtc(asOfDate);
 
-        // Step 1: Fetch snapshots for this source up to as-of (materialise so we can safely
-        // use an in-memory lookup without tripping EF translation).
         var snapshots = await _context.Snapshots
             .AsNoTracking()
             .Where(s => s.ItsmSource == itsmSource && s.SnapshotDate <= asOfUtc)
@@ -179,8 +177,6 @@ public async Task RecordFieldChangeAsync(
         var snapshotIdSet = snapshots.Select(s => s.Id).ToHashSet();
         var snapshotDateLookup = snapshots.ToDictionary(s => s.Id, s => s.SnapshotDate);
 
-        // Step 2: Fetch all candidate snapshot-ticket rows for the company, then select
-        // the latest snapshot per ticket in-memory (EF-safe and provider-agnostic).
         var snapshotTickets = await _context.SnapshotTickets
             .AsNoTracking()
             .Where(st => st.CompanyName == companyName && snapshotIdSet.Contains(st.SnapshotId))
@@ -206,26 +202,30 @@ public async Task RecordFieldChangeAsync(
 
         var ticketKeySet = latestTickets.Select(t => t.TicketKey).ToHashSet(StringComparer.Ordinal);
 
-        // Step 3: Bulk fetch all field-change rows, then reconstruct the latest field values
-        // per (ticket, field) in-memory.
         var fieldChanges = await _context.FieldChanges
             .AsNoTracking()
             .Where(fc => fc.CompanyName == companyName
                       && ticketKeySet.Contains(fc.TicketKey)
                       && fc.ObservedAt <= asOfUtc)
-            .Select(fc => new { fc.TicketKey, fc.FieldName, fc.FieldValue, fc.ObservedAt })
+            .Select(fc => new { fc.Id, fc.TicketKey, fc.FieldName, fc.CanonicalFieldName, fc.FieldValue, fc.ObservedAt })
             .ToListAsync();
 
         var latestFields = fieldChanges
-            .GroupBy(fc => (fc.TicketKey, fc.FieldName))
-            .Select(g => g.OrderByDescending(x => x.ObservedAt).First())
+            .GroupBy(fc => (fc.TicketKey, FieldName: GetDisplayFieldName(fc.CanonicalFieldName, fc.FieldName)))
+            .Select(g => g
+                .OrderByDescending(x => x.ObservedAt)
+                .ThenByDescending(x => x.Id)
+                .First())
             .ToList();
 
         var fieldsByTicket = latestFields
             .GroupBy(f => f.TicketKey, StringComparer.Ordinal)
             .ToDictionary(
                 g => g.Key,
-                g => (IDictionary<string, string?>)g.ToDictionary(f => f.FieldName, f => f.FieldValue, StringComparer.Ordinal),
+                g => (IDictionary<string, string?>)g.ToDictionary(
+                    f => GetDisplayFieldName(f.CanonicalFieldName, f.FieldName),
+                    f => f.FieldValue,
+                    StringComparer.Ordinal),
                 StringComparer.Ordinal);
 
         var maxObservedByTicket = latestFields
@@ -269,10 +269,9 @@ public async Task RecordFieldChangeAsync(
             throw new ArgumentException("ITSM source is required.", nameof(itsmSource));
         if (asOfDate == default)
             throw new ArgumentException("asOfDate is required.", nameof(asOfDate));
-    
+
         DateTime asOfUtc = NormalizeToUtc(asOfDate);
 
-        // Step 1: Load snapshots for this source up to as-of.
         var snapshots = await _context.Snapshots
             .AsNoTracking()
             .Where(s => s.ItsmSource == itsmSource && s.SnapshotDate <= asOfUtc)
@@ -285,8 +284,6 @@ public async Task RecordFieldChangeAsync(
         var snapshotIdSet = snapshots.Select(s => s.Id).ToHashSet();
         var snapshotDateLookup = snapshots.ToDictionary(s => s.Id, s => s.SnapshotDate);
 
-        // Step 2: Load candidate snapshot-ticket rows then pick latest per (company, ticket).
-        // We group by company+ticketKey to avoid cross-tenant collisions.
         var snapshotTickets = await _context.SnapshotTickets
             .AsNoTracking()
             .Where(st => snapshotIdSet.Contains(st.SnapshotId))
@@ -314,25 +311,30 @@ public async Task RecordFieldChangeAsync(
         var ticketKeySet = latestTickets.Select(t => t.TicketKey).ToHashSet(StringComparer.Ordinal);
         var companyNameSet = latestTickets.Select(t => t.CompanyName).ToHashSet(StringComparer.Ordinal);
 
-        // Step 3: Load field changes for these tickets up to as-of then reconstruct latest values.
         var fieldChanges = await _context.FieldChanges
             .AsNoTracking()
             .Where(fc => ticketKeySet.Contains(fc.TicketKey)
                       && companyNameSet.Contains(fc.CompanyName)
                       && fc.ObservedAt <= asOfUtc)
-            .Select(fc => new { fc.CompanyName, fc.TicketKey, fc.FieldName, fc.FieldValue, fc.ObservedAt })
+            .Select(fc => new { fc.Id, fc.CompanyName, fc.TicketKey, fc.FieldName, fc.CanonicalFieldName, fc.FieldValue, fc.ObservedAt })
             .ToListAsync();
 
         var latestFields = fieldChanges
-            .GroupBy(fc => (fc.CompanyName, fc.TicketKey, fc.FieldName))
-            .Select(g => g.OrderByDescending(x => x.ObservedAt).First())
+            .GroupBy(fc => (fc.CompanyName, fc.TicketKey, FieldName: GetDisplayFieldName(fc.CanonicalFieldName, fc.FieldName)))
+            .Select(g => g
+                .OrderByDescending(x => x.ObservedAt)
+                .ThenByDescending(x => x.Id)
+                .First())
             .ToList();
 
         var fieldsByCompanyTicket = latestFields
             .GroupBy(f => (f.CompanyName, f.TicketKey))
             .ToDictionary(
                 g => g.Key,
-                g => (IDictionary<string, string?>)g.ToDictionary(f => f.FieldName, f => f.FieldValue, StringComparer.Ordinal));
+                g => (IDictionary<string, string?>)g.ToDictionary(
+                    f => GetDisplayFieldName(f.CanonicalFieldName, f.FieldName),
+                    f => f.FieldValue,
+                    StringComparer.Ordinal));
 
         var maxObservedByCompanyTicket = latestFields
             .GroupBy(f => (f.CompanyName, f.TicketKey))
@@ -362,7 +364,6 @@ public async Task RecordFieldChangeAsync(
             })
             .ToList();
 
-        // Apply field filters if provided (case-insensitive substring match).
         if (fieldFilters is not null)
         {
             var filters = fieldFilters
@@ -379,7 +380,7 @@ public async Task RecordFieldChangeAsync(
 
         return results;
     }
-    
+
     public async Task<IEnumerable<Ticket>> GetTicketsBySnapshotAsync(Guid snapshotId)
     {
         var snapshot = await _context.Snapshots
@@ -402,26 +403,30 @@ public async Task RecordFieldChangeAsync(
         var ticketKeySet = ticketRows.Select(t => t.TicketKey).ToHashSet(StringComparer.Ordinal);
         var companySet = ticketRows.Select(t => t.CompanyName).ToHashSet(StringComparer.Ordinal);
 
-        // Reconstruct ticket fields as-of the snapshot timestamp.
         var fieldRows = await _context.FieldChanges
             .AsNoTracking()
             .Where(fc => fc.ObservedAt <= snapshot.SnapshotDate
                       && ticketKeySet.Contains(fc.TicketKey)
                       && companySet.Contains(fc.CompanyName))
-            .Select(fc => new { fc.CompanyName, fc.TicketKey, fc.FieldName, fc.FieldValue, fc.ObservedAt })
+            .Select(fc => new { fc.Id, fc.CompanyName, fc.TicketKey, fc.FieldName, fc.CanonicalFieldName, fc.FieldValue, fc.ObservedAt })
             .ToListAsync();
 
         var latestFields = fieldRows
-            .GroupBy(f => (f.CompanyName, f.TicketKey, f.FieldName))
-            .Select(g => g.OrderByDescending(x => x.ObservedAt).First())
+            .GroupBy(f => (f.CompanyName, f.TicketKey, FieldName: GetDisplayFieldName(f.CanonicalFieldName, f.FieldName)))
+            .Select(g => g
+                .OrderByDescending(x => x.ObservedAt)
+                .ThenByDescending(x => x.Id)
+                .First())
             .ToList();
 
-        // Group fields by (company, ticketKey)
         var fieldsByCompanyTicket = latestFields
             .GroupBy(f => (f.CompanyName, f.TicketKey))
             .ToDictionary(
                 g => g.Key,
-                g => (IDictionary<string, string?>)g.ToDictionary(f => f.FieldName, f => f.FieldValue, StringComparer.Ordinal));
+                g => (IDictionary<string, string?>)g.ToDictionary(
+                    f => GetDisplayFieldName(f.CanonicalFieldName, f.FieldName),
+                    f => f.FieldValue,
+                    StringComparer.Ordinal));
 
         var maxObservedByCompanyTicket = latestFields
             .GroupBy(f => (f.CompanyName, f.TicketKey))
@@ -454,6 +459,16 @@ public async Task RecordFieldChangeAsync(
             .ToList();
     }
 
+    public async Task<Snapshot?> GetSnapshotByIdAsync(Guid snapshotId)
+    {
+        if (snapshotId == Guid.Empty)
+            return null;
+
+        return await _context.Snapshots
+            .AsNoTracking()
+            .FirstOrDefaultAsync(s => s.Id == snapshotId);
+    }
+
     /// <summary>Retrieves the complete change history for a specific field of a ticket.</summary>
     public async Task<IEnumerable<FieldChange>> GetTicketFieldHistoryAsync(
         string companyName,
@@ -462,14 +477,24 @@ public async Task RecordFieldChangeAsync(
     {
         if (string.IsNullOrWhiteSpace(companyName))
             throw new ArgumentException("Company name is required.", nameof(companyName));
+        if (string.IsNullOrWhiteSpace(ticketKey))
+            throw new ArgumentException("Ticket key is required.", nameof(ticketKey));
+        if (string.IsNullOrWhiteSpace(fieldName))
+            throw new ArgumentException("Field name is required.", nameof(fieldName));
 
-        return await _context.FieldChanges
+        var definitionLookup = await GetCanonicalFieldDefinitionLookupAsync();
+
+        var rows = await _context.FieldChanges
             .AsNoTracking()
-            .Where(fc => fc.CompanyName == companyName
-                      && fc.TicketKey == ticketKey
-                      && fc.FieldName == fieldName)
+            .Where(fc => fc.CompanyName == companyName && fc.TicketKey == ticketKey)
             .OrderBy(fc => fc.ObservedAt)
+            .ThenBy(fc => fc.Id)
             .ToListAsync();
+
+        return rows
+            .Where(fc => FieldNameMatches(fc, fieldName))
+            .Select(fc => WithCanonicalMetadata(fc, definitionLookup))
+            .ToList();
     }
 
     /// <summary>Retrieves the complete change history for a ticket (all fields).</summary>
@@ -480,12 +505,18 @@ public async Task RecordFieldChangeAsync(
         if (string.IsNullOrWhiteSpace(ticketKey))
             throw new ArgumentException("Ticket key is required.", nameof(ticketKey));
 
-        return await _context.FieldChanges
+        var definitionLookup = await GetCanonicalFieldDefinitionLookupAsync();
+
+        var rows = await _context.FieldChanges
             .AsNoTracking()
             .Where(fc => fc.CompanyName == companyName && fc.TicketKey == ticketKey)
-            .OrderByDescending(fc => fc.ObservedAt)
-            .ThenBy(fc => fc.FieldName)
             .ToListAsync();
+
+        return rows
+            .Select(fc => WithCanonicalMetadata(fc, definitionLookup))
+            .OrderByDescending(fc => fc.ObservedAt)
+            .ThenBy(fc => fc.DisplayFieldName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
     }
 
     /// <summary>Retrieves all snapshots, optionally filtered by ITSM source.</summary>
@@ -521,7 +552,53 @@ public async Task RecordFieldChangeAsync(
         return await query.OrderByDescending(s => s.SnapshotDate).ToListAsync();
     }
 
+    private async Task<IReadOnlyDictionary<string, CanonicalFieldDefinition>> GetCanonicalFieldDefinitionLookupAsync()
+    {
+        var rows = await _context.CanonicalFieldDefinitions
+            .AsNoTracking()
+            .ToListAsync();
 
+        return rows.ToDictionary(d => d.Name, StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static string GetDisplayFieldName(string? canonicalFieldName, string sourceFieldName)
+    {
+        if (!string.IsNullOrWhiteSpace(canonicalFieldName))
+            return canonicalFieldName.Trim();
+
+        return sourceFieldName?.Trim() ?? string.Empty;
+    }
+
+    private static bool FieldNameMatches(FieldChange change, string fieldName)
+    {
+        return string.Equals(change.FieldName, fieldName, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(change.DisplayFieldName, fieldName, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static FieldChange WithCanonicalMetadata(
+        FieldChange change,
+        IReadOnlyDictionary<string, CanonicalFieldDefinition> definitionLookup)
+    {
+        var copy = new FieldChange
+        {
+            Id = change.Id,
+            CompanyName = change.CompanyName,
+            TicketKey = change.TicketKey,
+            FieldName = change.FieldName,
+            CanonicalFieldName = change.CanonicalFieldName,
+            FieldValue = change.FieldValue,
+            ObservedAt = change.ObservedAt,
+            SnapshotId = change.SnapshotId
+        };
+
+        if (definitionLookup.TryGetValue(copy.DisplayFieldName, out var definition))
+        {
+            copy.RegisteredDataType = definition.DataType;
+            copy.IsValueValid = CanonicalFieldValueValidator.IsValid(definition.DataType, copy.FieldValue);
+        }
+
+        return copy;
+    }
 
     private static void AddDerivedSystemFields(string ticketKey, IDictionary<string, string?> fields)
     {
