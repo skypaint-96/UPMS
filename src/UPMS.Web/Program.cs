@@ -16,7 +16,10 @@ namespace UPMS.Web
     using UPMS.Web.Plugins.PowerPoint;
     using UPMS.Web.Plugins.Email;
     using UPMS.Web.Plugins.Examples;
+    using UPMS.Web.Plugins.Documents;
+    using UPMS.Web.Plugins.Templates;
     using UPMS.Web.Services;
+    using UPMS.Web.Templates;
     using UPMS.Data;
 
     public class Program
@@ -122,12 +125,24 @@ namespace UPMS.Web
             });
 
             // Register report plugins (Scoped: plugins consume TicketDataServiceInstance which is Scoped)
+            builder.Services.AddSingleton<IReportTemplateStore>(sp =>
+            {
+                var env = sp.GetRequiredService<IWebHostEnvironment>();
+                var configuration = sp.GetRequiredService<IConfiguration>();
+                var storagePath = configuration["ReportTemplates:StoragePath"]
+                    ?? Path.Combine(env.ContentRootPath, "App_Data", "ReportTemplates");
+                return new FileSystemReportTemplateStore(storagePath);
+            });
+
             builder.Services.AddScoped<IReportPlugin, StubReportPlugin>();
             builder.Services.AddScoped<IReportPlugin, PowerPointReportPlugin>();
             builder.Services.AddScoped<IReportPlugin, EmailNotificationPlugin>();
             builder.Services.AddScoped<IReportPlugin, StatusBreakdownReportPlugin>();
             builder.Services.AddScoped<IReportPlugin, TicketCsvExportReportPlugin>();
             builder.Services.AddScoped<IReportPlugin, FieldDeltaReportPlugin>();
+            builder.Services.AddScoped<IReportPlugin, MonthEndLifecycleReportPlugin>();
+            builder.Services.AddScoped<IReportPlugin, TicketDocumentExportPlugin>();
+            builder.Services.AddScoped<IReportPlugin, TokenisedTemplateReportPlugin>();
 
             // Register plugin registry (Scoped: receives IEnumerable<IReportPlugin> which are Scoped)
             builder.Services.AddScoped<PluginRegistry>();

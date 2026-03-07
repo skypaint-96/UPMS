@@ -2,6 +2,7 @@ namespace UPMS.Web.Plugins.Examples;
 
 using System.Text;
 using UPMS.Data;
+using UPMS.Web.Reporting;
 
 /// <summary>
 /// Example reporting plugin that exports tickets as-of a selected date as a CSV download.
@@ -50,17 +51,21 @@ public sealed class TicketCsvExportReportPlugin : IReportPlugin
             IsRequired = false,
             Description = "Optional: choose which fields to include as extra CSV columns.",
             Options = [
-                "status",
-                "priority",
-                "assignee",
-                "assignment_group",
-                "short_description",
-                "category",
-                "impact",
-                "urgency",
-                "opened_at",
-                "updated_at",
-                "resolved_at"
+                "State",
+                "Priority",
+                "Assigned To",
+                "Assignment Group",
+                "Short Description",
+                "Description",
+                "Category",
+                "Subcategory",
+                "Business Service",
+                "Service Offering",
+                "Opened At",
+                "Created On",
+                "Updated On",
+                "Resolved At",
+                "Closed At"
             ]
         }
     ];
@@ -141,8 +146,9 @@ public sealed class TicketCsvExportReportPlugin : IReportPlugin
 
         if (string.Equals(column, "ticket_number", StringComparison.OrdinalIgnoreCase))
         {
-            if (TryGetField(ticket.Fields, "ticket_number", out var tn) && !string.IsNullOrWhiteSpace(tn))
-                return tn!;
+            var number = TicketFieldHelpers.GetFieldValue(ticket, "Number", fallback: string.Empty);
+            if (!string.IsNullOrWhiteSpace(number))
+                return number;
 
             return ticket.TicketKey;
         }
@@ -159,9 +165,10 @@ public sealed class TicketCsvExportReportPlugin : IReportPlugin
         if (string.Equals(column, "observed_at", StringComparison.OrdinalIgnoreCase))
             return ticket.ObservedAt == default ? string.Empty : ticket.ObservedAt.ToString("o");
 
-        // Ticket fields (case-insensitive)
-        if (TryGetField(ticket.Fields, column, out var value) && value is not null)
-            return value;
+        // Ticket fields (canonical + legacy aliases)
+        var fieldValue = TicketFieldHelpers.GetFieldValue(ticket, column, fallback: string.Empty);
+        if (!string.IsNullOrWhiteSpace(fieldValue))
+            return fieldValue;
 
         return string.Empty;
     }

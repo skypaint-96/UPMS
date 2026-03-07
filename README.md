@@ -8,7 +8,7 @@ A web-based system for problem managers who work across multiple ITSM sources. U
 
 - **Ingests snapshot exports** from one or more ITSM sources (CSV/JSON files uploaded via the web portal).
 - **Stores ticket history** as field-level amendment records — one row per field value observed per ticket per snapshot. This allows any ticket to be reconstructed exactly as it appeared at any point in time.
-- **Normalises field names** across ITSM sources using a canonical field mapping table, so that `incident_state` (ServiceNow) and `status` (Jira) are both stored and queried as `Status`.
+- **Normalises field names** across ITSM sources using a canonical field mapping table. The current canonical set uses human-friendly names such as `Number`, `Company`, `State`, `Assigned To`, `Assignment Group`, `Opened At`, `Updated On`, and `Resolved At` (legacy aliases like `ticket_number` and `status` are still recognised for compatibility).
 - **Provides a web portal** (Blazor Server) for browsing snapshots, viewing tickets, uploading data, and running reports.
 - **Hosts a reporting plugin system** — report generators are pluggable and can return HTML previews or downloadable files (PPTX/CSV/etc.).
 
@@ -74,12 +74,15 @@ The report store in `UPMS.Web` is built around an `IReportPlugin` interface. Plu
 
 Included plugins:
 - **PowerPoint Report Pack** — downloads a simple PPTX summarising ticket data.
-- **Email Notification** — renders an HTML email template (preview).
-- **Status Breakdown (Example)** — HTML breakdown of ticket counts by Status (or another field).
+- **Email Notification** — renders an HTML email preview or downloads a ready-to-send `.eml` draft.
+- **Month End Lifecycle Report (Example)** — HTML month-end report with last-12-month lifecycle graphs and configurable detail fields.
+- **Ticket Document Export** — exports a single ticket or a selected ticket set as DOCX or PDF.
+- **Tokenised Template Fill** — fills uploaded email/document/spreadsheet templates with `{{token}}` placeholders.
+- **Status Breakdown (Example)** — HTML breakdown of ticket counts by State (or another field).
 - **Ticket CSV Export (Example)** — downloads tickets as a CSV file.
 - **Field Delta (Example)** — compares ticket field values between two dates (new/removed/changed).
 
-Developer notes / contract documentation: see [`Docs/Reporting Plugins.md`](Docs/Reporting%20Plugins.md).
+Template uploads are available under `/report-templates`. Developer notes / contract documentation: see [`Docs/Reporting Plugins.md`](Docs/Reporting%20Plugins.md).
 
 ---
 

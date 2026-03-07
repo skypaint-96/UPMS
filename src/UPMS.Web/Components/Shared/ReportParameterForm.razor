@@ -17,6 +17,12 @@
                    value="@GetValue(param.Key)"
                    @onchange="e => SetValue(param.Key, e.Value?.ToString() ?? string.Empty)" />
         }
+        else if (param.Type == ReportParameterType.TextArea)
+        {
+            <textarea id="@param.Key"
+                      rows="5"
+                      @onchange="e => SetValue(param.Key, e.Value?.ToString() ?? string.Empty)">@GetValue(param.Key)</textarea>
+        }
         else if (param.Type == ReportParameterType.Date)
         {
             <input id="@param.Key"

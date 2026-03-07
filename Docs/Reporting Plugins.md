@@ -42,6 +42,8 @@ Outputs are returned as a `ReportResult`:
 - `HtmlContent` (for previews)
 - or `FileName` + `ContentType` + `FileContent` (for downloads)
 
+The current implementation now includes examples for `.eml`, `.pptx`, `.docx`, `.pdf`, `.csv`, and token-filled uploaded templates.
+
 ---
 
 ## Parameter Types
@@ -51,6 +53,7 @@ Each report defines parameters using `ReportParameterDefinition`.
 Supported parameter types (`ReportParameterType`):
 
 - `Text`: free text
+- `TextArea`: multi-line free text (useful for ticket lists / notes / token lists)
 - `Date`: a date (rendered as an `<input type="date">`)
 - `DateRange`: a pair of dates. The form writes **two keys**:
   - `<key>_from`
@@ -115,6 +118,9 @@ Most report plugins will consume `TicketDataServiceInstance` (scoped) and use:
 - `GetTicketsAsync(itsmSource, company, asOfDate)`
 - `GetSnapshotsAsync(itsmSource, company)`
 - `GetTicketsBySnapshotAsync(snapshotId)`
+- `GetTicketHistoryAsync(company, ticketKey)` when a report needs field-change timelines
+
+For lifecycle-oriented reports, prefer recorded business dates such as `Opened At`, `Created On`, `Updated On`, `Resolved At`, and `Closed At` over the ticket snapshot observation time. The current canonical field set uses human-readable names such as `Number`, `Company`, `State`, `Assigned To`, `Assignment Group`, and `Short Description`; legacy aliases remain supported for compatibility.
 
 ---
 
@@ -134,6 +140,9 @@ Example tests are included for the example plugins:
 - `ExampleStatusBreakdownPluginTests`
 - `ExampleTicketCsvExportPluginTests`
 - `ExampleFieldDeltaReportPluginTests`
+- `MonthEndLifecycleReportPluginTests`
+- `TicketDocumentExportPluginTests`
+- `TokenisedTemplateReportPluginTests`
 
 ---
 
@@ -150,15 +159,45 @@ Example tests are included for the example plugins:
   - Generates a minimal PPTX summary download.
 
 - **Email Notification** (`email-notification`)
-  - Generates an HTML email preview from a selected template.
+  - Generates an HTML email preview or a downloadable `.eml` draft from a selected template.
+
+- **Ticket Document Export** (`ticket-document-export`)
+  - Exports one ticket or a selected ticket set as DOCX or PDF.
+
+- **Tokenised Template Fill** (`tokenised-template-report`)
+  - Fills uploaded HTML/EML/TXT/CSV/XML and simple OOXML templates (`.docx`, `.xlsx`, `.pptx`) using `{{token}}` placeholders.
 
 ### Example plugins
 
 - **Status Breakdown (Example)** (`example-status-breakdown`)
-  - HTML breakdown of ticket counts by Status (or another field)
+  - HTML breakdown of ticket counts by State (or another field)
+
+- **Month End Lifecycle Report (Example)** (`example-month-end-lifecycle`)
+  - HTML month-end report with 12-month lifecycle graphs and configurable ticket fields
 
 - **Ticket CSV Export (Example)** (`example-ticket-csv-export`)
   - CSV download of tickets as-of a date
 
 - **Field Delta (Example)** (`example-field-delta`)
   - Compare a chosen field between two dates and report new/removed/changed tickets
+
+---
+
+## Uploaded Template Library
+
+A new `/report-templates` page lets users upload templates that the report system can fill.
+
+Supported prototype behaviours:
+
+- **Text-like templates**: `.html`, `.htm`, `.txt`, `.csv`, `.xml`, `.eml`
+- **OOXML package templates**: `.docx`, `.xlsx`, `.pptx`
+- **Token syntax**: `{{token_name}}`
+
+Useful built-in tokens currently include:
+
+- `{{company}}`, `{{itsm_source}}`, `{{as_of_date}}`, `{{generated_at_utc}}`, `{{requested_by}}`
+- `{{ticket_count}}`, `{{ticket_key}}`, `{{ticket_number}}`, `{{ticket_status}}`, `{{ticket_priority}}`
+- `{{tickets_html_table}}`, `{{ticket_rows_html}}`, `{{tickets_text_list}}`, `{{tickets_csv_document}}`
+- `{{month_end_chart_svg}}`, `{{month_end_table_html}}`, `{{month_end_backlog_current}}`, `{{month_end_opened_current}}`, `{{month_end_resolved_current}}`
+
+Current limitation: the OOXML prototype performs direct XML text replacement, so tokens should remain contiguous plain text inside the source document or workbook.

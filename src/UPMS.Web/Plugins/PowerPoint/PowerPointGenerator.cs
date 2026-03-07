@@ -3,6 +3,7 @@ namespace UPMS.Web.Plugins.PowerPoint;
 using System.IO.Compression;
 using System.Text;
 using UPMS.Data;
+using UPMS.Web.Reporting;
 
 /// <summary>
 /// Generates minimal OOXML PowerPoint files without external dependencies.
@@ -167,7 +168,7 @@ public static class PowerPointGenerator
         StringBuilder lines = new();
         foreach (Ticket ticket in tickets.Take(10))
         {
-            string status = ticket.Fields.TryGetValue("Status", out string? s) ? (s ?? "Unknown") : "Unknown";
+            string status = TicketFieldHelpers.GetFieldValue(ticket, "State", fallback: "Unknown");
             string line = System.Security.SecurityElement.Escape($"{ticket.TicketKey}: {status}");
             lines.AppendLine($"<a:p><a:r><a:t>{line}</a:t></a:r></a:p>");
         }

@@ -3,6 +3,7 @@ namespace UPMS.Web.Plugins.Examples;
 using System.Net;
 using System.Text;
 using UPMS.Data;
+using UPMS.Web.Reporting;
 
 /// <summary>
 /// Example reporting plugin that produces an HTML breakdown of ticket counts by a chosen field
@@ -50,8 +51,8 @@ public sealed class StatusBreakdownReportPlugin : IReportPlugin
             DisplayName = "Group By",
             Type = ReportParameterType.Select,
             IsRequired = false,
-            Description = "Field name to group by. Defaults to 'status' if not set.",
-            Options = ["status", "priority", "assignee", "assignment_group", "category", "impact", "urgency"]
+            Description = "Field name to group by. Defaults to 'State' if not set. Legacy aliases such as 'status' are still supported.",
+            Options = ["State", "Priority", "Assigned To", "Assignment Group", "Category"]
         },
         new ReportParameterDefinition
         {
@@ -75,7 +76,7 @@ public sealed class StatusBreakdownReportPlugin : IReportPlugin
             return ReportResult.Failure("Required parameter 'as_of_date' is missing or invalid.");
 
         request.Parameters.TryGetValue("group_by", out var groupBy);
-        groupBy = string.IsNullOrWhiteSpace(groupBy) ? "status" : groupBy.Trim();
+        groupBy = string.IsNullOrWhiteSpace(groupBy) ? "State" : groupBy.Trim();
 
         bool includeExamples = request.Parameters.TryGetValue("include_examples", out var includeExamplesStr)
             && string.Equals(includeExamplesStr, "true", StringComparison.OrdinalIgnoreCase);
@@ -125,7 +126,7 @@ public sealed class StatusBreakdownReportPlugin : IReportPlugin
 
                 foreach (var ticket in tickets.Take(25))
                 {
-                    ticket.Fields.TryGetValue("ticket_number", out var ticketNumber);
+                    var ticketNumber = TicketFieldHelpers.GetFieldValue(ticket, "Number", fallback: ticket.TicketKey);
                     var displayKey = string.IsNullOrWhiteSpace(ticketNumber) ? ticket.TicketKey : ticketNumber;
                     var value = GetFieldValue(ticket, groupBy!, fallback: "(blank)");
 
@@ -150,20 +151,6 @@ public sealed class StatusBreakdownReportPlugin : IReportPlugin
         }
     }
 
-    private static string GetFieldValue(Ticket ticket, string fieldName, string fallback)
-    {
-        if (ticket.Fields.TryGetValue(fieldName, out var v) && !string.IsNullOrWhiteSpace(v))
-            return v!;
-
-        foreach (var kv in ticket.Fields)
-        {
-            if (string.Equals(kv.Key, fieldName, StringComparison.OrdinalIgnoreCase)
-                && !string.IsNullOrWhiteSpace(kv.Value))
-            {
-                return kv.Value!;
-            }
-        }
-
-        return fallback;
-    }
+    private static string GetFieldValue(Ticket ticket, string fieldName, string fallback) =>
+        TicketFieldHelpers.GetFieldValue(ticket, fieldName, fallback);
 }

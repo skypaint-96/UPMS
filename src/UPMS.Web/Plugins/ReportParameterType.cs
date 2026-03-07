@@ -3,6 +3,7 @@ namespace UPMS.Web.Plugins;
 public enum ReportParameterType
 {
     Text,
+    TextArea,
     Date,
     DateRange,
     Select,

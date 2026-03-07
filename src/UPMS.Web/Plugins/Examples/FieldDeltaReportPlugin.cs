@@ -3,6 +3,7 @@ namespace UPMS.Web.Plugins.Examples;
 using System.Net;
 using System.Text;
 using UPMS.Data;
+using UPMS.Web.Reporting;
 
 /// <summary>
 /// Example reporting plugin that compares ticket state between two dates and reports changes.
@@ -51,8 +52,8 @@ public sealed class FieldDeltaReportPlugin : IReportPlugin
             DisplayName = "Field",
             Type = ReportParameterType.Select,
             IsRequired = false,
-            Description = "Which field to compare between dates (defaults to 'status').",
-            Options = ["status", "priority", "assignee", "assignment_group"]
+            Description = "Which field to compare between dates (defaults to 'State'). Legacy aliases such as 'status' are still supported.",
+            Options = ["State", "Priority", "Assigned To", "Assignment Group"]
         },
         new ReportParameterDefinition
         {
@@ -82,7 +83,7 @@ public sealed class FieldDeltaReportPlugin : IReportPlugin
             return ReportResult.Failure("Required parameter 'date_range_to' is missing or invalid.");
 
         request.Parameters.TryGetValue("field_name", out var fieldName);
-        fieldName = string.IsNullOrWhiteSpace(fieldName) ? "status" : fieldName.Trim();
+        fieldName = string.IsNullOrWhiteSpace(fieldName) ? "State" : fieldName.Trim();
 
         bool includeTicketList = request.Parameters.TryGetValue("include_ticket_list", out var includeStr)
             && string.Equals(includeStr, "true", StringComparison.OrdinalIgnoreCase);
@@ -181,22 +182,8 @@ public sealed class FieldDeltaReportPlugin : IReportPlugin
         }
     }
 
-    private static string GetFieldValue(Ticket ticket, string fieldName, string fallback)
-    {
-        if (ticket.Fields.TryGetValue(fieldName, out var v) && !string.IsNullOrWhiteSpace(v))
-            return v!;
-
-        foreach (var kv in ticket.Fields)
-        {
-            if (string.Equals(kv.Key, fieldName, StringComparison.OrdinalIgnoreCase)
-                && !string.IsNullOrWhiteSpace(kv.Value))
-            {
-                return kv.Value!;
-            }
-        }
-
-        return fallback;
-    }
+    private static string GetFieldValue(Ticket ticket, string fieldName, string fallback) =>
+        TicketFieldHelpers.GetFieldValue(ticket, fieldName, fallback);
 
     private readonly record struct TicketChange(string TicketKey, string FromValue, string ToValue);
 
