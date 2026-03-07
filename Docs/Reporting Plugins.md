@@ -44,6 +44,8 @@ Outputs are returned as a `ReportResult`:
 
 The current implementation now includes examples for `.eml`, `.pptx`, `.docx`, `.pdf`, `.csv`, and token-filled uploaded templates.
 
+Downloadable reports are cached temporarily in a token-based store and then served over a normal HTTP endpoint. The UI links to `/api/report-download/{token}` with enhanced navigation disabled so browser downloads work reliably from interactive report pages.
+
 ---
 
 ## Parameter Types

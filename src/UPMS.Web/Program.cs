@@ -150,8 +150,8 @@ namespace UPMS.Web
             // Register ingest service
             builder.Services.AddScoped<ISnapshotIngestService, SnapshotIngestService>();
 
-            // Register report download store (scoped per-connection)
-            builder.Services.AddScoped<ReportDownloadStore>();
+            // Register report download store (singleton temporary cache keyed by token)
+            builder.Services.AddSingleton<ReportDownloadStore>();
 
             // Register CsvTemplateService
             builder.Services.AddScoped<ICsvTemplateService, CsvTemplateService>();
@@ -279,19 +279,24 @@ namespace UPMS.Web
             app.MapRazorComponents<App>()
                 .AddInteractiveServerRenderMode();
 
-            app.MapGet("/reports/download", async (ReportDownloadStore store, HttpContext ctx) =>
+            static IResult ServeReportDownload(string token, ReportDownloadStore store)
             {
-                if (store.PendingDownload is null || store.PendingDownload.FileContent is null)
+                if (!store.TryGet(token, out PendingReportDownload? download))
                 {
-                    ctx.Response.StatusCode = 404;
-                    return;
+                    return Results.NotFound("Report download not found or has expired.");
                 }
-                var result = store.PendingDownload;
-                store.PendingDownload = null;
-                ctx.Response.ContentType = result.ContentType ?? "application/octet-stream";
-                ctx.Response.Headers.ContentDisposition = $"attachment; filename=\"{result.FileName ?? "report"}\"";
-                await ctx.Response.Body.WriteAsync(result.FileContent);
-            });
+
+                return Results.File(
+                    download.FileContent,
+                    download.ContentType,
+                    fileDownloadName: download.FileName);
+            }
+
+            app.MapGet("/api/report-download/{token}", ServeReportDownload);
+            app.MapGet("/reports/download/{token}", ServeReportDownload);
+            app.MapGet("/reports/download", () => Results.BadRequest("A report download token is required."));
+            app.MapGet("/reports/downloads/{token}", ServeReportDownload);
+            app.MapGet("/reports/downloads", () => Results.BadRequest("A report download token is required."));
 
             // CSV template endpoints
             app.MapGet("/api/template/{sourceName}/required", async (string sourceName, ICsvTemplateService templateService) =>

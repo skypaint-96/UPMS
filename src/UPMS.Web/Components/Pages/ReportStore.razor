@@ -50,7 +50,24 @@
         {
             @if (lastResult.OutputType == ReportOutputType.FileDownload)
             {
-                <p>Report generated. <a href="/reports/download">Download report</a></p>
+                if (!string.IsNullOrWhiteSpace(lastDownloadUrl))
+                {
+                    <p>
+                        Report generated.
+                        <a href="@lastDownloadUrl"
+                           target="_blank"
+                           rel="noopener noreferrer"
+                           data-enhance-nav="false"
+                           data-testid="report-download-link"
+                           download="@(lastResult.FileName ?? "report")">
+                            Download @(lastResult.FileName ?? "report")
+                        </a>
+                    </p>
+                }
+                else
+                {
+                    <div class="error-message" role="alert">The report file is not available for download.</div>
+                }
             }
             else if (lastResult.OutputType == ReportOutputType.HtmlContent)
             {
@@ -72,6 +89,7 @@
     private IReportPlugin? selectedPlugin;
     private Dictionary<string, string> parameterValues = new();
     private ReportResult? lastResult;
+    private string? lastDownloadUrl;
     private bool isGenerating = false;
     private string? errorMessage;
 
@@ -80,6 +98,7 @@
         selectedPlugin = plugin;
         parameterValues = new();
         lastResult = null;
+        lastDownloadUrl = null;
         errorMessage = null;
     }
 
@@ -88,6 +107,7 @@
         selectedPlugin = null;
         parameterValues = new();
         lastResult = null;
+        lastDownloadUrl = null;
         errorMessage = null;
     }
 
@@ -98,6 +118,7 @@
         isGenerating = true;
         errorMessage = null;
         lastResult = null;
+        lastDownloadUrl = null;
 
         try
         {
@@ -112,7 +133,14 @@
 
             if (result.Success && result.OutputType == ReportOutputType.FileDownload)
             {
-                DownloadStore.PendingDownload = result;
+                if (result.FileContent is null || result.FileContent.Length == 0)
+                {
+                    lastResult = ReportResult.Failure("The generated report did not contain any downloadable file content.");
+                    return;
+                }
+
+                string token = DownloadStore.Store(result);
+                lastDownloadUrl = $"/api/report-download/{token}";
             }
         }
         catch (Exception ex)

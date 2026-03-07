@@ -93,7 +93,7 @@ Deliverables:
 - `IReportPlugin` contract
 - `PluginRegistry`
 - Report store UI (`/reports`)
-- Download endpoint (`/reports/download/{token}`)
+- Download endpoints (`/api/report-download/{token}` with compatibility aliases under `/reports/download/{token}`)
 
 ---
 

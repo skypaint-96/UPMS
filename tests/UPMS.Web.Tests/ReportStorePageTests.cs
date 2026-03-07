@@ -114,4 +114,40 @@ public class ReportStorePageTests : PageTestBase
         var resultSection = Page.Locator("[data-testid='report-result']");
         await Assertions.Expect(resultSection).ToBeVisibleAsync();
     }
+
+    [Test]
+    public async Task ReportStorePage_FileReportGeneration_ProvidesDirectDownloadLink()
+    {
+        await Page.GotoAsync(Url("/reports"));
+
+        var pluginCard = Page.Locator(".plugin-card").Filter(new() { HasText = "PowerPoint Report Pack" });
+        if (await pluginCard.CountAsync() == 0)
+            Assert.Ignore("PowerPoint report plugin is not available.");
+
+        await pluginCard.Locator("button:has-text('Generate Report')").ClickAsync();
+
+        var sourceSelect = Page.Locator("#itsm_source");
+        var sourceOptions = await sourceSelect.Locator("option").AllAsync();
+        if (sourceOptions.Count <= 1)
+            Assert.Ignore("Requires at least one configured ITSM source.");
+
+        var sourceValue = await sourceOptions[1].GetAttributeAsync("value");
+        await sourceSelect.SelectOptionAsync(sourceValue!);
+        await Page.Locator("#company").FillAsync("Acme");
+        await Page.Locator("#as_of_date").FillAsync(DateTime.Today.ToString("yyyy-MM-dd"));
+
+        await Page.Locator("[data-testid='parameter-form'] button:has-text('Generate')").ClickAsync();
+
+        var link = Page.Locator("[data-testid='report-download-link']");
+        await Assertions.Expect(link).ToBeVisibleAsync();
+
+        var href = await link.GetAttributeAsync("href");
+        var target = await link.GetAttributeAsync("target");
+        var enhanceNav = await link.GetAttributeAsync("data-enhance-nav");
+
+        Assert.That(href, Does.StartWith("/api/report-download/"));
+        Assert.That(target, Is.EqualTo("_blank"));
+        Assert.That(enhanceNav, Is.EqualTo("false"));
+    }
+
 }
