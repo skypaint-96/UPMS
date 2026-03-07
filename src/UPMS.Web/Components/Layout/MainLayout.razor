@@ -4,15 +4,19 @@
 
 <div class="app-shell">
     <header class="app-navbar">
-        <nav class="navbar navbar-expand-lg navbar-dark" aria-label="Primary navigation">
+        <nav class="navbar navbar-expand-lg" aria-label="Primary navigation">
             <div class="container-xxl">
                 <NavLink class="navbar-brand" href="/" Match="NavLinkMatch.All">
-                    <span class="brand-mark">UP</span>
+                    <span class="brand-mark" aria-hidden="true">
+                        <span class="brand-mark-corner"></span>
+                    </span>
                     <span class="brand-copy">
                         <span class="brand-name">UPMS</span>
-                        <span class="brand-tagline">Unified Problem Management System</span>
+                        <span class="brand-tagline">Problem management reporting workspace</span>
                     </span>
                 </NavLink>
+
+                <div class="brand-slot" aria-hidden="true" title="Reserved for optional brand logo or identifier"></div>
 
                 <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#upmsNavbar" aria-controls="upmsNavbar" aria-expanded="false" aria-label="Toggle navigation">
                     <span class="navbar-toggler-icon"></span>
@@ -57,7 +61,7 @@
                 <strong>UPMS</strong>
                 <span class="text-muted ms-2">Historical problem management and reporting in one place.</span>
             </div>
-            <div class="text-muted">Blazor Server interface tuned for clearer workflows and faster scanning.</div>
+            <div class="text-muted">Brand-ready shell with neutral placeholders for future company-specific identifiers.</div>
         </div>
     </footer>
 </div>
