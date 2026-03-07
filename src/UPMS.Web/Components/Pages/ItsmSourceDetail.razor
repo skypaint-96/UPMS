@@ -7,108 +7,216 @@
 
 <PageTitle>@(source?.DisplayLabel ?? SourceName) - ITSM Sources - UPMS</PageTitle>
 
-<a href="/itsm-sources" data-testid="back-to-sources">← Back to ITSM Sources</a>
+<div class="page-shell stack-xl">
+    <a class="breadcrumb-link" href="/itsm-sources" data-testid="back-to-sources">← Back to ITSM Sources</a>
 
-@if (source is null)
-{
-    <p data-testid="source-not-found">ITSM source '@SourceName' was not found.</p>
-}
-else
-{
-    <h1 data-testid="source-display-name">@source.DisplayLabel</h1>
-    <p><strong>Name (slug):</strong> <code data-testid="source-slug">@source.Name</code></p>
-
-    <h2>Field Mappings</h2>
-
-    <div data-testid="mappings-table">
-        @if (mappings.Count == 0)
-        {
-            <p data-testid="no-mappings-message">No field mappings defined for this source.</p>
-        }
-        else
-        {
-            <table>
-                <thead>
-                    <tr>
-                        <th>Source Field Name</th>
-                        <th>Canonical Name</th>
-                        <th>Required</th>
-                        <th>Actions</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    @foreach (var mapping in mappings)
-                    {
-                        <tr data-testid="mapping-row-@mapping.SourceFieldName">
-                            <td>@mapping.SourceFieldName</td>
-                            <td>@mapping.CanonicalFieldName</td>
-                            <td>
-                                @if (mapping.IsRequired)
-                                {
-                                    <span data-testid="required-badge-@mapping.SourceFieldName">✓</span>
-                                }
-                            </td>
-                            <td>
-                                <button data-testid="delete-mapping-@mapping.SourceFieldName"
-                                        @onclick="() => DeleteMappingAsync(mapping.SourceFieldName)">
-                                    Delete
-                                </button>
-                            </td>
-                        </tr>
-                    }
-                </tbody>
-            </table>
-        }
-    </div>
-
-    <hr />
-
-    <h2>Add Field Mapping</h2>
-
-    <p style="max-width: 70ch">
-        <strong>Tip:</strong> map the source's ticket identifier (INC0012345 / PROJ-123 / etc.) to
-        <code>Number</code>. UPMS generates an internal <code>ticket_key</code> in the form
-        <code>{itsmSource}::{company}::{number}</code> and does <em>not</em> store <code>ticket_key</code>
-        as a ticket field. Legacy aliases such as <code>ticket_number</code> still work.
-    </p>
-
-    @if (!string.IsNullOrEmpty(addMappingError))
+    @if (source is null)
     {
-        <p data-testid="add-mapping-error" style="color:red">@addMappingError</p>
+        <section class="card-surface stack-md">
+            <div class="page-header-body stack-sm">
+                <div class="eyebrow">Configuration</div>
+                <h1>ITSM Source</h1>
+                <p data-testid="source-not-found">ITSM source '@SourceName' was not found.</p>
+            </div>
+            <div class="button-row">
+                <a class="btn btn-primary" href="/itsm-sources">Return to sources</a>
+            </div>
+        </section>
     }
+    else
+    {
+        <section class="page-header card-surface page-header-accent">
+            <div class="page-header-body stack-md">
+                <div class="stack-sm">
+                    <div class="eyebrow">Source configuration</div>
+                    <h1 data-testid="source-display-name">@source.DisplayLabel</h1>
+                    <p>
+                        Review the source identity below, then map incoming CSV columns to UPMS canonical fields.
+                        Strong mappings make ticket search, snapshots, and reports more reliable.
+                    </p>
+                </div>
 
-    <div>
-        <label for="source-field-name">Source Field Name</label>
-        <input id="source-field-name"
-               data-testid="add-mapping-source-field"
-               placeholder="e.g. Short Description"
-               @bind="newSourceField" />
-    </div>
+                <div class="metadata-pills">
+                    <span class="badge badge-muted">Slug: <code data-testid="source-slug">@source.Name</code></span>
+                    <span class="badge badge-info">@MappingCountLabel</span>
+                    <span class="badge badge-success">@RequiredCountLabel</span>
+                </div>
+            </div>
 
-    <div>
-        <label for="canonical-name">Canonical Name</label>
-        <select id="canonical-name"
-                data-testid="add-mapping-canonical-name"
-                @bind="newCanonicalName">
-            <option value="">-- Select or type a canonical name --</option>
-            @foreach (var name in CanonicalNames)
-            {
-                <option value="@name">@name</option>
-            }
-        </select>
-    </div>
+            <div class="page-header-actions">
+                <a class="btn btn-secondary" href="#add-mapping-form">Add field mapping</a>
+            </div>
+        </section>
 
-    <div>
-        <label>
-            <input type="checkbox"
-                   data-testid="add-mapping-is-required"
-                   @bind="newIsRequired" />
-            Required
-        </label>
-    </div>
+        <div class="stat-grid compact-stats">
+            <article class="stat-card">
+                <span class="stat-label">Mapped fields</span>
+                <strong>@mappings.Count</strong>
+                <span class="stat-caption">Source columns currently translated into UPMS fields.</span>
+            </article>
+            <article class="stat-card">
+                <span class="stat-label">Required fields</span>
+                <strong>@mappings.Count(m => m.IsRequired)</strong>
+                <span class="stat-caption">Mandatory fields that must be present during import.</span>
+            </article>
+            <article class="stat-card">
+                <span class="stat-label">Unique canonical fields</span>
+                <strong>@mappings.Select(m => m.CanonicalFieldName).Distinct(StringComparer.OrdinalIgnoreCase).Count()</strong>
+                <span class="stat-caption">Keeps reporting and filters consistent across sources.</span>
+            </article>
+        </div>
 
-    <button data-testid="add-mapping-submit" @onclick="AddMappingAsync">Add Mapping</button>
-}
+        <div class="content-grid content-grid-sidebar-right">
+            <section class="card-surface stack-md">
+                <div class="section-heading">
+                    <div>
+                        <h2 class="section-title">Field mappings</h2>
+                        <p class="section-subtitle">Source field names on the left, canonical UPMS fields on the right.</p>
+                    </div>
+                </div>
+
+                <div data-testid="mappings-table">
+                    @if (mappings.Count == 0)
+                    {
+                        <div class="empty-state" data-testid="no-mappings-message">
+                            <div class="empty-state-icon">🗂️</div>
+                            <div class="stack-xs">
+                                <h3>No field mappings defined</h3>
+                                <p>
+                                    Add at least the ticket number and other important fields like company, status,
+                                    title, or priority so searches and reports work predictably.
+                                </p>
+                            </div>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="table-responsive">
+                            <table class="data-table table-hover">
+                                <thead>
+                                    <tr>
+                                        <th>Source Field Name</th>
+                                        <th>Canonical Name</th>
+                                        <th>Required</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var mapping in mappings.OrderBy(m => m.SourceFieldName, StringComparer.OrdinalIgnoreCase))
+                                    {
+                                        <tr data-testid="mapping-row-@mapping.SourceFieldName">
+                                            <td>
+                                                <div class="stack-xs">
+                                                    <span>@mapping.SourceFieldName</span>
+                                                    <span class="table-meta">Incoming CSV column name.</span>
+                                                </div>
+                                            </td>
+                                            <td>
+                                                <span class="badge badge-muted">@mapping.CanonicalFieldName</span>
+                                            </td>
+                                            <td>
+                                                @if (mapping.IsRequired)
+                                                {
+                                                    <span class="badge badge-success" data-testid="required-badge-@mapping.SourceFieldName">Required</span>
+                                                }
+                                                else
+                                                {
+                                                    <span class="table-meta">Optional</span>
+                                                }
+                                            </td>
+                                            <td>
+                                                <button class="btn btn-danger btn-sm"
+                                                        data-testid="delete-mapping-@mapping.SourceFieldName"
+                                                        @onclick="() => DeleteMappingAsync(mapping.SourceFieldName)">
+                                                    Delete
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                </div>
+            </section>
+
+            <aside class="stack-md">
+                <section class="card-surface stack-md" id="add-mapping-form">
+                    <div class="section-heading">
+                        <div>
+                            <h2 class="section-title">Add field mapping</h2>
+                            <p class="section-subtitle">Use mappings to normalize incoming fields across ITSM tools.</p>
+                        </div>
+                    </div>
+
+                    <div class="alert alert-info">
+                        <strong>Tip:</strong> map the source ticket identifier to <code>Number</code>.
+                        UPMS then derives the internal <code>ticket_key</code> as
+                        <code>{itsmSource}::{company}::{number}</code> without storing it as a ticket field.
+                    </div>
+
+                    @if (!string.IsNullOrEmpty(addMappingError))
+                    {
+                        <div class="alert alert-danger" data-testid="add-mapping-error" role="alert">@addMappingError</div>
+                    }
+
+                    <div class="form-grid">
+                        <div class="form-field">
+                            <label for="source-field-name" class="form-label">Source field name</label>
+                            <input id="source-field-name"
+                                   class="form-control"
+                                   data-testid="add-mapping-source-field"
+                                   placeholder="e.g. Short Description"
+                                   @bind="newSourceField" />
+                            <span class="helper-text">Enter the CSV column exactly as it appears in the source export.</span>
+                        </div>
+
+                        <div class="form-field">
+                            <label for="canonical-name" class="form-label">Canonical name</label>
+                            <select id="canonical-name"
+                                    class="form-select"
+                                    data-testid="add-mapping-canonical-name"
+                                    @bind="newCanonicalName">
+                                <option value="">-- Select a canonical name --</option>
+                                @foreach (var name in CanonicalNames)
+                                {
+                                    <option value="@name">@name</option>
+                                }
+                            </select>
+                            <span class="helper-text">Choose the normalized UPMS field that best matches the source column.</span>
+                        </div>
+
+                        <div class="form-field checkbox-field">
+                            <label class="checkbox-label">
+                                <input type="checkbox"
+                                       data-testid="add-mapping-is-required"
+                                       @bind="newIsRequired" />
+                                <span>Required</span>
+                            </label>
+                            <span class="helper-text">Use this when imports should fail if the field is missing.</span>
+                        </div>
+                    </div>
+
+                    <div class="button-row">
+                        <button class="btn btn-primary" data-testid="add-mapping-submit" @onclick="AddMappingAsync">Add Mapping</button>
+                    </div>
+                </section>
+
+                <section class="card-surface stack-sm">
+                    <h2 class="section-title">Common first mappings</h2>
+                    <ul class="token-list compact-token-list">
+                        <li><code>Number</code></li>
+                        <li><code>Company</code></li>
+                        <li><code>Title</code></li>
+                        <li><code>Status</code></li>
+                        <li><code>Priority</code></li>
+                        <li><code>OpenedAt</code></li>
+                    </ul>
+                </section>
+            </aside>
+        </div>
+    }
+</div>
 
 @code {
     [Parameter]
@@ -116,12 +224,26 @@ else
 
     private ItsmSource? source;
     private List<ItsmFieldMapping> mappings = [];
-    private string newSourceField  = string.Empty;
+    private string newSourceField = string.Empty;
     private string newCanonicalName = string.Empty;
-    private bool   newIsRequired;
+    private bool newIsRequired;
     private string? addMappingError;
 
     private static readonly IReadOnlyList<string> CanonicalNames = CanonicalFieldCatalog.Names;
+
+    private string MappingCountLabel => mappings.Count switch
+    {
+        0 => "No mappings yet",
+        1 => "1 mapping",
+        _ => $"{mappings.Count} mappings"
+    };
+
+    private string RequiredCountLabel => mappings.Count(m => m.IsRequired) switch
+    {
+        0 => "No required fields",
+        1 => "1 required field",
+        var count => $"{count} required fields"
+    };
 
     protected override async Task OnInitializedAsync()
     {
@@ -140,6 +262,10 @@ else
         {
             var definition = await ItsmSourceService.GetSourceDefinitionAsync(SourceName);
             mappings = definition.Mappings.ToList();
+        }
+        else
+        {
+            mappings = [];
         }
     }
 
@@ -167,9 +293,9 @@ else
                 newCanonicalName.Trim(),
                 newIsRequired);
 
-            newSourceField   = string.Empty;
+            newSourceField = string.Empty;
             newCanonicalName = string.Empty;
-            newIsRequired    = false;
+            newIsRequired = false;
 
             await LoadAsync();
         }

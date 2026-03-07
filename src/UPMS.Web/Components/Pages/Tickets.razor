@@ -8,136 +8,182 @@
 
 <PageTitle>Tickets</PageTitle>
 
-<h1>Tickets</h1>
-
-<div class="d-flex flex-wrap gap-2 align-items-end">
+<section class="app-page-header">
     <div>
-        <label class="form-label" for="itsm-source">ITSM source(s)</label>
-        <select id="itsm-source" class="form-select" data-testid="itsm-source-filter" multiple size="6" @bind="selectedItsmSources" @bind:after="OnItsmSourceChanged">
-            @foreach (var source in itsmSources)
+        <p class="page-eyebrow">Search</p>
+        <h1 class="page-title">Tickets</h1>
+        <p class="page-description">Search reconstructed ticket state across one or more ITSM sources using a specific point-in-time view.</p>
+    </div>
+    <div class="page-actions">
+        <a class="btn btn-outline-secondary" href="/itsm-sources">Manage ITSM sources</a>
+    </div>
+</section>
+
+<section class="surface-card">
+    <div class="surface-card-header">
+        <div>
+            <h2 class="surface-card-title">Search scope</h2>
+            <p class="surface-card-subtitle">Select at least one ITSM source, choose the time you want to reconstruct, and then refine with field filters.</p>
+        </div>
+        @if (normalizedItsmSources.Count > 0)
+        {
+            <span class="badge-soft badge-soft-info">@normalizedItsmSources.Count source(s) selected</span>
+        }
+    </div>
+
+    <div class="form-grid form-grid-3">
+        <div class="field-stack field-stack--tall">
+            <label class="form-label" for="itsm-source">ITSM source(s)</label>
+            <select id="itsm-source" class="form-select" data-testid="itsm-source-filter" multiple size="6" @bind="selectedItsmSources" @bind:after="OnItsmSourceChanged">
+                @foreach (var source in itsmSources)
+                {
+                    <option value="@source.Name">@source.DisplayLabel</option>
+                }
+            </select>
+            <div class="form-text">Tip: hold Ctrl or Cmd to select multiple sources.</div>
+        </div>
+
+        <div class="field-stack">
+            <label class="form-label" for="as-of">As of</label>
+            <input id="as-of"
+                   class="form-control"
+                   type="datetime-local"
+                   data-testid="as-of-datetime"
+                   value="@asOfLocal"
+                   @oninput="OnAsOfLocalChanged" />
+            <div class="helper-text">UPMS returns the latest known values up to this timestamp.</div>
+        </div>
+
+        <div class="field-stack field-stack-actions">
+            <button class="btn btn-primary btn-lg" data-testid="search-btn" @onclick="SearchAsync" disabled="@(!CanSearch || isLoading)">Search tickets</button>
+            @if (isLoading)
             {
-                <option value="@source.Name">@source.DisplayLabel</option>
+                <span class="text-muted" data-testid="loading-indicator">Loading...</span>
             }
-        </select>
-        <div class="form-text">Tip: hold Ctrl/⌘ to select multiple sources.</div>
+        </div>
     </div>
-
-    <div>
-        <label class="form-label" for="as-of">As of</label>
-        <input id="as-of"
-               class="form-control"
-               type="datetime-local"
-               data-testid="as-of-datetime"
-               value="@asOfLocal"
-               @oninput="OnAsOfLocalChanged" />
-    </div>
-
-    <button class="btn btn-primary" data-testid="search-btn" @onclick="SearchAsync" disabled="@(!CanSearch || isLoading)">Search</button>
-    @if (isLoading)
-    {
-        <span class="ms-2" data-testid="loading-indicator">Loading...</span>
-    }
-</div>
+</section>
 
 @if (!string.IsNullOrWhiteSpace(searchError))
 {
-    <div class="alert alert-danger mt-3" role="alert" data-testid="tickets-search-error">
+    <div class="alert alert-danger" role="alert" data-testid="tickets-search-error">
         @searchError
     </div>
 }
 
 @if (normalizedItsmSources.Count == 0)
 {
-    <p class="mt-3" data-testid="tickets-empty-hint">Select at least one ITSM source to begin.</p>
+    <section class="surface-card">
+        <div class="empty-state" data-testid="tickets-empty-hint">
+            <p class="empty-state-title">Select at least one ITSM source to begin</p>
+            <p class="empty-state-text">Once you choose a source, UPMS will reveal the field filters available for that mapping.</p>
+        </div>
+    </section>
 }
 else
 {
-    <div class="mt-3" data-testid="field-filters-panel">
-        <h2>Field Filters</h2>
-        <p class="text-muted" style="max-width: 80ch">
-            Filters match against the <em>canonical</em> field names for the selected ITSM source(s).
-            <span class="d-block">
-                Tip: <code>company</code> and <code>ticket_number</code> are always available as system fields.
-            </span>
-            @if (normalizedItsmSources.Count > 1)
-            {
-                <span class="d-block">Custom fields are available when searching multiple sources.</span>
-            }
-        </p>
+    <section class="surface-card" data-testid="field-filters-panel">
+        <div class="surface-card-header">
+            <div>
+                <h2 class="surface-card-title">Field filters</h2>
+                <p class="surface-card-subtitle">
+                    Filters match against the <em>canonical</em> field names for the selected ITSM source(s). System fields such as <code>company</code> and <code>ticket_number</code> are always available.
+                    @if (normalizedItsmSources.Count > 1)
+                    {
+                        <span class="d-block mt-1">Custom field matching is also available when searching multiple sources.</span>
+                    }
+                </p>
+            </div>
+            <div class="button-row">
+                <span class="badge-soft badge-soft-neutral">@filters.Count row(s)</span>
+                <button type="button" class="btn btn-outline-primary" data-testid="add-filter-btn" @onclick="AddFilter">Add filter</button>
+                <button type="button" class="btn btn-outline-secondary" data-testid="clear-filters-btn" @onclick="ClearFilters" disabled="@(filters.Count == 0)">Clear all</button>
+            </div>
+        </div>
 
         @if (!hasAnyMappings)
         {
             <div class="alert alert-warning" role="alert" data-testid="no-mappings-warning">
-                No field mappings found for the selected ITSM source(s) yet. Add mappings on the ITSM Source page to enable canonical filtering.
+                No field mappings were found for the selected ITSM source(s). Add mappings on the ITSM Source page to enable canonical filtering.
             </div>
         }
 
-        @foreach (var filter in filters)
-        {
-            var i = filter.Seq;
-            <div class="filter-row d-flex flex-wrap gap-2 align-items-end mb-2" @key="filter.Id">
-                <div>
-                    <label class="form-label" for="filter-mode-@i">Type</label>
-                    <select id="filter-mode-@i" class="form-select" style="max-width: 12rem" data-testid="field-filter-mode-@i" @bind="filter.Mode">
-                        <option value="@FieldNameMode.Canonical">Canonical</option>
-                        <option value="@FieldNameMode.Custom">Custom</option>
-                    </select>
-                </div>
+        <div class="column-manager-grid">
+            @foreach (var filter in filters)
+            {
+                var i = filter.Seq;
+                <div class="filter-row-card" @key="filter.Id">
+                    <div class="form-grid" style="grid-template-columns: minmax(160px, 220px) minmax(220px, 1fr) minmax(260px, 1.2fr) auto; align-items: end;">
+                        <div class="field-stack">
+                            <label class="form-label" for="filter-mode-@i">Type</label>
+                            <select id="filter-mode-@i" class="form-select" data-testid="field-filter-mode-@i" @bind="filter.Mode">
+                                <option value="@FieldNameMode.Canonical">Canonical</option>
+                                <option value="@FieldNameMode.Custom">Custom</option>
+                            </select>
+                        </div>
 
-                @if (filter.Mode == FieldNameMode.Canonical)
-                {
-                    <div>
-                        <label class="form-label" for="filter-name-@i">Field</label>
-                        <select id="filter-name-@i" class="form-select" style="min-width: 18rem" data-testid="field-filter-name-@i" @bind="filter.CanonicalFieldName">
-                            <option value="" disabled>-- Field --</option>
-                            @foreach (var field in availableFilterFields)
-                            {
-                                <option value="@field">@field</option>
-                            }
-                        </select>
+                        @if (filter.Mode == FieldNameMode.Canonical)
+                        {
+                            <div class="field-stack">
+                                <label class="form-label" for="filter-name-@i">Field</label>
+                                <select id="filter-name-@i" class="form-select" data-testid="field-filter-name-@i" @bind="filter.CanonicalFieldName">
+                                    <option value="" disabled>-- Field --</option>
+                                    @foreach (var field in availableFilterFields)
+                                    {
+                                        <option value="@field">@field</option>
+                                    }
+                                </select>
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="field-stack">
+                                <label class="form-label" for="filter-custom-@i">Field</label>
+                                <input id="filter-custom-@i" class="form-control" type="text" placeholder="e.g. u_custom_field" data-testid="field-filter-name-@i" @bind="filter.CustomFieldName" />
+                            </div>
+                        }
+
+                        <div class="field-stack">
+                            <label class="form-label" for="filter-value-@i">Value</label>
+                            <input id="filter-value-@i" class="form-control" type="text" placeholder="Contains value" data-testid="field-filter-value-@i" @bind="filter.Value" />
+                        </div>
+
+                        <div class="field-stack">
+                            <button type="button" class="btn btn-outline-secondary" data-testid="remove-filter-@i" @onclick="() => RemoveFilter(filter)">Remove</button>
+                        </div>
                     </div>
-                }
-                else
-                {
-                    <div>
-                        <label class="form-label" for="filter-custom-@i">Field</label>
-                        <input id="filter-custom-@i" class="form-control" style="min-width: 18rem" type="text" placeholder="e.g. u_custom_field" data-testid="field-filter-name-@i" @bind="filter.CustomFieldName" />
-                    </div>
-                }
-
-                <div>
-                    <label class="form-label" for="filter-value-@i">Value</label>
-                    <input id="filter-value-@i" class="form-control" style="min-width: 24rem" type="text" placeholder="contains…" data-testid="field-filter-value-@i" @bind="filter.Value" />
                 </div>
-
-                <button type="button" class="btn btn-outline-secondary" data-testid="remove-filter-@i" @onclick="() => RemoveFilter(filter)">Remove</button>
-            </div>
-        }
-
-        <button type="button" class="btn btn-outline-primary" data-testid="add-filter-btn" @onclick="AddFilter">+ Add Filter</button>
-        <button type="button" class="btn btn-outline-secondary ms-2" data-testid="clear-filters-btn" @onclick="ClearFilters" disabled="@(filters.Count == 0)">Clear</button>
-    </div>
-
-    @if (!searchPerformed)
-    {
-        <p class="text-muted mt-3" data-testid="tickets-search-hint">
-            Click <strong>Search</strong> to load tickets for the selected ITSM source(s).
-        </p>
-    }
-    else
-    {
-        <div class="alert alert-secondary mt-3" role="alert" data-testid="tickets-search-summary">
-            Showing <strong>@tickets.Count</strong> ticket(s) from <strong>@normalizedItsmSources.Count</strong> source(s) as of <strong>@asOfDateTime.ToString("yyyy-MM-dd HH:mm")</strong>.
+            }
         </div>
-    }
+
+        @if (!searchPerformed)
+        {
+            <p class="text-muted mt-3 mb-0" data-testid="tickets-search-hint">Click <strong>Search tickets</strong> to load results for the selected ITSM source(s).</p>
+        }
+        else
+        {
+            <div class="alert alert-secondary mt-3 mb-0" role="alert" data-testid="tickets-search-summary">
+                Showing <strong>@tickets.Count</strong> ticket(s) from <strong>@normalizedItsmSources.Count</strong> source(s) as of <strong>@asOfDateTime.ToString("yyyy-MM-dd HH:mm")</strong> UTC.
+            </div>
+        }
+    </section>
 }
 
-<TicketTable Tickets="tickets"
-            AsOfUtc="asOfDateTime"
-            TableTestId="ticket-table"
-            EmptyRowTestId="ticket-table-empty"
-            EmptyMessage="No tickets found."
-            CanonicalFieldOptions="availableFilterFields" />
+<section class="surface-card">
+    <div class="surface-card-header">
+        <div>
+            <h2 class="surface-card-title">Results</h2>
+            <p class="surface-card-subtitle">Open any ticket to inspect its reconstructed field state and change history.</p>
+        </div>
+    </div>
+
+    <TicketTable Tickets="tickets"
+                AsOfUtc="asOfDateTime"
+                TableTestId="ticket-table"
+                EmptyRowTestId="ticket-table-empty"
+                EmptyMessage="No tickets found."
+                CanonicalFieldOptions="availableFilterFields" />
+</section>
 
 @code {
     private List<Ticket> tickets = new();
@@ -208,7 +254,6 @@ else
 
     private async Task OnItsmSourceChanged()
     {
-        // Reset filters and tickets
         filters.Clear();
         nextFilterSeq = 0;
         tickets.Clear();
@@ -241,11 +286,9 @@ else
                 }
                 catch
                 {
-                    // Ignore per-source mapping failures so multi-source selection still works.
                 }
             }
 
-            // Canonical fields from mappings; treat legacy ticket_key as ticket_number.
             var canonical = allMappings
                 .Select(m => m.CanonicalFieldName)
                 .Where(n => !string.IsNullOrWhiteSpace(n))
@@ -256,7 +299,6 @@ else
 
             hasAnyMappings = canonical.Count > 0;
 
-            // System fields at the top (always filterable).
             var ordered = new List<string>();
             var set = new HashSet<string>(StringComparer.Ordinal);
 
@@ -271,7 +313,7 @@ else
             Add("State");
             Add("ticket_number");
             Add("company");
-            Add("ticket_key"); // legacy / debugging alias
+            Add("ticket_key");
             Add("status");
             foreach (var c in canonical)
                 Add(c);
@@ -284,7 +326,6 @@ else
             hasAnyMappings = false;
         }
 
-        // Auto-add a filter row so users immediately see the available field options.
         if (filters.Count == 0)
         {
             AddFilter();
@@ -327,9 +368,6 @@ else
         searchError = null;
         searchPerformed = true;
 
-        // NOTE: Browsers differ in what they emit for <input type="datetime-local">.
-        // Some include seconds, fractional seconds, etc. Be lenient and never silently
-        // fall back to "now" (which makes it look like the As Of filter does nothing).
         DateTime asOf;
         if (TryParseAsOfUtc(asOfLocal, out var parsedUtc, out var normalizedLocal))
         {
@@ -339,7 +377,6 @@ else
         }
         else
         {
-            // Keep the last valid value.
             asOf = asOfDateTime == default ? DateTime.UtcNow : asOfDateTime;
             asOfDateTime = DateTime.SpecifyKind(asOf, DateTimeKind.Utc);
             asOfLocal = asOfDateTime.ToString("yyyy-MM-ddTHH:mm", CultureInfo.InvariantCulture);
@@ -403,7 +440,6 @@ else
     {
         asOfLocal = args.Value?.ToString() ?? string.Empty;
 
-        // If the input is invalid, keep the last valid value instead of switching to "now".
         if (TryParseAsOfUtc(asOfLocal, out var parsedUtc, out var normalizedLocal))
         {
             asOfDateTime = parsedUtc;
@@ -446,7 +482,6 @@ else
             return true;
         }
 
-        // Final fallback: lenient parse.
         if (DateTime.TryParse(
             input,
             CultureInfo.InvariantCulture,

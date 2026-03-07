@@ -1,49 +1,126 @@
-﻿@page "/"
+@page "/"
 @rendermode InteractiveServer
 
 <PageTitle>UPMS</PageTitle>
 
-<h1>UPMS</h1>
-
-<section data-testid="dashboard-summary">
-    <h2>Dashboard</h2>
-    <p>Welcome to the Unified Problem Management System.</p>
-
-    @if (isLoading)
-    {
-        <p>Loading statistics&hellip;</p>
-    }
-    else
-    {
-        <p>Total snapshots: <strong>@snapshotCount</strong></p>
-
-        <p><a href="/snapshots">Browse Snapshots</a> | <a href="/reports">Reports</a></p>
-
-        @if (recentSnapshots.Count > 0)
-        {
-            <h3>Recent Snapshots</h3>
-            <table>
-                <thead>
-                    <tr>
-                        <th>ITSM Source</th>
-                        <th>Snapshot Date</th>
-                        <th>Uploaded By</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    @foreach (Snapshot snapshot in recentSnapshots)
-                    {
-                        <tr>
-                            <td><a href="/snapshots/@snapshot.Id">@snapshot.ItsmSource</a></td>
-                            <td>@snapshot.SnapshotDate.ToString("yyyy-MM-dd HH:mm:ss")</td>
-                            <td>@snapshot.UploadedBy</td>
-                        </tr>
-                    }
-                </tbody>
-            </table>
-        }
-    }
+<section class="app-page-header" data-testid="dashboard-summary">
+    <div>
+        <p class="page-eyebrow">Dashboard</p>
+        <h1 class="page-title">Unified Problem Management System</h1>
+        <p class="page-description">Review historical ticket state, upload new snapshots, and generate reporting packs across your ITSM sources from a single workspace.</p>
+    </div>
+    <div class="page-actions">
+        <a class="btn btn-primary" href="/upload">Upload snapshot</a>
+        <a class="btn btn-outline-primary" href="/tickets">Browse tickets</a>
+        <a class="btn btn-outline-secondary" href="/reports">Open reports</a>
+    </div>
 </section>
+
+@if (isLoading)
+{
+    <section class="surface-card">
+        <div class="surface-card-header">
+            <div>
+                <h2 class="surface-card-title">Loading dashboard</h2>
+                <p class="surface-card-subtitle">We are collecting the latest snapshot and source statistics.</p>
+            </div>
+        </div>
+        <p class="text-muted mb-0">Loading statistics...</p>
+    </section>
+}
+else
+{
+    @if (!string.IsNullOrWhiteSpace(loadError))
+    {
+        <div class="alert alert-warning" role="alert">
+            @loadError
+        </div>
+    }
+
+    <section class="stat-grid">
+        <article class="stat-card emphasis">
+            <p class="stat-label">Total snapshots</p>
+            <p class="stat-value">@snapshotCount</p>
+            <p class="stat-helper">Historical uploads currently stored in UPMS.</p>
+        </article>
+        <article class="stat-card">
+            <p class="stat-label">ITSM sources</p>
+            <p class="stat-value">@sourceCount</p>
+            <p class="stat-helper">Distinct source instances represented in snapshot history.</p>
+        </article>
+        <article class="stat-card">
+            <p class="stat-label">Latest snapshot</p>
+            <p class="stat-value stat-value--small">@latestSnapshotText</p>
+            <p class="stat-helper">Most recent imported point-in-time record.</p>
+        </article>
+    </section>
+
+    <section class="content-grid content-grid-2">
+        <div class="surface-card">
+            <div class="surface-card-header">
+                <div>
+                    <h2 class="surface-card-title">Recent snapshots</h2>
+                    <p class="surface-card-subtitle">Open a snapshot to inspect the tickets that were present at that point in time.</p>
+                </div>
+                <a class="btn btn-sm btn-outline-secondary" href="/snapshots">View all snapshots</a>
+            </div>
+
+            @if (recentSnapshots.Count == 0)
+            {
+                <div class="empty-state">
+                    <p class="empty-state-title">No snapshots uploaded yet</p>
+                    <p class="empty-state-text">Start by importing a CSV or JSON export from one of your ITSM sources.</p>
+                </div>
+            }
+            else
+            {
+                <div class="data-table-wrap">
+                    <table class="table table-hover align-middle data-table">
+                        <thead>
+                            <tr>
+                                <th>ITSM Source</th>
+                                <th>Snapshot Date</th>
+                                <th>Uploaded By</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (Snapshot snapshot in recentSnapshots)
+                            {
+                                <tr>
+                                    <td><a class="ticket-link" href="/snapshots/@snapshot.Id">@snapshot.ItsmSource</a></td>
+                                    <td>@snapshot.SnapshotDate.ToString("yyyy-MM-dd HH:mm") UTC</td>
+                                    <td>@snapshot.UploadedBy</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </div>
+
+        <aside class="surface-card">
+            <div class="surface-card-header">
+                <div>
+                    <h2 class="surface-card-title">Recommended next steps</h2>
+                    <p class="surface-card-subtitle">The interface is designed around a simple review workflow.</p>
+                </div>
+            </div>
+
+            <ol class="guidance-list mb-4">
+                <li>Define or confirm the ITSM source mapping for the export you plan to ingest.</li>
+                <li>Upload the latest source extract as a dated snapshot.</li>
+                <li>Search reconstructed ticket state and run reports from the same snapshot context.</li>
+            </ol>
+
+            <div class="app-link-list">
+                <a href="/itsm-sources">Manage ITSM sources <span aria-hidden="true">-></span></a>
+                <a href="/upload">Upload a new snapshot <span aria-hidden="true">-></span></a>
+                <a href="/reports">Generate a report <span aria-hidden="true">-></span></a>
+                <a href="/report-templates">Review report templates <span aria-hidden="true">-></span></a>
+            </div>
+        </aside>
+    </section>
+}
 
 @code {
     [Inject]
@@ -51,6 +128,9 @@
 
     private bool isLoading = true;
     private int snapshotCount = 0;
+    private int sourceCount = 0;
+    private string latestSnapshotText = "No uploads yet";
+    private string? loadError;
     private List<Snapshot> recentSnapshots = [];
 
     protected override async Task OnInitializedAsync()
@@ -58,13 +138,27 @@
         try
         {
             IEnumerable<Snapshot> snapshots = await DataService.GetSnapshotsAsync();
-            List<Snapshot> all = snapshots.ToList();
+            List<Snapshot> all = snapshots
+                .OrderByDescending(s => s.SnapshotDate)
+                .ToList();
+
             snapshotCount = all.Count;
+            sourceCount = all
+                .Select(s => s.ItsmSource)
+                .Where(s => !string.IsNullOrWhiteSpace(s))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Count();
+            latestSnapshotText = all.Count == 0
+                ? "No uploads yet"
+                : all[0].SnapshotDate.ToString("yyyy-MM-dd HH:mm") + " UTC";
             recentSnapshots = all.Take(5).ToList();
         }
         catch
         {
+            loadError = "Dashboard statistics could not be loaded. The rest of the application is still available.";
             snapshotCount = 0;
+            sourceCount = 0;
+            latestSnapshotText = "Unavailable";
             recentSnapshots = [];
         }
         finally

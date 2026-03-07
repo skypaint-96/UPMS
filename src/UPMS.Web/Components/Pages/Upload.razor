@@ -9,81 +9,149 @@
 
 <PageTitle>Upload - UPMS</PageTitle>
 
-<h1>Upload Ticket Dump</h1>
+<section class="app-page-header">
+    <div>
+        <p class="page-eyebrow">Ingest</p>
+        <h1 class="page-title">Upload</h1>
+        <p class="page-description">Import a CSV or JSON extract from an ITSM source. UPMS stores the snapshot as append-only historical data for later review and reporting.</p>
+    </div>
+    <div class="page-actions">
+        <a class="btn btn-outline-secondary" href="/itsm-sources">Manage ITSM sources</a>
+    </div>
+</section>
 
-<div>
-    <label for="itsm-source">ITSM Source</label>
-    <select id="itsm-source" data-testid="upload-itsm-source" @bind="selectedItsmSource">
-        <option value="">-- Select ITSM Source --</option>
-        @foreach (var source in itsmSources)
+<div class="content-grid content-grid-2">
+    <section class="surface-card">
+        <div class="surface-card-header">
+            <div>
+                <h2 class="surface-card-title">Upload a ticket dump</h2>
+                <p class="surface-card-subtitle">Choose the source, confirm the snapshot date, and attach the export file you want to ingest.</p>
+            </div>
+        </div>
+
+        @if (itsmSources.Count == 0)
         {
-            <option value="@source.Name">@source.DisplayLabel</option>
+            <div class="alert alert-warning" role="alert">
+                No ITSM sources are defined yet. Create a source definition first so the upload can be validated against the correct field mappings.
+            </div>
         }
-    </select>
-</div>
 
-<div>
-    <label for="snapshot-date">Snapshot Date</label>
-    <input type="date"
-           id="snapshot-date"
-           data-testid="snapshot-date-input"
-           @bind="snapshotDate" />
-</div>
+        <div class="form-grid">
+            <div class="field-stack">
+                <label for="itsm-source">ITSM Source</label>
+                <select id="itsm-source" class="form-select" data-testid="upload-itsm-source" @bind="selectedItsmSource">
+                    <option value="">-- Select ITSM Source --</option>
+                    @foreach (var source in itsmSources)
+                    {
+                        <option value="@source.Name">@source.DisplayLabel</option>
+                    }
+                </select>
+                <div class="helper-text">Select the source instance that matches the export file you are uploading.</div>
+            </div>
 
-<div>
-    <label for="file-input">Ticket Dump File (CSV or JSON)</label>
-    <InputFile id="file-input" data-testid="upload-file-input" OnChange="OnFileSelected" accept=".csv,.json" />
-</div>
+            <div class="field-stack">
+                <label for="snapshot-date">Snapshot Date</label>
+                <input type="date"
+                       id="snapshot-date"
+                       class="form-control"
+                       data-testid="snapshot-date-input"
+                       @bind="snapshotDate" />
+                <div class="helper-text">Use the date that represents when the export was taken from the source system.</div>
+            </div>
 
-<button data-testid="upload-submit" @onclick="OnUploadAsync">Upload</button>
-
-@if (!string.IsNullOrEmpty(validationMessage))
-{
-    <div data-testid="upload-validation">@validationMessage</div>
-}
-
-<div data-testid="upload-result">
-    @if (!string.IsNullOrEmpty(resultMessage))
-    {
-        <p>@resultMessage</p>
-    }
-</div>
-
-@if (ingestResult is not null && ingestResult.Success)
-{
-    <div data-testid="ingest-summary">
-        <p>Successfully ingested @ingestResult.TicketsIngested ticket@(ingestResult.TicketsIngested == 1 ? "" : "s") and @ingestResult.FieldChangesRecorded field change@(ingestResult.FieldChangesRecorded == 1 ? "" : "s").</p>
-        @if (ingestResult.Warnings.Count > 0)
-        {
-            <ul>
-                @foreach (string warning in ingestResult.Warnings)
+            <div class="field-stack">
+                <label for="file-input">Ticket Dump File (CSV or JSON)</label>
+                <InputFile id="file-input" class="form-control" data-testid="upload-file-input" OnChange="OnFileSelected" accept=".csv,.json" />
+                <div class="helper-text">Maximum file size: 10 MB. UPMS validates the file extension before ingest.</div>
+                @if (selectedFile is not null)
                 {
-                    <li>@warning</li>
+                    <div class="file-meta">
+                        <span><strong>Selected file:</strong> @selectedFile.Name</span>
+                        <span><strong>Size:</strong> @FormatFileSize(selectedFile.Size)</span>
+                    </div>
                 }
-            </ul>
-        }
-    </div>
-}
+            </div>
+        </div>
 
-@if (!string.IsNullOrEmpty(selectedItsmSource))
-{
-    <div class="template-download-section" data-testid="template-download-section">
-        <h3>Download Data Template</h3>
-        <p>If you're having trouble uploading, download a blank CSV template for the selected ITSM source:</p>
-        <a href="/api/template/@selectedItsmSource/required"
-           target="_blank"
-           data-testid="download-template-required"
-           class="btn btn-outline-secondary btn-sm me-2">
-            Download Required Headers Template
-        </a>
-        <a href="/api/template/@selectedItsmSource/all"
-           target="_blank"
-           data-testid="download-template-all"
-           class="btn btn-outline-secondary btn-sm">
-            Download All Headers Template
-        </a>
-    </div>
-}
+        <div class="button-row mt-4">
+            <button class="btn btn-primary btn-lg" data-testid="upload-submit" @onclick="OnUploadAsync" disabled="@isUploading">
+                @(isUploading ? "Uploading..." : "Upload snapshot")
+            </button>
+        </div>
+
+        @if (!string.IsNullOrEmpty(validationMessage))
+        {
+            <div class="alert alert-danger mt-3" role="alert" data-testid="upload-validation">@validationMessage</div>
+        }
+
+        <div data-testid="upload-result">
+            @if (!string.IsNullOrEmpty(resultMessage))
+            {
+                <div class="alert alert-warning mt-3 mb-0" role="alert">@resultMessage</div>
+            }
+        </div>
+
+        @if (ingestResult is not null && ingestResult.Success)
+        {
+            <div class="success-panel mt-3" data-testid="ingest-summary">
+                <p class="mb-2"><strong>Upload complete.</strong> Successfully ingested @ingestResult.TicketsIngested ticket@(ingestResult.TicketsIngested == 1 ? "" : "s") and @ingestResult.FieldChangesRecorded field change@(ingestResult.FieldChangesRecorded == 1 ? "" : "s").</p>
+                @if (ingestResult.Warnings.Count > 0)
+                {
+                    <ul class="info-list mb-0">
+                        @foreach (string warning in ingestResult.Warnings)
+                        {
+                            <li>@warning</li>
+                        }
+                    </ul>
+                }
+            </div>
+        }
+    </section>
+
+    <aside class="section-stack">
+        <section class="surface-card">
+            <div class="surface-card-header">
+                <div>
+                    <h2 class="surface-card-title">Before you upload</h2>
+                    <p class="surface-card-subtitle">A few checks help avoid failed imports and reduce rework.</p>
+                </div>
+            </div>
+            <ol class="guidance-list mb-0">
+                <li>Confirm the correct ITSM source mapping exists for the export you plan to upload.</li>
+                <li>Make sure the snapshot date matches the export date from the source system.</li>
+                <li>Use the template download links below when you need a header reference for the selected source.</li>
+            </ol>
+        </section>
+
+        @if (!string.IsNullOrEmpty(selectedItsmSource))
+        {
+            <section class="surface-card template-download-section" data-testid="template-download-section">
+                <div class="surface-card-header">
+                    <div>
+                        <h2 class="surface-card-title">Download data templates</h2>
+                        <p class="surface-card-subtitle">Use these reference files if you need a correctly structured CSV for the selected ITSM source.</p>
+                    </div>
+                    <span class="badge-soft badge-soft-success">@selectedItsmSource</span>
+                </div>
+
+                <div class="button-row">
+                    <a href="/api/template/@selectedItsmSource/required"
+                       target="_blank"
+                       data-testid="download-template-required"
+                       class="btn btn-outline-secondary">
+                        Download required headers template
+                    </a>
+                    <a href="/api/template/@selectedItsmSource/all"
+                       target="_blank"
+                       data-testid="download-template-all"
+                       class="btn btn-outline-secondary">
+                        Download all headers template
+                    </a>
+                </div>
+            </section>
+        }
+    </aside>
+</div>
 
 @code {
     private string selectedItsmSource = string.Empty;
@@ -93,16 +161,21 @@
     private string? resultMessage;
     private IngestResult? ingestResult;
     private IReadOnlyList<ItsmSource> itsmSources = [];
+    private bool isUploading;
 
     protected override async Task OnInitializedAsync()
     {
-        itsmSources = await ItsmSourceService.GetAllSourcesAsync();
+        itsmSources = (await ItsmSourceService.GetAllSourcesAsync())
+            .OrderBy(s => s.DisplayLabel)
+            .ThenBy(s => s.Name)
+            .ToList();
     }
 
     private void OnFileSelected(InputFileChangeEventArgs e)
     {
         selectedFile = e.File;
         validationMessage = null;
+        resultMessage = null;
         ingestResult = null;
     }
 
@@ -130,7 +203,6 @@
             return;
         }
 
-        // Determine format from file extension
         string extension = Path.GetExtension(selectedFile.Name).ToLowerInvariant();
         if (extension is not ".csv" and not ".json")
         {
@@ -138,6 +210,7 @@
             return;
         }
 
+        isUploading = true;
         try
         {
             await using Stream fileStream = selectedFile.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024);
@@ -159,5 +232,22 @@
         {
             resultMessage = $"Upload failed: {ex.Message}";
         }
+        finally
+        {
+            isUploading = false;
+        }
+    }
+
+    private static string FormatFileSize(long bytes)
+    {
+        if (bytes < 1024)
+            return $"{bytes} B";
+
+        double kilobytes = bytes / 1024d;
+        if (kilobytes < 1024)
+            return $"{kilobytes:0.#} KB";
+
+        double megabytes = kilobytes / 1024d;
+        return $"{megabytes:0.#} MB";
     }
 }

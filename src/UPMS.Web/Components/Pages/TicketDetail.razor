@@ -6,34 +6,77 @@
 
 <PageTitle>@TicketKey - UPMS</PageTitle>
 
-<h1>@TicketKey</h1>
-
-<p data-testid="ticket-company">Company: @Company</p>
-<p data-testid="ticket-itsm-source">ITSM Source: @resolvedItsmSource</p>
-
-<div class="d-flex flex-wrap gap-2 align-items-end" style="margin: 1rem 0">
-    <div>
-        <label class="form-label" for="as-of">As of</label>
-        <input id="as-of"
-               class="form-control"
-               type="datetime-local"
-               data-testid="ticket-as-of-datetime"
-               value="@asOfLocal"
-               @oninput="OnAsOfLocalChanged" />
-    </div>
-    <button class="btn btn-primary" data-testid="ticket-load-btn" @onclick="NavigateToAsOf" disabled="@isLoading">Load</button>
-    @if (isLoading)
-    {
-        <span class="ms-2" data-testid="ticket-loading-indicator">Loading...</span>
-    }
+<div class="page-breadcrumb">
+    <a href="/tickets">Tickets</a>
+    <span class="divider">/</span>
+    <span>@(string.IsNullOrWhiteSpace(decodedTicketKey) ? TicketKey : decodedTicketKey)</span>
 </div>
 
-@if (!string.IsNullOrWhiteSpace(asOfContextText))
-{
-    <div class="alert alert-info" role="alert" data-testid="ticket-as-of-context">
-        @asOfContextText
+<section class="app-page-header compact">
+    <div>
+        <p class="page-eyebrow">Ticket detail</p>
+        <h1 class="page-title">@(string.IsNullOrWhiteSpace(decodedTicketKey) ? TicketKey : decodedTicketKey)</h1>
+        <p class="page-description">Review the reconstructed ticket field values, compare them with the previous snapshot, and inspect the full field change history.</p>
     </div>
-}
+    <div class="page-actions">
+        <a class="btn btn-outline-secondary" href="/tickets">Back to tickets</a>
+    </div>
+</section>
+
+<section class="stat-grid">
+    <article class="stat-card">
+        <p class="stat-label">Company</p>
+        <p class="stat-value stat-value--small" data-testid="ticket-company">@(string.IsNullOrWhiteSpace(decodedCompany) ? Company : decodedCompany)</p>
+    </article>
+    <article class="stat-card">
+        <p class="stat-label">ITSM Source</p>
+        <p class="stat-value stat-value--small" data-testid="ticket-itsm-source">@(string.IsNullOrWhiteSpace(resolvedItsmSource) ? "Pending resolution" : resolvedItsmSource)</p>
+    </article>
+    <article class="stat-card">
+        <p class="stat-label">Current fields</p>
+        <p class="stat-value">@fields.Count</p>
+    </article>
+    <article class="stat-card emphasis">
+        <p class="stat-label">History entries</p>
+        <p class="stat-value">@fieldChanges.Count</p>
+    </article>
+</section>
+
+<section class="surface-card">
+    <div class="surface-card-header">
+        <div>
+            <h2 class="surface-card-title">Point-in-time view</h2>
+            <p class="surface-card-subtitle">Choose a timestamp to reconstruct the ticket exactly as it appeared then.</p>
+        </div>
+    </div>
+
+    <div class="form-grid form-grid-3">
+        <div class="field-stack">
+            <label class="form-label" for="as-of">As of</label>
+            <input id="as-of"
+                   class="form-control"
+                   type="datetime-local"
+                   data-testid="ticket-as-of-datetime"
+                   value="@asOfLocal"
+                   @oninput="OnAsOfLocalChanged" />
+            <div class="helper-text">The result uses the latest snapshot state that existed up to this moment.</div>
+        </div>
+        <div class="field-stack field-stack-actions">
+            <button class="btn btn-primary btn-lg" data-testid="ticket-load-btn" @onclick="NavigateToAsOf" disabled="@isLoading">Load view</button>
+            @if (isLoading)
+            {
+                <span class="text-muted" data-testid="ticket-loading-indicator">Loading...</span>
+            }
+        </div>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(asOfContextText))
+    {
+        <div class="alert alert-info mt-3 mb-0" role="alert" data-testid="ticket-as-of-context">
+            @asOfContextText
+        </div>
+    }
+</section>
 
 @if (!string.IsNullOrWhiteSpace(loadError))
 {
@@ -42,93 +85,120 @@
     </div>
 }
 
-<a href="/tickets">Back to Tickets</a>
+<section class="surface-card" data-testid="ticket-fields">
+    <div class="surface-card-header">
+        <div>
+            <h2 class="surface-card-title">Current fields</h2>
+            <p class="surface-card-subtitle">All field values known for the selected point in time.</p>
+        </div>
+        <span class="badge-soft badge-soft-neutral">@fields.Count field(s)</span>
+    </div>
 
-<section data-testid="ticket-fields">
-    <h2>Fields</h2>
     @if (fields.Count > 0)
     {
-        <table class="table table-sm">
-            <thead>
-                <tr>
-                    <th style="width: 16rem">Field</th>
-                    <th>Value</th>
-                </tr>
-            </thead>
-            <tbody>
-                @foreach (KeyValuePair<string, string?> field in fields.OrderBy(k => k.Key, StringComparer.OrdinalIgnoreCase))
-                {
+        <div class="data-table-wrap">
+            <table class="table table-sm align-middle data-table">
+                <thead>
                     <tr>
-                        <td><strong>@field.Key</strong></td>
-                        <td>@(field.Value ?? "—")</td>
+                        <th style="width: 18rem">Field</th>
+                        <th>Value</th>
                     </tr>
-                }
-            </tbody>
-        </table>
+                </thead>
+                <tbody>
+                    @foreach (KeyValuePair<string, string?> field in fields.OrderBy(k => k.Key, StringComparer.OrdinalIgnoreCase))
+                    {
+                        <tr>
+                            <td><strong>@field.Key</strong></td>
+                            <td>@(field.Value ?? "-")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
     }
     else
     {
-        <p>No field data available.</p>
+        <div class="empty-state">
+            <p class="empty-state-title">No field data available</p>
+            <p class="empty-state-text">UPMS could not reconstruct field values for the selected ticket and timestamp.</p>
+        </div>
     }
 </section>
 
 @if (snapshotFieldDeltas.Count > 0)
 {
-    <section data-testid="ticket-snapshot-deltas">
-        <h2>Changes since previous snapshot</h2>
-        <p class="text-muted" style="max-width: 80ch">
-            These are the fields whose values differ compared to the previous snapshot for this ticket.
-        </p>
+    <section class="surface-card" data-testid="ticket-snapshot-deltas">
+        <div class="surface-card-header">
+            <div>
+                <h2 class="surface-card-title">Changes since previous snapshot</h2>
+                <p class="surface-card-subtitle">These are the fields that differ compared with the previous snapshot captured for this ticket.</p>
+            </div>
+            <span class="badge-soft badge-soft-warning">@snapshotFieldDeltas.Count change(s)</span>
+        </div>
 
-        <table class="table table-striped table-hover">
-            <thead>
-                <tr>
-                    <th>Field</th>
-                    <th>Previous</th>
-                    <th>Current</th>
-                </tr>
-            </thead>
-            <tbody>
-                @foreach (var delta in snapshotFieldDeltas)
-                {
+        <div class="data-table-wrap">
+            <table class="table table-striped table-hover align-middle data-table">
+                <thead>
                     <tr>
-                        <td><strong>@delta.FieldName</strong></td>
-                        <td>@(delta.PreviousValue ?? "—")</td>
-                        <td>@(delta.CurrentValue ?? "—")</td>
+                        <th>Field</th>
+                        <th>Previous</th>
+                        <th>Current</th>
                     </tr>
-                }
-            </tbody>
-        </table>
+                </thead>
+                <tbody>
+                    @foreach (var delta in snapshotFieldDeltas)
+                    {
+                        <tr>
+                            <td><strong>@delta.FieldName</strong></td>
+                            <td>@(delta.PreviousValue ?? "-")</td>
+                            <td>@(delta.CurrentValue ?? "-")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
     </section>
 }
 
-<section data-testid="field-history">
-    <h2>Field Change History</h2>
+<section class="surface-card" data-testid="field-history">
+    <div class="surface-card-header">
+        <div>
+            <h2 class="surface-card-title">Field change history</h2>
+            <p class="surface-card-subtitle">A chronological audit of the observed values captured for this ticket over time.</p>
+        </div>
+        <span class="badge-soft badge-soft-info">@fieldChanges.Count event(s)</span>
+    </div>
+
     @if (fieldChanges.Count > 0)
     {
-        <table class="table table-striped table-hover">
-            <thead>
-                <tr>
-                    <th>Field</th>
-                    <th>Value</th>
-                    <th>Observed At</th>
-                </tr>
-            </thead>
-            <tbody>
-                @foreach (FieldChange change in fieldChanges)
-                {
+        <div class="data-table-wrap">
+            <table class="table table-striped table-hover align-middle data-table">
+                <thead>
                     <tr>
-                        <td>@change.FieldName</td>
-                        <td>@(change.FieldValue ?? "—")</td>
-                        <td>@change.ObservedAt.ToString("yyyy-MM-dd HH:mm:ss")</td>
+                        <th>Field</th>
+                        <th>Value</th>
+                        <th>Observed At</th>
                     </tr>
-                }
-            </tbody>
-        </table>
+                </thead>
+                <tbody>
+                    @foreach (FieldChange change in fieldChanges.OrderByDescending(c => c.ObservedAt).ThenBy(c => c.FieldName, StringComparer.OrdinalIgnoreCase))
+                    {
+                        <tr>
+                            <td>@change.FieldName</td>
+                            <td>@(change.FieldValue ?? "-")</td>
+                            <td>@change.ObservedAt.ToString("yyyy-MM-dd HH:mm:ss") UTC</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
     }
     else
     {
-        <p>No change history available.</p>
+        <div class="empty-state">
+            <p class="empty-state-title">No change history available</p>
+            <p class="empty-state-text">This ticket currently has no historical field records to display.</p>
+        </div>
     }
 </section>
 
@@ -187,7 +257,6 @@
             decodedTicketKey = Uri.UnescapeDataString(TicketKey);
             string? decodedItsmSource = ItsmSource is not null ? Uri.UnescapeDataString(ItsmSource) : null;
 
-            // Resolve "as of" (UTC) from query param (if supplied).
             if (TryParseAsOfUtc(AsOfQuery, out var parsedUtc, out var normalizedLocal))
             {
                 asOfDateTime = parsedUtc;
@@ -195,8 +264,6 @@
             }
             else
             {
-                // No (valid) query provided: keep the last valid value, and ensure
-                // the input stays in a canonical format.
                 if (asOfDateTime == default)
                     asOfDateTime = DateTime.UtcNow;
 
@@ -204,17 +271,14 @@
                 asOfLocal = asOfDateTime.ToString("yyyy-MM-ddTHH:mm", CultureInfo.InvariantCulture);
             }
 
-            // If no ITSM source provided in route, try to infer.
             if (string.IsNullOrWhiteSpace(decodedItsmSource))
             {
-                // 1) Try parsing it from the generated ticket key.
                 if (TicketKeyFactory.TryParse(decodedTicketKey, out var parsedSrc, out _, out _))
                 {
                     decodedItsmSource = parsedSrc;
                 }
                 else
                 {
-                    // 2) Fallback: pick the first known snapshot source.
                     IEnumerable<Snapshot> snapshots = await DataService.GetSnapshotsAsync();
                     decodedItsmSource = snapshots.FirstOrDefault()?.ItsmSource ?? string.Empty;
                 }
@@ -228,7 +292,6 @@
                 return;
             }
 
-            // Load ticket fields as-of the requested timestamp.
             var tickets = await DataService.GetTicketsAsync(resolvedItsmSource, decodedCompany, asOfDateTime);
             var ticket = tickets.FirstOrDefault(t => t.TicketKey == decodedTicketKey);
 
@@ -240,7 +303,6 @@
 
             fields = new Dictionary<string, string?>(ticket.Fields, StringComparer.Ordinal);
 
-            // Compute deltas versus the previous snapshot for this ticket (based on the effective snapshot date).
             if (ticket.SnapshotDate != default && ticket.SnapshotDate != DateTime.MinValue)
             {
                 var prevTickets = await DataService.GetTicketsAsync(resolvedItsmSource, decodedCompany, ticket.SnapshotDate.AddTicks(-1));
@@ -254,7 +316,6 @@
 
             asOfContextText = BuildAsOfContextText(asOfDateTime, ticket.SnapshotDate);
 
-            // Load full field history for this ticket.
             fieldChanges = (await DataService.GetTicketHistoryAsync(decodedCompany, decodedTicketKey)).ToList();
         }
         catch (Exception ex)
@@ -272,21 +333,20 @@
         var asOfText = asOfUtc.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
 
         if (effectiveSnapshotDate == default || effectiveSnapshotDate == DateTime.MinValue)
-            return $"Viewing ticket as of {asOfText} (no snapshot context available).";
+            return $"Viewing ticket as of {asOfText} UTC (no snapshot context available).";
 
         var snapText = effectiveSnapshotDate.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
 
         if (effectiveSnapshotDate == asOfUtc)
-            return $"Viewing ticket as of snapshot {snapText}.";
+            return $"Viewing ticket as of snapshot {snapText} UTC.";
 
-        return $"Viewing ticket as of {asOfText} (effective snapshot {snapText}).";
+        return $"Viewing ticket as of {asOfText} UTC (effective snapshot {snapText} UTC).";
     }
 
     private void OnAsOfLocalChanged(ChangeEventArgs args)
     {
         asOfLocal = args.Value?.ToString() ?? string.Empty;
 
-        // If the input is invalid, keep the last valid value instead of switching to "now".
         if (TryParseAsOfUtc(asOfLocal, out var parsedUtc, out var normalizedLocal))
         {
             asOfDateTime = parsedUtc;
@@ -303,7 +363,6 @@
 
     private void NavigateToAsOf()
     {
-        // Parse and normalize before navigating.
         if (TryParseAsOfUtc(asOfLocal, out var parsedUtc, out var normalizedLocal))
         {
             asOfDateTime = parsedUtc;
@@ -320,8 +379,6 @@
 
         var query = $"asOf={Uri.EscapeDataString(asOfLocal)}";
 
-        // Prefer the full route when we have an ITSM source, but fall back to the shorter route
-        // if we can't resolve it yet.
         if (!string.IsNullOrWhiteSpace(itsmResolved))
         {
             var itsm = Uri.EscapeDataString(itsmResolved);
