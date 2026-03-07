@@ -1,112 +1,120 @@
 @using System.Globalization
 
-<div class="mt-3" data-testid="@($"{TableTestId}-panel")">
+<div class="ticket-table-shell">
     @if (ShowColumnManager)
     {
-        <div class="mb-3" data-testid="ticket-columns-panel">
-            <h2 class="h4">Columns</h2>
-            <p class="text-muted" style="max-width: 90ch">
-                Add additional ticket fields to the table. Choose a <em>canonical</em> field name from the dropdown, or
-                switch to <em>custom</em> to type a field name that is not registered as canonical.
-            </p>
-
-            @{ var colIndex = 0; }
-            @foreach (var col in fieldColumns)
-            {
-                var i = colIndex++;
-
-                <div class="d-flex flex-wrap gap-2 align-items-end mb-2" @key="col.Id">
-                    <div>
-                        <label class="form-label" for="col-mode-@i">Type</label>
-                        <select id="col-mode-@i" class="form-select" style="max-width: 12rem" @bind="col.Mode">
-                            <option value="@FieldNameMode.Canonical">Canonical</option>
-                            <option value="@FieldNameMode.Custom">Custom</option>
-                        </select>
-                    </div>
-
-                    @if (col.Mode == FieldNameMode.Canonical)
-                    {
-                        <div>
-                            <label class="form-label" for="col-canonical-@i">Field</label>
-                            <select id="col-canonical-@i" class="form-select" style="min-width: 18rem" data-testid="ticket-column-field-@i" @bind="col.CanonicalFieldName">
-                                <option value="" disabled>-- Select field --</option>
-                                @foreach (var option in GetCanonicalOptionsForColumn(col))
-                                {
-                                    <option value="@option">@option</option>
-                                }
-                            </select>
-                        </div>
-                    }
-                    else
-                    {
-                        <div>
-                            <label class="form-label" for="col-custom-@i">Field</label>
-                            <input id="col-custom-@i" class="form-control" style="min-width: 18rem" data-testid="ticket-column-custom-field-@i" placeholder="e.g. u_custom_field" @bind="col.CustomFieldName" />
-                        </div>
-                    }
-
-                    <button type="button" class="btn btn-outline-secondary" data-testid="remove-column-@i" @onclick="() => RemoveColumn(col)" disabled="@(fieldColumns.Count == 1)">Remove</button>
+        <section class="surface-card column-manager">
+            <div class="surface-card-header">
+                <div>
+                    <h2 class="surface-card-title">Visible columns</h2>
+                    <p class="surface-card-subtitle">Tailor the ticket table to the fields you care about most before you open a ticket.</p>
                 </div>
-            }
+                <button type="button" class="btn btn-outline-primary" data-testid="add-column-btn" @onclick="AddColumn">Add column</button>
+            </div>
 
-            <button type="button" class="btn btn-outline-primary" data-testid="add-column-btn" @onclick="AddColumn">+ Add Column</button>
-        </div>
+            <div class="column-manager-grid">
+                @foreach (var col in fieldColumns.Select((column, index) => new { column, index }))
+                {
+                    var i = col.index;
+                    <div class="column-row-card" @key="col.column.Id">
+                        <div class="form-grid" style="grid-template-columns: minmax(160px, 220px) minmax(220px, 1fr) auto; align-items: end;">
+                            <div class="field-stack">
+                                <label class="form-label" for="col-mode-@i">Type</label>
+                                <select id="col-mode-@i" class="form-select" data-testid="ticket-column-mode-@i" @bind="col.column.Mode">
+                                    <option value="@FieldNameMode.Canonical">Canonical</option>
+                                    <option value="@FieldNameMode.Custom">Custom</option>
+                                </select>
+                            </div>
+
+                            @if (col.column.Mode == FieldNameMode.Canonical)
+                            {
+                                <div class="field-stack">
+                                    <label class="form-label" for="col-canonical-@i">Field</label>
+                                    <select id="col-canonical-@i" class="form-select" data-testid="ticket-column-field-@i" @bind="col.column.CanonicalFieldName">
+                                        <option value="" disabled>-- Select field --</option>
+                                        @foreach (var option in GetCanonicalOptionsForColumn(col.column))
+                                        {
+                                            <option value="@option">@option</option>
+                                        }
+                                    </select>
+                                </div>
+                            }
+                            else
+                            {
+                                <div class="field-stack">
+                                    <label class="form-label" for="col-custom-@i">Field</label>
+                                    <input id="col-custom-@i" class="form-control" data-testid="ticket-column-custom-field-@i" placeholder="e.g. u_custom_field" @bind="col.column.CustomFieldName" />
+                                </div>
+                            }
+
+                            <div class="field-stack">
+                                <button type="button" class="btn btn-outline-secondary" data-testid="remove-column-@i" @onclick="() => RemoveColumn(col.column)" disabled="@(fieldColumns.Count == 1)">Remove</button>
+                            </div>
+                        </div>
+                    </div>
+                }
+            </div>
+        </section>
     }
 
-    <table class="table table-striped table-hover" data-testid="@TableTestId">
-        <thead>
-            <tr>
-                <th>Ticket Key</th>
-                <th>Company</th>
-                <th>ITSM Source</th>
-                @foreach (var col in fieldColumns)
-                {
-                    <th>@GetColumnHeader(col)</th>
-                }
-            </tr>
-        </thead>
-        <tbody>
-            @if (Tickets is null || Tickets.Count == 0)
-            {
-                <tr data-testid="@EmptyRowTestId">
-                    <td colspan="@(3 + fieldColumns.Count)">@EmptyMessage</td>
+    <div class="data-table-wrap">
+        <table class="table table-hover align-middle data-table" data-testid="@TableTestId">
+            <thead>
+                <tr>
+                    <th>Ticket Key</th>
+                    <th>Company</th>
+                    <th>ITSM Source</th>
+                    @foreach (var col in fieldColumns)
+                    {
+                        <th>@GetColumnHeader(col)</th>
+                    }
                 </tr>
-            }
-            else
-            {
-                @foreach (var ticket in Tickets)
+            </thead>
+            <tbody>
+                @if (Tickets is null || Tickets.Count == 0)
                 {
-                    var ticketNumber = TryGetFieldValue(ticket.Fields, "ticket_number");
-                    <tr>
-                        <td>
-                            <a href="@BuildTicketLink(ticket)">@(string.IsNullOrWhiteSpace(ticketNumber) ? ticket.TicketKey : ticketNumber)</a>
-                            @if (!string.IsNullOrWhiteSpace(ticketNumber) && !string.Equals(ticketNumber, ticket.TicketKey, StringComparison.Ordinal))
-                            {
-                                <div class="text-muted small">@ticket.TicketKey</div>
-                            }
+                    <tr data-testid="@EmptyRowTestId">
+                        <td colspan="@(3 + fieldColumns.Count)">
+                            <div class="empty-state">
+                                <p class="empty-state-title">Nothing to show yet</p>
+                                <p class="empty-state-text">@EmptyMessage</p>
+                            </div>
                         </td>
-                        <td>@ticket.CompanyName</td>
-                        <td>@ticket.ItsmSource</td>
-
-                        @foreach (var col in fieldColumns)
-                        {
-                            var fieldKey = col.GetEffectiveFieldName();
-                            <td>@GetFieldValueOrDash(ticket, fieldKey)</td>
-                        }
                     </tr>
                 }
-            }
-        </tbody>
-    </table>
+                else
+                {
+                    @foreach (var ticket in Tickets)
+                    {
+                        var ticketNumber = TryGetFieldValue(ticket.Fields, "ticket_number") ?? TryGetFieldValue(ticket.Fields, "Number");
+                        <tr>
+                            <td class="key-cell">
+                                <a class="ticket-link" href="@BuildTicketLink(ticket)">@(string.IsNullOrWhiteSpace(ticketNumber) ? ticket.TicketKey : ticketNumber)</a>
+                                @if (!string.IsNullOrWhiteSpace(ticketNumber) && !string.Equals(ticketNumber, ticket.TicketKey, StringComparison.Ordinal))
+                                {
+                                    <div class="ticket-meta">@ticket.TicketKey</div>
+                                }
+                            </td>
+                            <td>@ticket.CompanyName</td>
+                            <td><span class="badge-soft badge-soft-neutral">@ticket.ItsmSource</span></td>
+
+                            @foreach (var col in fieldColumns)
+                            {
+                                var fieldKey = col.GetEffectiveFieldName();
+                                <td>@GetFieldValueOrDash(ticket, fieldKey)</td>
+                            }
+                        </tr>
+                    }
+                }
+            </tbody>
+        </table>
+    </div>
 </div>
 
 @code {
     [Parameter]
     public IReadOnlyList<Ticket> Tickets { get; set; } = Array.Empty<Ticket>();
 
-    /// <summary>
-    /// UTC date used for building ticket-detail links as the "asOf" query parameter.
-    /// </summary>
     [Parameter]
     public DateTime AsOfUtc { get; set; } = DateTime.UtcNow;
 
@@ -119,9 +127,6 @@
     [Parameter]
     public string EmptyMessage { get; set; } = "No tickets found.";
 
-    /// <summary>
-    /// Canonical field names to show in the "canonical" dropdown.
-    /// </summary>
     [Parameter]
     public IReadOnlyList<string> CanonicalFieldOptions { get; set; } = Array.Empty<string>();
 
@@ -153,7 +158,6 @@
 
     protected override void OnInitialized()
     {
-        // Default view: match the legacy tables (Status column).
         if (fieldColumns.Count == 0)
         {
             fieldColumns.Add(new TicketFieldColumn
@@ -185,7 +189,6 @@
         var options = new List<string>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
 
-        // Prefer caller-supplied options (already ordered).
         foreach (var o in CanonicalFieldOptions)
         {
             if (string.IsNullOrWhiteSpace(o))
@@ -195,13 +198,11 @@
                 options.Add(o);
         }
 
-        // Ensure the current selection shows up even if the caller didn't include it.
         if (col is not null && !string.IsNullOrWhiteSpace(col.CanonicalFieldName) && seen.Add(col.CanonicalFieldName))
         {
             options.Add(col.CanonicalFieldName);
         }
 
-        // Ensure the canonical and legacy state columns always have valid options.
         if (seen.Add("State"))
             options.Add("State");
         if (seen.Add("status"))
@@ -219,13 +220,11 @@
         if (string.IsNullOrWhiteSpace(fieldName))
             return "Field";
 
-        // Keep friendly headers for the common state aliases.
         if (string.Equals(fieldName, "status", StringComparison.OrdinalIgnoreCase))
             return "Status";
         if (string.Equals(fieldName, "State", StringComparison.OrdinalIgnoreCase))
             return "State";
 
-        // For custom fields, show exactly what the user typed.
         if (col.Mode == FieldNameMode.Custom)
             return fieldName;
 
@@ -243,13 +242,13 @@
     private static string GetFieldValueOrDash(Ticket ticket, string fieldKey)
     {
         if (ticket is null)
-            return "—";
+            return "-";
 
         if (string.IsNullOrWhiteSpace(fieldKey))
-            return "—";
+            return "-";
 
         var v = TryGetFieldValue(ticket.Fields, fieldKey);
-        return string.IsNullOrWhiteSpace(v) ? "—" : v;
+        return string.IsNullOrWhiteSpace(v) ? "-" : v;
     }
 
     private static string? TryGetFieldValue(IDictionary<string, string?> fields, string fieldName)
@@ -257,7 +256,6 @@
         if (fields.TryGetValue(fieldName, out var v))
             return v;
 
-        // Cheap case-insensitive fallback (dictionary is Ordinal in most of our paths)
         foreach (var kv in fields)
         {
             if (string.Equals(kv.Key, fieldName, StringComparison.OrdinalIgnoreCase))

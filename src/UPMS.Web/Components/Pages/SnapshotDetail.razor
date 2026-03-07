@@ -5,19 +5,64 @@
 
 <PageTitle>Snapshot @SnapshotId - UPMS</PageTitle>
 
-<h1>Snapshot @SnapshotId</h1>
+<div class="page-breadcrumb">
+    <a href="/snapshots">Snapshots</a>
+    <span class="divider">/</span>
+    <span>@SnapshotId</span>
+</div>
 
-<p data-testid="snapshot-itsm-source">ITSM Source: @itsmSource</p>
-<p data-testid="snapshot-date">Snapshot Date: @snapshotDate</p>
+<section class="app-page-header compact">
+    <div>
+        <p class="page-eyebrow">Snapshot detail</p>
+        <h1 class="page-title">Snapshot details</h1>
+        <p class="page-description">Inspect the imported ticket list and open any record using the exact snapshot timestamp as context.</p>
+    </div>
+    <div class="page-actions">
+        <a class="btn btn-outline-secondary" href="/snapshots">Back to snapshots</a>
+    </div>
+</section>
 
-<a href="/snapshots">Back to Snapshots</a>
+<section class="stat-grid">
+    <article class="stat-card">
+        <p class="stat-label">Snapshot ID</p>
+        <p class="stat-value stat-value--small">@SnapshotId</p>
+    </article>
+    <article class="stat-card">
+        <p class="stat-label">ITSM Source</p>
+        <p class="stat-value stat-value--small" data-testid="snapshot-itsm-source">@DisplayItsmSource</p>
+    </article>
+    <article class="stat-card">
+        <p class="stat-label">Snapshot Date</p>
+        <p class="stat-value stat-value--small" data-testid="snapshot-date">@DisplaySnapshotDate</p>
+    </article>
+    <article class="stat-card emphasis">
+        <p class="stat-label">Tickets</p>
+        <p class="stat-value">@tickets.Count</p>
+    </article>
+</section>
 
-<TicketTable Tickets="tickets"
-            AsOfUtc="snapshotDateUtc"
-            TableTestId="snapshot-ticket-table"
-            EmptyRowTestId="snapshot-ticket-table-empty"
-            EmptyMessage="No tickets found in this snapshot."
-            CanonicalFieldOptions="availableFieldNames" />
+@if (!string.IsNullOrWhiteSpace(loadError))
+{
+    <div class="alert alert-warning" role="alert">
+        @loadError
+    </div>
+}
+
+<section class="surface-card">
+    <div class="surface-card-header">
+        <div>
+            <h2 class="surface-card-title">Tickets in this snapshot</h2>
+            <p class="surface-card-subtitle">Adjust the optional columns, then open a ticket to view the full historical record.</p>
+        </div>
+    </div>
+
+    <TicketTable Tickets="tickets"
+                AsOfUtc="snapshotDateUtc"
+                TableTestId="snapshot-ticket-table"
+                EmptyRowTestId="snapshot-ticket-table-empty"
+                EmptyMessage="No tickets found in this snapshot."
+                CanonicalFieldOptions="availableFieldNames" />
+</section>
 
 @code {
     [Parameter]
@@ -33,64 +78,72 @@
     private string itsmSource = string.Empty;
     private string snapshotDate = string.Empty;
     private DateTime snapshotDateUtc = DateTime.UtcNow;
+    private string? loadError;
     private List<string> availableFieldNames = new();
+
+    private string DisplayItsmSource => string.IsNullOrWhiteSpace(itsmSource) ? "Not available" : itsmSource;
+    private string DisplaySnapshotDate => string.IsNullOrWhiteSpace(snapshotDate) ? "Not available" : snapshotDate + " UTC";
 
     protected override async Task OnInitializedAsync()
     {
+        loadError = null;
+
         try
         {
-            if (Guid.TryParse(SnapshotId, out Guid parsedId))
+            if (!Guid.TryParse(SnapshotId, out Guid parsedId))
             {
-                IEnumerable<Ticket> results = await DataService.GetTicketsBySnapshotAsync(parsedId);
-                tickets = results.ToList();
+                loadError = "The snapshot identifier is not valid.";
+                return;
+            }
 
-                Ticket? first = tickets.FirstOrDefault();
-                if (first is not null)
+            IEnumerable<Ticket> results = await DataService.GetTicketsBySnapshotAsync(parsedId);
+            tickets = results.ToList();
+
+            Ticket? first = tickets.FirstOrDefault();
+            if (first is not null)
+            {
+                itsmSource = first.ItsmSource;
+                snapshotDateUtc = DateTime.SpecifyKind(first.SnapshotDate, DateTimeKind.Utc);
+                snapshotDate = snapshotDateUtc.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
+
+                try
                 {
-                    itsmSource = first.ItsmSource;
-                    snapshotDateUtc = DateTime.SpecifyKind(first.SnapshotDate, DateTimeKind.Utc);
-                    snapshotDate = snapshotDateUtc.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
+                    var mappings = FieldMappingService.GetMappingsForSource(itsmSource).ToList();
 
-                    // Build canonical field options for the column dropdown.
-                    try
+                    var canonical = mappings
+                        .Select(m => m.CanonicalFieldName)
+                        .Where(n => !string.IsNullOrWhiteSpace(n))
+                        .Select(n => string.Equals(n, "ticket_key", StringComparison.Ordinal) ? "ticket_number" : n!)
+                        .Distinct(StringComparer.Ordinal)
+                        .OrderBy(n => n, StringComparer.Ordinal)
+                        .ToList();
+
+                    var ordered = new List<string>();
+                    var set = new HashSet<string>(StringComparer.Ordinal);
+
+                    void Add(string name)
                     {
-                        var mappings = FieldMappingService.GetMappingsForSource(itsmSource).ToList();
-
-                        var canonical = mappings
-                            .Select(m => m.CanonicalFieldName)
-                            .Where(n => !string.IsNullOrWhiteSpace(n))
-                            .Select(n => string.Equals(n, "ticket_key", StringComparison.Ordinal) ? "ticket_number" : n!)
-                            .Distinct(StringComparer.Ordinal)
-                            .OrderBy(n => n, StringComparer.Ordinal)
-                            .ToList();
-
-                        // Include a few system / common fields.
-                        var ordered = new List<string>();
-                        var set = new HashSet<string>(StringComparer.Ordinal);
-
-                        void Add(string name)
-                        {
-                            if (set.Add(name))
-                                ordered.Add(name);
-                        }
-
-                        Add("State");
-                        Add("status");
-                        foreach (var c in canonical)
-                            Add(c);
-
-                        availableFieldNames = ordered;
+                        if (set.Add(name))
+                            ordered.Add(name);
                     }
-                    catch
-                    {
-                        availableFieldNames = new();
-                    }
+
+                    Add("State");
+                    Add("status");
+                    foreach (var c in canonical)
+                        Add(c);
+
+                    availableFieldNames = ordered;
+                }
+                catch
+                {
+                    availableFieldNames = new();
                 }
             }
         }
         catch
         {
             tickets = [];
+            loadError = "Snapshot details could not be loaded.";
         }
     }
 }

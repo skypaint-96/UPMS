@@ -1,117 +1,142 @@
 @inject IItsmSourceService ItsmSourceService
 
-@foreach (var param in Parameters)
-{
-    var fromKey = param.Key + "_from";
-    var toKey = param.Key + "_to";
+<div class="report-parameter-grid">
+    @foreach (var param in Parameters)
+    {
+        var fromKey = param.Key + "_from";
+        var toKey = param.Key + "_to";
 
-    <div class="parameter-field">
-        <label for="@param.Key">
-            @param.DisplayName@(param.IsRequired ? " *" : "")
-        </label>
+        <div class="@GetFieldClass(param)">
+            <label for="@param.Key">
+                @param.DisplayName
+                @if (param.IsRequired)
+                {
+                    <span class="required-mark">*</span>
+                }
+            </label>
 
-        @if (param.Type == ReportParameterType.Text)
-        {
-            <input id="@param.Key"
-                   type="text"
-                   value="@GetValue(param.Key)"
-                   @onchange="e => SetValue(param.Key, e.Value?.ToString() ?? string.Empty)" />
-        }
-        else if (param.Type == ReportParameterType.TextArea)
-        {
-            <textarea id="@param.Key"
-                      rows="5"
-                      @onchange="e => SetValue(param.Key, e.Value?.ToString() ?? string.Empty)">@GetValue(param.Key)</textarea>
-        }
-        else if (param.Type == ReportParameterType.Date)
-        {
-            <input id="@param.Key"
-                   type="date"
-                   value="@GetValue(param.Key)"
-                   @onchange="e => SetValue(param.Key, e.Value?.ToString() ?? string.Empty)" />
-        }
-        else if (param.Type == ReportParameterType.ItsmSource)
-        {
-            <select id="@param.Key"
-                    @onchange="e => SetValue(param.Key, e.Value?.ToString() ?? string.Empty)">
-                <option value="">-- Select --</option>
+            @if (!string.IsNullOrWhiteSpace(param.Description))
+            {
+                <div class="field-help">@param.Description</div>
+            }
 
-                @if (itsmSources.Count == 0)
-                {
-                    <option value="" disabled>(No ITSM sources defined)</option>
-                }
-                else
-                {
-                    @foreach (var src in itsmSources)
-                    {
-                        <option value="@src.Name" selected="@(GetValue(param.Key) == src.Name)">@src.DisplayLabel (@src.Name)</option>
-                    }
-                }
-            </select>
-        }
-        else if (param.Type == ReportParameterType.Select)
-        {
-            <select id="@param.Key"
-                    @onchange="e => SetValue(param.Key, e.Value?.ToString() ?? string.Empty)">
-                <option value="">-- Select --</option>
-                @foreach (var option in param.Options ?? Array.Empty<string>())
-                {
-                    <option value="@option" selected="@(GetValue(param.Key) == option)">@option</option>
-                }
-            </select>
-        }
-        else if (param.Type == ReportParameterType.MultiSelect)
-        {
-            var selectedOptions = GetMultiSelectValues(param.Key);
-            <div class="multi-select">
-                @if ((param.Options?.Count ?? 0) == 0)
-                {
-                    <div class="text-muted small">No options available.</div>
-                }
-                else
-                {
-                    @for (var i = 0; i < (param.Options?.Count ?? 0); i++)
-                    {
-                        var option = param.Options![i];
-                        var id = $"{param.Key}_{i}";
-                        var isChecked = selectedOptions.Contains(option);
-
-                        <label class="multi-select-option" for="@id">
-                            <input id="@id"
-                                   type="checkbox"
-                                   checked="@isChecked"
-                                   @onchange="e => OnMultiSelectChanged(param.Key, option, e.Value)" />
-                            @option
-                        </label>
-                    }
-                }
-            </div>
-        }
-        else if (param.Type == ReportParameterType.Boolean)
-        {
-            var isChecked = GetValue(param.Key) == "true";
-            <input id="@param.Key"
-                   type="checkbox"
-                   checked="@isChecked"
-                   @onchange="e => OnBooleanChanged(param.Key, e.Value)" />
-        }
-        else if (param.Type == ReportParameterType.DateRange)
-        {
-            <div class="date-range">
-                <label for="@fromKey">From</label>
-                <input id="@fromKey"
+            @if (param.Type == ReportParameterType.Text)
+            {
+                <input id="@param.Key"
+                       class="form-control"
+                       type="text"
+                       value="@GetValue(param.Key)"
+                       @onchange="e => SetValue(param.Key, e.Value?.ToString() ?? string.Empty)" />
+            }
+            else if (param.Type == ReportParameterType.TextArea)
+            {
+                <textarea id="@param.Key"
+                          class="form-control"
+                          rows="5"
+                          @onchange="e => SetValue(param.Key, e.Value?.ToString() ?? string.Empty)">@GetValue(param.Key)</textarea>
+            }
+            else if (param.Type == ReportParameterType.Date)
+            {
+                <input id="@param.Key"
+                       class="form-control"
                        type="date"
-                       value="@GetValue(fromKey)"
-                       @onchange="e => SetValue(fromKey, e.Value?.ToString() ?? string.Empty)" />
-                <label for="@toKey">To</label>
-                <input id="@toKey"
-                       type="date"
-                       value="@GetValue(toKey)"
-                       @onchange="e => SetValue(toKey, e.Value?.ToString() ?? string.Empty)" />
-            </div>
-        }
-    </div>
-}
+                       value="@GetValue(param.Key)"
+                       @onchange="e => SetValue(param.Key, e.Value?.ToString() ?? string.Empty)" />
+            }
+            else if (param.Type == ReportParameterType.ItsmSource)
+            {
+                <select id="@param.Key"
+                        class="form-select"
+                        @onchange="e => SetValue(param.Key, e.Value?.ToString() ?? string.Empty)">
+                    <option value="">-- Select --</option>
+
+                    @if (itsmSources.Count == 0)
+                    {
+                        <option value="" disabled>(No ITSM sources defined)</option>
+                    }
+                    else
+                    {
+                        @foreach (var src in itsmSources)
+                        {
+                            <option value="@src.Name" selected="@(GetValue(param.Key) == src.Name)">@src.DisplayLabel (@src.Name)</option>
+                        }
+                    }
+                </select>
+            }
+            else if (param.Type == ReportParameterType.Select)
+            {
+                <select id="@param.Key"
+                        class="form-select"
+                        @onchange="e => SetValue(param.Key, e.Value?.ToString() ?? string.Empty)">
+                    <option value="">-- Select --</option>
+                    @foreach (var option in param.Options ?? Array.Empty<string>())
+                    {
+                        <option value="@option" selected="@(GetValue(param.Key) == option)">@option</option>
+                    }
+                </select>
+            }
+            else if (param.Type == ReportParameterType.MultiSelect)
+            {
+                var selectedOptions = GetMultiSelectValues(param.Key);
+                <div class="multi-select">
+                    @if ((param.Options?.Count ?? 0) == 0)
+                    {
+                        <div class="text-muted small">No options available.</div>
+                    }
+                    else
+                    {
+                        @for (var i = 0; i < (param.Options?.Count ?? 0); i++)
+                        {
+                            var option = param.Options![i];
+                            var id = $"{param.Key}_{i}";
+                            var isChecked = selectedOptions.Contains(option);
+
+                            <label class="multi-select-option" for="@id">
+                                <input id="@id"
+                                       type="checkbox"
+                                       checked="@isChecked"
+                                       @onchange="e => OnMultiSelectChanged(param.Key, option, e.Value)" />
+                                <span>@option</span>
+                            </label>
+                        }
+                    }
+                </div>
+            }
+            else if (param.Type == ReportParameterType.Boolean)
+            {
+                var isChecked = GetValue(param.Key) == "true";
+                <label class="multi-select-option" for="@param.Key">
+                    <input id="@param.Key"
+                           type="checkbox"
+                           checked="@isChecked"
+                           @onchange="e => OnBooleanChanged(param.Key, e.Value)" />
+                    <span>Enabled</span>
+                </label>
+            }
+            else if (param.Type == ReportParameterType.DateRange)
+            {
+                <div class="date-range">
+                    <div class="field-stack">
+                        <label for="@fromKey">From</label>
+                        <input id="@fromKey"
+                               class="form-control"
+                               type="date"
+                               value="@GetValue(fromKey)"
+                               @onchange="e => SetValue(fromKey, e.Value?.ToString() ?? string.Empty)" />
+                    </div>
+                    <div class="field-stack">
+                        <label for="@toKey">To</label>
+                        <input id="@toKey"
+                               class="form-control"
+                               type="date"
+                               value="@GetValue(toKey)"
+                               @onchange="e => SetValue(toKey, e.Value?.ToString() ?? string.Empty)" />
+                    </div>
+                </div>
+            }
+        </div>
+    }
+</div>
 
 @code {
     [Parameter] public IReadOnlyList<ReportParameterDefinition> Parameters { get; set; } = Array.Empty<ReportParameterDefinition>();
@@ -131,9 +156,15 @@
         }
         catch
         {
-            // Avoid breaking the entire report form if sources cannot be loaded.
             itsmSources = Array.Empty<ItsmSource>();
         }
+    }
+
+    private static string GetFieldClass(ReportParameterDefinition param)
+    {
+        return param.Type is ReportParameterType.TextArea or ReportParameterType.MultiSelect or ReportParameterType.DateRange
+            ? "parameter-field parameter-field--full"
+            : "parameter-field";
     }
 
     private string GetValue(string key) =>
@@ -157,7 +188,6 @@
         if (string.IsNullOrWhiteSpace(raw))
             return new HashSet<string>(StringComparer.Ordinal);
 
-        // Accept either comma or semicolon separated values.
         var parts = raw
             .Split([',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
@@ -174,7 +204,6 @@
         else
             selected.Remove(option);
 
-        // Preserve the order defined by the plugin's options when possible.
         string serialized;
         var param = Parameters.FirstOrDefault(p => p.Key == key);
         if (param?.Options is { Count: > 0 } options)
