@@ -201,7 +201,9 @@
             options.Add(col.CanonicalFieldName);
         }
 
-        // Ensure the legacy default column always has a valid option.
+        // Ensure the canonical and legacy state columns always have valid options.
+        if (seen.Add("State"))
+            options.Add("State");
         if (seen.Add("status"))
             options.Add("status");
 
@@ -217,9 +219,11 @@
         if (string.IsNullOrWhiteSpace(fieldName))
             return "Field";
 
-        // Keep the legacy header for the default column.
+        // Keep friendly headers for the common state aliases.
         if (string.Equals(fieldName, "status", StringComparison.OrdinalIgnoreCase))
             return "Status";
+        if (string.Equals(fieldName, "State", StringComparison.OrdinalIgnoreCase))
+            return "State";
 
         // For custom fields, show exactly what the user typed.
         if (col.Mode == FieldNameMode.Custom)

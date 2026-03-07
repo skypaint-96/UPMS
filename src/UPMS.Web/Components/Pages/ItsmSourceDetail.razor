@@ -67,9 +67,9 @@ else
 
     <p style="max-width: 70ch">
         <strong>Tip:</strong> map the source's ticket identifier (INC0012345 / PROJ-123 / etc.) to
-        <code>ticket_number</code>. UPMS generates an internal <code>ticket_key</code> in the form
-        <code>{itsmSource}::{company}::{ticket_number}</code> and does <em>not</em> store <code>ticket_key</code>
-        as a ticket field.
+        <code>Number</code>. UPMS generates an internal <code>ticket_key</code> in the form
+        <code>{itsmSource}::{company}::{number}</code> and does <em>not</em> store <code>ticket_key</code>
+        as a ticket field. Legacy aliases such as <code>ticket_number</code> still work.
     </p>
 
     @if (!string.IsNullOrEmpty(addMappingError))
@@ -81,7 +81,7 @@ else
         <label for="source-field-name">Source Field Name</label>
         <input id="source-field-name"
                data-testid="add-mapping-source-field"
-               placeholder="e.g. short_description"
+               placeholder="e.g. Short Description"
                @bind="newSourceField" />
     </div>
 
@@ -121,21 +121,7 @@ else
     private bool   newIsRequired;
     private string? addMappingError;
 
-    private static readonly string[] CanonicalNames =
-    [
-        // NOTE: "ticket_key" is an internal derived identifier.
-        // Map the source ticket identifier (INC0012345 / PROJ-123 / etc.) to "ticket_number".
-        "ticket_number",
-        "company",
-        "title",
-        "description",
-        "priority",
-        "status",
-        "created_date",
-        "updated_date",
-        "assigned_to",
-        "category",
-    ];
+    private static readonly IReadOnlyList<string> CanonicalNames = CanonicalFieldCatalog.Names;
 
     protected override async Task OnInitializedAsync()
     {

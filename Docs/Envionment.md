@@ -2,40 +2,41 @@
 
 **Docker-first development environment for UPMS**
 
-This document defines the authoritative development environment for the Unified Problem Management System. All contributors and CI pipelines should assume this specification.
+This document describes the expected development environment for the Unified Problem Management System.
 
 ---
 
 ## Core Principle
 
-> **Everything must be runnable via `docker compose up`.**
+> Everything must be runnable via `docker compose up`.
 
-- All services run in Docker containers.
-- Local development mirrors containerised execution.
-- No component relies on a host-installed database or any external infrastructure.
-
-Developers may optionally run `UPMS.Web` locally with the .NET SDK for faster iteration, but must point it at the Docker-hosted PostgreSQL instance.
+- All services run in containers.
+- Local development should mirror containerised execution.
+- You *can* run `UPMS.Web` locally with the .NET SDK for faster iteration, but it should still point at the Docker-hosted PostgreSQL instance.
 
 ---
 
 ## Technology Stack
 
-### Web Application
+### Web application
+
 - **Framework:** Blazor Server (.NET 10)
 - **Language:** C#
-- **Rendering model:** Interactive Server (SignalR-based)
-- **Container:** single `upms.web` container
+- **Rendering model:** Interactive Server (SignalR)
+- **Container:** `UPMS_web`
 
-### Data Access Library
+### Data access library
+
 - **Type:** .NET class library (.NET 10)
-- **ORM:** Dapper + Npgsql
+- **ORM:** EF Core + Npgsql
 - **Referenced by:** `UPMS.Web` as a project dependency (not a separate container)
 
 ### Database
-- **Engine:** PostgreSQL 15+
-- **Container:** `db`
-- **Schema management:** SQL migration scripts in [`sql/migrations/`](../sql/migrations/), applied on container initialisation via `docker-entrypoint-initdb.d`
-- **Primary access pattern:** stored procedures for bulk reads; direct Dapper queries for writes
+
+- **Engine:** PostgreSQL 16
+- **Container:** `UPMS_db`
+- **Schema management:** EF Core migrations in `src/UPMS.Data/Migrations`, applied automatically by the web app at startup.
+- **Notes:** The repo also contains reference SQL in `sql/stored-procedures/`.
 
 ---
 
@@ -43,42 +44,32 @@ Developers may optionally run `UPMS.Web` locally with the .NET SDK for faster it
 
 | Container | Responsibility | Port (host) |
 |-----------|---------------|-------------|
-| `db` | PostgreSQL 15 database | `5432` |
-| `upms.web` | Blazor Server web application | `8080` |
-| `adminer` *(optional)* | Database inspection UI | `8090` |
+| `UPMS_web` | Blazor Server web app | `8081` |
+| `UPMS_db` | PostgreSQL database | `5432` |
+| `UPMS_db_test` | PostgreSQL database for integration tests | `5433` |
 
-There is no worker service, no message queue, no object storage (MinIO or otherwise), and no separate API backend. The Blazor Server application handles all server-side logic and UI.
+There is no separate API backend and no worker service. The Blazor Server application handles server-side logic and UI.
 
 ---
 
 ## Running the Application
 
 ### Prerequisites
-- Docker Desktop (or Docker Engine with Compose v2+)
-- .NET 10 SDK *(only required for local non-Docker development)*
 
-### Start all services
+- Docker Desktop (or Docker Engine with Compose v2+)
+- .NET SDK (only required if you want to run the web app outside Docker)
+
+### Start services
 
 ```bash
 docker compose up -d
 ```
 
-The application will be available at: **http://localhost:8080**
+The application will be available at **http://localhost:8081**.
 
-### Start with the database admin UI
+On startup, `UPMS_web` applies EF Core migrations automatically.
 
-```bash
-docker compose --profile tools up -d
-```
-
-Adminer will be available at: **http://localhost:8090**
-- System: `PostgreSQL`
-- Server: `db`
-- Username: `upms`
-- Password: `upms_dev_password`
-- Database: `upms`
-
-### Stop all services
+### Stop services
 
 ```bash
 docker compose down
@@ -95,77 +86,43 @@ docker compose up -d
 
 ## Environment Variables
 
-Configuration is provided via environment variables. For local development these are set in `docker-compose.override.yml` or a `.env` file (not committed to source control).
+Most development defaults are defined in `docker-compose.override.yml`.
 
-### Database
+### Database (`UPMS_db`)
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `POSTGRES_USER` | `upms` | PostgreSQL username |
-| `POSTGRES_PASSWORD` | `upms_dev_password` | PostgreSQL password |
+| `POSTGRES_PASSWORD` | `upms` | PostgreSQL password |
 | `POSTGRES_DB` | `upms` | PostgreSQL database name |
 
-### Application (`upms.web`)
+### Web application (`UPMS_web`)
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `ASPNETCORE_ENVIRONMENT` | `Development` | ASP.NET Core environment name |
-| `ConnectionStrings__Default` | `Host=db;Port=5432;Database=upms;Username=upms;Password=upms_dev_password` | PostgreSQL connection string |
-
-### Connection String Convention
-
-The connection string is set via the `ConnectionStrings__Default` environment variable (double underscore = nested JSON key separator in .NET configuration). It maps to the `ConnectionStrings.Default` key in `appsettings.json`.
-
-Example:
-```
-ConnectionStrings__Default=Host=db;Port=5432;Database=upms;Username=upms;Password=upms_dev_password
-```
-
-For local (non-Docker) development, use `Host=localhost` instead of `Host=db`.
+| Variable | Default (dev) | Description |
+|----------|----------------|-------------|
+| `ASPNETCORE_ENVIRONMENT` | `Development` | ASP.NET Core environment |
+| `ASPNETCORE_URLS` | `http://+:8080` | Kestrel binding inside container |
+| `UPMS_CONNECTION_STRING` | `Host=UPMS_db;Port=5432;Database=upms;Username=upms;Password=upms` | PostgreSQL connection string |
+| `UPMS_CONNECTION_STRING_FILE` | *(unset)* | Optional: read a connection string from a file (Docker secrets style) |
+| `AUTH_MODE` | `None` | Auth mode (`None` for dev, `Entra` for Azure AD) |
 
 ---
 
-## Database Lifecycle
+## Local Development Without Docker for the Web App
 
-### Initialisation
+If you want to run `UPMS.Web` locally while PostgreSQL runs in Docker:
 
-SQL migration scripts in [`sql/migrations/`](../sql/migrations/) are mounted into the PostgreSQL container at `/docker-entrypoint-initdb.d/`. PostgreSQL runs all `.sql` files in that directory automatically on first startup (i.e. when the `pgdata` volume is empty).
-
-Scripts are run in filename order:
-1. [`001_initial_schema.sql`](../sql/migrations/001_initial_schema.sql) — creates tables
-2. [`002_indexes.sql`](../sql/migrations/002_indexes.sql) — creates indexes
-
-Stored procedures in [`sql/stored-procedures/`](../sql/stored-procedures/) must be applied separately if needed for local development.
-
-### Schema Changes
-
-When a new migration is needed:
-1. Add a new numbered `.sql` file to [`sql/migrations/`](../sql/migrations/).
-2. Run `docker compose down -v && docker compose up -d` to recreate the database from scratch.
-
-In development, destroying and recreating the volume is the expected workflow for schema changes.
-
----
-
-## Local Development (Without Docker for the Web App)
-
-If running `UPMS.Web` locally with the .NET SDK while PostgreSQL runs in Docker:
-
-1. Start the database container:
+1. Start the DB container:
    ```bash
-   docker compose up -d db
+   docker compose up -d UPMS_db
    ```
 
-2. Set the connection string in `src/UPMS.Web/appsettings.Development.json` or via user secrets:
-   ```json
-   {
-     "ConnectionStrings": {
-       "Default": "Host=localhost;Port=5432;Database=upms;Username=upms;Password=upms_dev_password"
-     }
-   }
+2. Set your connection string (environment variable is simplest):
+   ```bash
+   export UPMS_CONNECTION_STRING="Host=localhost;Port=5432;Database=upms;Username=upms;Password=upms"
    ```
 
-3. Run the application:
+3. Run the web app:
    ```bash
    cd src/UPMS.Web
    dotnet run
@@ -173,28 +130,32 @@ If running `UPMS.Web` locally with the .NET SDK while PostgreSQL runs in Docker:
 
 ---
 
+## Database Lifecycle
+
+### Migrations
+
+- The schema is managed by EF Core migrations in `src/UPMS.Data/Migrations`.
+- `UPMS_web` runs `db.Database.MigrateAsync()` on startup.
+
+To create a new migration (requires .NET SDK + EF tooling):
+
+```bash
+cd src/UPMS.Data
+dotnet ef migrations add <MigrationName> --startup-project ../UPMS.Web
+```
+
+---
+
 ## Health Checks
 
 | Service | Health Check |
-|---------|-------------|
-| `db` | `pg_isready -U upms -d upms` |
-| `upms.web` | Depends on `db` being healthy before starting |
+|---------|--------------|
+| `UPMS_db` | `pg_isready -U upms -d upms` |
+| `UPMS_web` | Depends on `UPMS_db` being healthy before starting |
 
 ---
 
-## Logging
+## Optional Tools
 
-- All application logs are written to stdout/stderr.
-- `docker compose logs -f upms.web` is the primary debugging surface.
-- Structured logging is preferred (ASP.NET Core default JSON format in production).
-
----
-
-## Non-Goals
-
-This environment does **not** include:
-- A React, TypeScript, or Vite frontend
-- A separate ASP.NET Core Web API backend
-- A .NET Worker Service container
-- MinIO or any object storage
-- Live ITSM system integrations
+A DB admin UI (Adminer/pgAdmin) is not included by default. If you want one, add it under a `tools` profile.
+See [`Docs/DOCKER.md`](DOCKER.md).
