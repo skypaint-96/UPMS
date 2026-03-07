@@ -45,7 +45,7 @@ public static class ReportTemplateContentTypeMapper
         if (string.IsNullOrWhiteSpace(extension))
             return string.Empty;
 
-        return extension.StartsWith('.', StringComparison.Ordinal)
+        return extension.StartsWith(".", StringComparison.Ordinal)
             ? extension.ToLowerInvariant()
             : $".{extension.ToLowerInvariant()}";
     }
