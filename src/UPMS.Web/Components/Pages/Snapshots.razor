@@ -1,49 +1,97 @@
 @page "/snapshots"
 @rendermode InteractiveServer
 
-
 <PageTitle>Snapshots - UPMS</PageTitle>
 
-<h1>Snapshots</h1>
+<section class="app-page-header">
+    <div>
+        <p class="page-eyebrow">History</p>
+        <h1 class="page-title">Snapshots</h1>
+        <p class="page-description">Browse uploaded source extracts and open any snapshot to inspect the tickets as they existed on that date.</p>
+    </div>
+    <div class="page-actions">
+        <a class="btn btn-primary" href="/upload">Upload snapshot</a>
+    </div>
+</section>
 
-<div>
-    <select data-testid="snapshot-itsm-filter" @bind="selectedItsmSource" @bind:after="LoadSnapshotsAsync">
-        <option value="">All ITSM Sources</option>
-        @foreach (string source in itsmSources)
-        {
-            <option value="@source">@source</option>
-        }
-    </select>
-</div>
+<section class="surface-card">
+    <div class="form-grid form-grid-2">
+        <div class="field-stack">
+            <label for="snapshot-itsm-filter">Filter by ITSM source</label>
+            <select id="snapshot-itsm-filter" class="form-select" data-testid="snapshot-itsm-filter" @bind="selectedItsmSource" @bind:after="LoadSnapshotsAsync">
+                <option value="">All ITSM Sources</option>
+                @foreach (string source in itsmSources)
+                {
+                    <option value="@source">@source</option>
+                }
+            </select>
+            <div class="helper-text">Use the filter to narrow the list to a single source instance.</div>
+        </div>
 
-<table data-testid="snapshot-table">
-    <thead>
-        <tr>
-            <th>ITSM Source</th>
-            <th>Snapshot Date</th>
-            <th>Uploaded By</th>
-        </tr>
-    </thead>
-    <tbody>
-        @if (snapshots.Count == 0)
-        {
-            <tr data-testid="snapshot-table-empty">
-                <td colspan="3">No snapshots found.</td>
-            </tr>
-        }
-        else
-        {
-            @foreach (Snapshot snapshot in snapshots)
-            {
+        <div class="field-stack justify-content-end">
+            <div class="selection-summary">
+                <span class="badge-soft badge-soft-info">@snapshots.Count snapshot(s) shown</span>
+                <span class="badge-soft badge-soft-neutral">@totalSnapshotCount total recorded</span>
+                @if (!string.IsNullOrWhiteSpace(selectedItsmSource))
+                {
+                    <span class="badge-soft badge-soft-success">Filtered: @selectedItsmSource</span>
+                }
+            </div>
+        </div>
+    </div>
+</section>
+
+@if (!string.IsNullOrWhiteSpace(loadError))
+{
+    <div class="alert alert-warning" role="alert">
+        @loadError
+    </div>
+}
+
+<section class="surface-card">
+    <div class="surface-card-header">
+        <div>
+            <h2 class="surface-card-title">Snapshot history</h2>
+            <p class="surface-card-subtitle">Each snapshot is a point-in-time import and can be opened to review the related ticket list.</p>
+        </div>
+    </div>
+
+    <div class="data-table-wrap">
+        <table class="table table-hover align-middle data-table" data-testid="snapshot-table">
+            <thead>
                 <tr>
-                    <td><a href="/snapshots/@snapshot.Id">@snapshot.ItsmSource</a></td>
-                    <td>@snapshot.SnapshotDate.ToString("yyyy-MM-dd HH:mm:ss")</td>
-                    <td>@snapshot.UploadedBy</td>
+                    <th>ITSM Source</th>
+                    <th>Snapshot Date</th>
+                    <th>Uploaded By</th>
                 </tr>
-            }
-        }
-    </tbody>
-</table>
+            </thead>
+            <tbody>
+                @if (snapshots.Count == 0)
+                {
+                    <tr data-testid="snapshot-table-empty">
+                        <td colspan="3">
+                            <div class="empty-state">
+                                <p class="empty-state-title">No snapshots found</p>
+                                <p class="empty-state-text">Try another source filter or upload a new snapshot.</p>
+                            </div>
+                        </td>
+                    </tr>
+                }
+                else
+                {
+                    @foreach (Snapshot snapshot in snapshots)
+                    {
+                        <tr>
+                            <td><a class="ticket-link" href="/snapshots/@snapshot.Id">@snapshot.ItsmSource</a></td>
+                            <td>@snapshot.SnapshotDate.ToString("yyyy-MM-dd HH:mm") UTC</td>
+                            <td>@snapshot.UploadedBy</td>
+                        </tr>
+                    }
+                }
+            </tbody>
+        </table>
+    </div>
+</section>
 
 @code {
     [Inject]
@@ -52,24 +100,67 @@
     private List<Snapshot> snapshots = [];
     private List<string> itsmSources = [];
     private string selectedItsmSource = string.Empty;
+    private bool isLoading;
+    private string? loadError;
+    private int totalSnapshotCount;
 
     protected override async Task OnInitializedAsync()
     {
+        await LoadItsmSourcesAsync();
         await LoadSnapshotsAsync();
+    }
+
+    private async Task LoadItsmSourcesAsync()
+    {
+        try
+        {
+            var allSnapshots = (await DataService.GetSnapshotsAsync()).ToList();
+            itsmSources = allSnapshots
+                .Select(s => s.ItsmSource)
+                .Where(s => !string.IsNullOrWhiteSpace(s))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(s => s, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            totalSnapshotCount = allSnapshots.Count;
+        }
+        catch
+        {
+            itsmSources = [];
+            totalSnapshotCount = 0;
+        }
     }
 
     private async Task LoadSnapshotsAsync()
     {
+        isLoading = true;
+        loadError = null;
+
         try
         {
-            string? filter = string.IsNullOrEmpty(selectedItsmSource) ? null : selectedItsmSource;
+            string? filter = string.IsNullOrWhiteSpace(selectedItsmSource) ? null : selectedItsmSource;
             IEnumerable<Snapshot> results = await DataService.GetSnapshotsAsync(filter);
-            snapshots = results.ToList();
-            itsmSources = snapshots.Select(s => s.ItsmSource).Distinct().OrderBy(s => s).ToList();
+            snapshots = results
+                .OrderByDescending(s => s.SnapshotDate)
+                .ToList();
+
+            if (itsmSources.Count == 0)
+            {
+                itsmSources = snapshots
+                    .Select(s => s.ItsmSource)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(s => s, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                totalSnapshotCount = snapshots.Count;
+            }
         }
         catch
         {
             snapshots = [];
+            loadError = "Snapshot history could not be loaded right now.";
+        }
+        finally
+        {
+            isLoading = false;
         }
     }
 }

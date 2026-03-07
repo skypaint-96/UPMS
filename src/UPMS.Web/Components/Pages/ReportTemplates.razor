@@ -1,0 +1,260 @@
+@page "/report-templates"
+@rendermode InteractiveServer
+
+@using UPMS.Web.Templates
+
+@inject IReportTemplateStore TemplateStore
+
+<PageTitle>Report Templates - UPMS</PageTitle>
+
+<section class="app-page-header">
+    <div>
+        <p class="page-eyebrow">Templates</p>
+        <h1 class="page-title">Report Templates</h1>
+        <p class="page-description">Upload tokenised templates that the reporting system can fill with live ticket data. Supported types include HTML, EML, TXT, CSV, XML, and OOXML package files such as DOCX, XLSX, and PPTX.</p>
+    </div>
+</section>
+
+<section class="stat-grid">
+    <article class="stat-card emphasis">
+        <p class="stat-label">Uploaded templates</p>
+        <p class="stat-value">@templates.Count</p>
+        <p class="stat-helper">Templates currently available in the report store.</p>
+    </article>
+    <article class="stat-card">
+        <p class="stat-label">Supported file groups</p>
+        <p class="stat-value stat-value--small">Text + OOXML</p>
+        <p class="stat-helper">Use contiguous plain-text tokens for best replacement accuracy.</p>
+    </article>
+</section>
+
+<div class="content-grid content-grid-2">
+    <section class="surface-card">
+        <div class="surface-card-header">
+            <div>
+                <h2 class="surface-card-title">Upload template</h2>
+                <p class="surface-card-subtitle">Provide a display name, choose the template kind, and upload the file you want UPMS to fill.</p>
+            </div>
+        </div>
+
+        @if (!string.IsNullOrWhiteSpace(message))
+        {
+            <div class="@(messageIsError ? "alert alert-danger" : "alert alert-success")" role="alert">@message</div>
+        }
+
+        <div class="form-grid">
+            <div class="field-stack">
+                <label for="template-display-name">Display Name</label>
+                <input id="template-display-name" class="form-control" @bind="displayName" />
+            </div>
+
+            <div class="field-stack">
+                <label for="template-kind">Template Kind</label>
+                <select id="template-kind" class="form-select" @bind="selectedKind">
+                    @foreach (var kind in kinds)
+                    {
+                        <option value="@kind">@kind</option>
+                    }
+                </select>
+            </div>
+
+            <div class="field-stack">
+                <label for="template-description">Description</label>
+                <textarea id="template-description" class="form-control" rows="3" @bind="description"></textarea>
+            </div>
+
+            <div class="field-stack">
+                <label for="template-subject">Email Subject Template</label>
+                <input id="template-subject" class="form-control" @bind="subjectTemplate" placeholder="Optional. Used for HTML email templates when exporting as .eml" />
+            </div>
+
+            <div class="field-stack">
+                <label for="template-file">Template File</label>
+                <InputFile id="template-file" class="form-control" OnChange="OnFileSelected" accept=".html,.htm,.txt,.csv,.xml,.eml,.docx,.xlsx,.pptx" />
+                <div class="helper-text">For DOCX, XLSX, and PPTX templates, keep tokens as contiguous plain text in the document.</div>
+                @if (selectedFile is not null)
+                {
+                    <div class="file-meta">
+                        <span><strong>Selected file:</strong> @selectedFile.Name</span>
+                        <span><strong>Size:</strong> @FormatFileSize(selectedFile.Size)</span>
+                    </div>
+                }
+            </div>
+        </div>
+
+        <div class="button-row mt-4">
+            <button class="btn btn-primary" @onclick="UploadAsync">Upload template</button>
+        </div>
+    </section>
+
+    <aside class="section-stack">
+        <section class="surface-card">
+            <div class="surface-card-header">
+                <div>
+                    <h2 class="surface-card-title">Available tokens</h2>
+                    <p class="surface-card-subtitle">These are the tokens currently produced by the template plugin.</p>
+                </div>
+            </div>
+
+            <div class="chip-list mb-3">
+                <span class="token-chip">{{company}}</span>
+                <span class="token-chip">{{itsm_source}}</span>
+                <span class="token-chip">{{as_of_date}}</span>
+                <span class="token-chip">{{generated_at_utc}}</span>
+                <span class="token-chip">{{requested_by}}</span>
+                <span class="token-chip">{{ticket_count}}</span>
+                <span class="token-chip">{{ticket_key}}</span>
+                <span class="token-chip">{{ticket_number}}</span>
+                <span class="token-chip">{{ticket_status}}</span>
+                <span class="token-chip">{{ticket_priority}}</span>
+                <span class="token-chip">{{tickets_html_table}}</span>
+                <span class="token-chip">{{ticket_rows_html}}</span>
+                <span class="token-chip">{{tickets_text_list}}</span>
+                <span class="token-chip">{{tickets_csv_document}}</span>
+                <span class="token-chip">{{month_end_chart_svg}}</span>
+                <span class="token-chip">{{month_end_table_html}}</span>
+                <span class="token-chip">{{month_end_backlog_current}}</span>
+                <span class="token-chip">{{month_end_opened_current}}</span>
+                <span class="token-chip">{{month_end_resolved_current}}</span>
+            </div>
+
+            <p class="mb-0 text-muted">For DOCX, XLSX, and PPTX templates, keep tokens as plain contiguous text such as <code>{{company}}</code>. The current fill engine performs direct XML text replacement and works best when a token is not split across formatting runs.</p>
+        </section>
+    </aside>
+</div>
+
+<section class="surface-card">
+    <div class="surface-card-header">
+        <div>
+            <h2 class="surface-card-title">Uploaded templates</h2>
+            <p class="surface-card-subtitle">Templates are listed newest first so you can quickly confirm the latest upload.</p>
+        </div>
+    </div>
+
+    @if (templates.Count == 0)
+    {
+        <div class="empty-state">
+            <p class="empty-state-title">No templates uploaded yet</p>
+            <p class="empty-state-text">Upload a template to make reusable report output available to users.</p>
+        </div>
+    }
+    else
+    {
+        <div class="data-table-wrap">
+            <table class="table table-hover align-middle data-table" data-testid="report-template-table">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Kind</th>
+                        <th>File Type</th>
+                        <th>Description</th>
+                        <th>Uploaded</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var template in templates)
+                    {
+                        <tr>
+                            <td>@template.DisplayName</td>
+                            <td>@template.Kind</td>
+                            <td>@template.Extension</td>
+                            <td>@template.Description</td>
+                            <td>@template.UploadedAt.ToString("yyyy-MM-dd HH:mm") UTC</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+</section>
+
+@code {
+    private readonly IReadOnlyList<ReportTemplateKind> kinds = Enum.GetValues<ReportTemplateKind>();
+    private List<ReportTemplateMetadata> templates = [];
+    private string displayName = string.Empty;
+    private string description = string.Empty;
+    private string subjectTemplate = string.Empty;
+    private ReportTemplateKind selectedKind = ReportTemplateKind.Document;
+    private IBrowserFile? selectedFile;
+    private string? message;
+    private bool messageIsError;
+
+    protected override void OnInitialized()
+    {
+        ReloadTemplates();
+    }
+
+    private void OnFileSelected(InputFileChangeEventArgs args)
+    {
+        selectedFile = args.File;
+        message = null;
+    }
+
+    private async Task UploadAsync()
+    {
+        message = null;
+        messageIsError = false;
+
+        if (string.IsNullOrWhiteSpace(displayName))
+        {
+            message = "Display name is required.";
+            messageIsError = true;
+            return;
+        }
+
+        if (selectedFile is null)
+        {
+            message = "Please choose a template file to upload.";
+            messageIsError = true;
+            return;
+        }
+
+        try
+        {
+            await using var stream = selectedFile.OpenReadStream(maxAllowedSize: 20 * 1024 * 1024);
+            await TemplateStore.SaveAsync(new ReportTemplateUploadRequest
+            {
+                DisplayName = displayName.Trim(),
+                Kind = selectedKind,
+                Description = string.IsNullOrWhiteSpace(description) ? null : description.Trim(),
+                SubjectTemplate = string.IsNullOrWhiteSpace(subjectTemplate) ? null : subjectTemplate.Trim(),
+                OriginalFileName = selectedFile.Name,
+                UploadedBy = "web-user"
+            }, stream);
+
+            displayName = string.Empty;
+            description = string.Empty;
+            subjectTemplate = string.Empty;
+            selectedFile = null;
+            message = "Template uploaded successfully.";
+            messageIsError = false;
+            ReloadTemplates();
+        }
+        catch (Exception ex)
+        {
+            message = $"Failed to upload template: {ex.Message}";
+            messageIsError = true;
+        }
+    }
+
+    private void ReloadTemplates()
+    {
+        templates = TemplateStore.GetAllTemplates()
+            .OrderByDescending(t => t.UploadedAt)
+            .ThenBy(t => t.DisplayName)
+            .ToList();
+    }
+
+    private static string FormatFileSize(long bytes)
+    {
+        if (bytes < 1024)
+            return $"{bytes} B";
+
+        double kilobytes = bytes / 1024d;
+        if (kilobytes < 1024)
+            return $"{kilobytes:0.#} KB";
+
+        double megabytes = kilobytes / 1024d;
+        return $"{megabytes:0.#} MB";
+    }
+}

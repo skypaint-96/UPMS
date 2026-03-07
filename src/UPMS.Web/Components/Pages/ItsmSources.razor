@@ -7,88 +7,195 @@
 
 <PageTitle>ITSM Sources - UPMS</PageTitle>
 
-<h1>ITSM Sources</h1>
+<div class="page-shell stack-xl">
+    <section class="page-header card-surface page-header-accent">
+        <div class="page-header-body stack-md">
+            <div class="stack-sm">
+                <div class="eyebrow">Configuration</div>
+                <h1>ITSM Sources</h1>
+                <p>
+                    Define the systems that feed ticket snapshots into UPMS. Each source gets a friendly label,
+                    a stable slug, and its own field mapping configuration.
+                </p>
+            </div>
 
-<p>Define and manage the ITSM source instances from which ticket snapshots are uploaded.</p>
+            <div class="stat-grid compact-stats">
+                <article class="stat-card">
+                    <span class="stat-label">Configured sources</span>
+                    <strong>@sources.Count</strong>
+                    <span class="stat-caption">Ready for uploads and reporting.</span>
+                </article>
+                <article class="stat-card">
+                    <span class="stat-label">Next step</span>
+                    <strong>@GetNextStepLabel()</strong>
+                    <span class="stat-caption">Create a source, then add mappings for its CSV fields.</span>
+                </article>
+            </div>
+        </div>
 
-<div data-testid="itsm-sources-list">
-    @if (sources.Count == 0)
-    {
-        <p data-testid="no-sources-message">No ITSM sources defined yet.</p>
-    }
-    else
-    {
-        <table>
-            <thead>
-                <tr>
-                    <th>Name</th>
-                    <th>Display Label</th>
-                    <th>Actions</th>
-                </tr>
-            </thead>
-            <tbody>
-                @foreach (var source in sources)
+        <div class="page-header-actions">
+            <a class="btn btn-primary" href="#add-source-form">Add source</a>
+        </div>
+    </section>
+
+    <div class="content-grid content-grid-sidebar-right">
+        <section class="card-surface stack-md">
+            <div class="section-heading">
+                <div>
+                    <h2 class="section-title">Current sources</h2>
+                    <p class="section-subtitle">Open a source to manage field mappings or remove unused integrations.</p>
+                </div>
+                <span class="badge badge-info">@SourceSummary</span>
+            </div>
+
+            <div data-testid="itsm-sources-list">
+                @if (sources.Count == 0)
                 {
-                    <tr data-testid="source-row-@source.Name">
-                        <td>
-                            <a href="/itsm-sources/@source.Name"
-                               data-testid="source-link-@source.Name">@source.Name</a>
-                        </td>
-                        <td>@source.DisplayLabel</td>
-                        <td>
-                            @if (confirmDeleteName == source.Name)
-                            {
-                                <span>Are you sure? </span>
-                                <button data-testid="confirm-delete-@source.Name"
-                                        @onclick="() => ConfirmDeleteAsync(source.Name)">Yes, delete</button>
-                                <button @onclick="CancelDelete">Cancel</button>
-                            }
-                            else
-                            {
-                                <button data-testid="delete-source-@source.Name"
-                                        @onclick="() => RequestDelete(source.Name)">Delete</button>
-                            }
-                        </td>
-                    </tr>
+                    <div class="empty-state" data-testid="no-sources-message">
+                        <div class="empty-state-icon">🧩</div>
+                        <div class="stack-xs">
+                            <h3>No ITSM sources defined yet</h3>
+                            <p>
+                                Add your first source to start uploading snapshots. A good slug uses lowercase letters,
+                                numbers, and hyphens so it stays stable in URLs and automation.
+                            </p>
+                        </div>
+                    </div>
                 }
-            </tbody>
-        </table>
-    }
+                else
+                {
+                    <div class="table-responsive">
+                        <table class="data-table table-hover">
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>Display Label</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var source in sources.OrderBy(s => s.DisplayLabel).ThenBy(s => s.Name))
+                                {
+                                    <tr data-testid="source-row-@source.Name">
+                                        <td>
+                                            <div class="stack-xs">
+                                                <a class="table-link"
+                                                   href="/itsm-sources/@source.Name"
+                                                   data-testid="source-link-@source.Name">
+                                                    @source.Name
+                                                </a>
+                                                <span class="table-meta">Stable slug used in uploads and URLs.</span>
+                                            </div>
+                                        </td>
+                                        <td>
+                                            <div class="stack-xs">
+                                                <span>@source.DisplayLabel</span>
+                                                @if (!string.Equals(source.DisplayLabel, source.Name, StringComparison.Ordinal))
+                                                {
+                                                    <span class="table-meta">Shown across dashboards and reports.</span>
+                                                }
+                                            </div>
+                                        </td>
+                                        <td>
+                                            @if (confirmDeleteName == source.Name)
+                                            {
+                                                <div class="inline-confirm">
+                                                    <span>Delete this source?</span>
+                                                    <button class="btn btn-danger btn-sm"
+                                                            data-testid="confirm-delete-@source.Name"
+                                                            @onclick="() => ConfirmDeleteAsync(source.Name)">
+                                                        Yes, delete
+                                                    </button>
+                                                    <button class="btn btn-secondary btn-sm" @onclick="CancelDelete">Cancel</button>
+                                                </div>
+                                            }
+                                            else
+                                            {
+                                                <div class="button-row wrap gap-sm">
+                                                    <a class="btn btn-secondary btn-sm" href="/itsm-sources/@source.Name">Manage mappings</a>
+                                                    <button class="btn btn-danger btn-sm"
+                                                            data-testid="delete-source-@source.Name"
+                                                            @onclick="() => RequestDelete(source.Name)">
+                                                        Delete
+                                                    </button>
+                                                </div>
+                                            }
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </div>
+        </section>
+
+        <aside class="stack-md">
+            <section class="card-surface stack-md" id="add-source-form">
+                <div class="section-heading">
+                    <div>
+                        <h2 class="section-title">Add ITSM source</h2>
+                        <p class="section-subtitle">Create the source before configuring field mappings or imports.</p>
+                    </div>
+                </div>
+
+                @if (!string.IsNullOrEmpty(addError))
+                {
+                    <div class="alert alert-danger" data-testid="add-source-error" role="alert">@addError</div>
+                }
+
+                <div class="form-grid">
+                    <div class="form-field">
+                        <label for="add-source-name" class="form-label">Name (slug)</label>
+                        <input id="add-source-name"
+                               class="form-control"
+                               data-testid="add-source-name"
+                               placeholder="e.g. servicenow-client-a"
+                               @bind="newSourceName" />
+                        <span class="helper-text">Use lowercase letters, numbers, and hyphens. This becomes part of the URL.</span>
+                    </div>
+
+                    <div class="form-field">
+                        <label for="add-source-label" class="form-label">Display label</label>
+                        <input id="add-source-label"
+                               class="form-control"
+                               data-testid="add-source-label"
+                               placeholder="e.g. ServiceNow (Client A)"
+                               @bind="newSourceLabel" />
+                        <span class="helper-text">This is what users will see in filters, tables, and reports.</span>
+                    </div>
+                </div>
+
+                <div class="button-row">
+                    <button class="btn btn-primary" data-testid="add-source-submit" @onclick="AddSourceAsync">Add Source</button>
+                </div>
+            </section>
+
+            <section class="card-surface stack-sm">
+                <h2 class="section-title">Recommended setup</h2>
+                <ol class="info-steps">
+                    <li>Create the source with a stable slug.</li>
+                    <li>Open the source and map incoming CSV columns to canonical fields.</li>
+                    <li>Upload a snapshot to validate the mapping and populate the dashboard.</li>
+                </ol>
+            </section>
+        </aside>
+    </div>
 </div>
-
-<hr />
-
-<h2>Add ITSM Source</h2>
-
-@if (!string.IsNullOrEmpty(addError))
-{
-    <p data-testid="add-source-error" style="color:red">@addError</p>
-}
-
-<div>
-    <label for="add-source-name">Name (slug)</label>
-    <input id="add-source-name"
-           data-testid="add-source-name"
-           placeholder="e.g. servicenow-client-a"
-           @bind="newSourceName" />
-</div>
-
-<div>
-    <label for="add-source-label">Display Label</label>
-    <input id="add-source-label"
-           data-testid="add-source-label"
-           placeholder="e.g. ServiceNow (Client A)"
-           @bind="newSourceLabel" />
-</div>
-
-<button data-testid="add-source-submit" @onclick="AddSourceAsync">Add Source</button>
 
 @code {
     private List<ItsmSource> sources = [];
-    private string newSourceName  = string.Empty;
+    private string newSourceName = string.Empty;
     private string newSourceLabel = string.Empty;
     private string? addError;
     private string? confirmDeleteName;
+
+    private string SourceSummary => sources.Count switch
+    {
+        0 => "No sources yet",
+        1 => "1 source configured",
+        _ => $"{sources.Count} sources configured"
+    };
 
     protected override async Task OnInitializedAsync()
     {
@@ -120,7 +227,7 @@
         try
         {
             await ItsmSourceService.CreateSourceAsync(newSourceName.Trim(), newSourceLabel.Trim());
-            newSourceName  = string.Empty;
+            newSourceName = string.Empty;
             newSourceLabel = string.Empty;
             await LoadSourcesAsync();
         }
@@ -146,4 +253,7 @@
         await ItsmSourceService.DeleteSourceAsync(name);
         await LoadSourcesAsync();
     }
+
+    private string GetNextStepLabel()
+        => sources.Count == 0 ? "Create first source" : "Map fields";
 }

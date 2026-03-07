@@ -528,6 +528,7 @@ public async Task RecordFieldChangeAsync(
         if (TicketKeyFactory.TryParse(ticketKey, out _, out _, out var ticketNumber))
         {
             fields["ticket_number"] = ticketNumber;
+            fields["Number"] = ticketNumber;
         }
     }
     private static bool TicketMatchesFilter(Ticket ticket, TicketFieldFilter filter)
@@ -580,23 +581,62 @@ public async Task RecordFieldChangeAsync(
         return false;
     }
 
+    private static readonly IReadOnlyDictionary<string, string[]> FieldAliases =
+        new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Number"] = ["Number", "number", "ticket_number", "ticket_key"],
+            ["State"] = ["State", "state", "status", "incident_state"],
+            ["Priority"] = ["Priority", "priority"],
+            ["Assigned To"] = ["Assigned To", "assigned_to", "assignee"],
+            ["Assignment Group"] = ["Assignment Group", "assignment_group"],
+            ["Short Description"] = ["Short Description", "short_description", "title"],
+            ["Description"] = ["Description", "description"],
+            ["Category"] = ["Category", "category"],
+            ["Subcategory"] = ["Subcategory", "subcategory", "sub_category"],
+            ["Business Service"] = ["Business Service", "business_service"],
+            ["Service Offering"] = ["Service Offering", "service_offering"],
+            ["Opened At"] = ["Opened At", "opened_at", "opened_date", "created_at", "created_date", "Created On"],
+            ["Created On"] = ["Created On", "created_on", "created_at", "created_date"],
+            ["Updated On"] = ["Updated On", "updated_on", "updated_at", "updated_date", "last_updated"],
+            ["Resolved At"] = ["Resolved At", "resolved_at", "resolved_date"],
+            ["Closed At"] = ["Closed At", "closed_at", "closed_date"],
+            ["Company"] = ["Company", "company", "company_name"]
+        };
+
     private static bool TryGetFieldValue(IDictionary<string, string?> fields, string fieldName, out string? value)
     {
-        if (fields.TryGetValue(fieldName, out value))
-            return true;
-
-        // Cheap case-insensitive fallback (dictionary is Ordinal in most of our paths)
-        foreach (var kv in fields)
+        foreach (var alias in GetFieldAliases(fieldName))
         {
-            if (string.Equals(kv.Key, fieldName, StringComparison.OrdinalIgnoreCase))
-            {
-                value = kv.Value;
+            if (fields.TryGetValue(alias, out value))
                 return true;
+
+            // Cheap case-insensitive fallback (dictionary is Ordinal in most of our paths)
+            foreach (var kv in fields)
+            {
+                if (string.Equals(kv.Key, alias, StringComparison.OrdinalIgnoreCase))
+                {
+                    value = kv.Value;
+                    return true;
+                }
             }
         }
 
         value = null;
         return false;
+    }
+
+    private static IReadOnlyList<string> GetFieldAliases(string fieldName)
+    {
+        if (FieldAliases.TryGetValue(fieldName, out var aliases))
+            return aliases;
+
+        foreach (var pair in FieldAliases)
+        {
+            if (pair.Value.Any(alias => string.Equals(alias, fieldName, StringComparison.OrdinalIgnoreCase)))
+                return pair.Value;
+        }
+
+        return [fieldName];
     }
 
 }

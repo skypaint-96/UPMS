@@ -4,26 +4,54 @@
 @inject PluginRegistry PluginRegistry
 @inject ReportDownloadStore DownloadStore
 
-<PageTitle>Report Store — UPMS</PageTitle>
+<PageTitle>Report Store - UPMS</PageTitle>
 
-<h1>Report Store</h1>
-<p>Select a report plugin below, fill in the required parameters, and generate your report.</p>
+<section class="app-page-header">
+    <div>
+        <p class="page-eyebrow">Reporting</p>
+        <h1 class="page-title">Report Store</h1>
+        <p class="page-description">Choose a report plugin, provide the required parameters, and generate a preview or downloadable output directly from UPMS.</p>
+    </div>
+</section>
 
-<section data-testid="plugin-list">
-    @foreach (var plugin in PluginRegistry.GetAll())
-    {
-        <div class="plugin-card">
-            <h2>@plugin.DisplayName</h2>
-            <p>@plugin.Description</p>
-            <button @onclick="() => SelectPlugin(plugin)">Generate Report</button>
+<section class="surface-card">
+    <div class="surface-card-header">
+        <div>
+            <h2 class="surface-card-title">Available report plugins</h2>
+            <p class="surface-card-subtitle">Plugins can return previews, plain text summaries, or downloadable files such as PPTX, CSV, DOCX, or PDF.</p>
         </div>
-    }
+    </div>
+
+    <section class="plugin-grid" data-testid="plugin-list">
+        @foreach (var plugin in PluginRegistry.GetAll())
+        {
+            <article class="plugin-card">
+                <div class="plugin-pill">@plugin.PluginId</div>
+                <div>
+                    <h2>@plugin.DisplayName</h2>
+                    <p>@plugin.Description</p>
+                </div>
+                <div class="selection-summary">
+                    <span class="badge-soft badge-soft-neutral">@plugin.Parameters.Count parameter(s)</span>
+                </div>
+                <div class="plugin-card-footer">
+                    <button class="btn btn-primary" @onclick="() => SelectPlugin(plugin)">Generate Report</button>
+                </div>
+            </article>
+        }
+    </section>
 </section>
 
 @if (selectedPlugin is not null)
 {
-    <section data-testid="parameter-form">
-        <h2>Generate: @selectedPlugin.DisplayName</h2>
+    <section class="surface-card" data-testid="parameter-form">
+        <div class="surface-card-header">
+            <div>
+                <h2 class="surface-card-title">Generate: @selectedPlugin.DisplayName</h2>
+                <p class="surface-card-subtitle">Complete the required fields below, then run the plugin.</p>
+            </div>
+            <span class="badge-soft badge-soft-info">@selectedPlugin.Parameters.Count input(s)</span>
+        </div>
 
         <ReportParameterForm Parameters="selectedPlugin.Parameters"
                              Values="parameterValues"
@@ -31,34 +59,61 @@
 
         @if (!string.IsNullOrEmpty(errorMessage))
         {
-            <div class="error-message" role="alert">@errorMessage</div>
+            <div class="error-message mt-3" role="alert">@errorMessage</div>
         }
 
-        <div class="form-actions">
-            <button @onclick="GenerateReportAsync" disabled="@isGenerating">
-                @(isGenerating ? "Generating…" : "Generate")
+        <div class="button-row mt-4">
+            <button class="btn btn-primary" @onclick="GenerateReportAsync" disabled="@isGenerating">
+                @(isGenerating ? "Generating..." : "Generate")
             </button>
-            <button @onclick="CancelSelection">Cancel</button>
+            <button class="btn btn-outline-secondary" @onclick="CancelSelection">Cancel</button>
         </div>
     </section>
 }
 
 @if (lastResult is not null)
 {
-    <section data-testid="report-result">
+    <section class="surface-card" data-testid="report-result">
+        <div class="surface-card-header">
+            <div>
+                <h2 class="surface-card-title">Result</h2>
+                <p class="surface-card-subtitle">Review the generated output below or download the report file.</p>
+            </div>
+        </div>
+
         @if (lastResult.Success)
         {
             @if (lastResult.OutputType == ReportOutputType.FileDownload)
             {
-                <p>Report generated. <a href="/reports/download">Download report</a></p>
+                if (!string.IsNullOrWhiteSpace(lastDownloadUrl))
+                {
+                    <div class="notice-panel">
+                        <p class="mb-2"><strong>Report generated.</strong> Your file is ready to download.</p>
+                        <a href="@lastDownloadUrl"
+                           target="_blank"
+                           rel="noopener noreferrer"
+                           data-enhance-nav="false"
+                           data-testid="report-download-link"
+                           download="@(lastResult.FileName ?? "report")"
+                           class="btn btn-primary">
+                            Download @(lastResult.FileName ?? "report")
+                        </a>
+                    </div>
+                }
+                else
+                {
+                    <div class="error-message" role="alert">The report file is not available for download.</div>
+                }
             }
             else if (lastResult.OutputType == ReportOutputType.HtmlContent)
             {
-                <div>@((MarkupString)lastResult.HtmlContent!)</div>
+                <div class="result-render">@((MarkupString)lastResult.HtmlContent!)</div>
             }
             else if (lastResult.OutputType == ReportOutputType.PlainText)
             {
-                <pre>@lastResult.HtmlContent</pre>
+                <div class="result-render">
+                    <pre>@lastResult.HtmlContent</pre>
+                </div>
             }
         }
         else
@@ -72,6 +127,7 @@
     private IReportPlugin? selectedPlugin;
     private Dictionary<string, string> parameterValues = new();
     private ReportResult? lastResult;
+    private string? lastDownloadUrl;
     private bool isGenerating = false;
     private string? errorMessage;
 
@@ -80,6 +136,7 @@
         selectedPlugin = plugin;
         parameterValues = new();
         lastResult = null;
+        lastDownloadUrl = null;
         errorMessage = null;
     }
 
@@ -88,16 +145,19 @@
         selectedPlugin = null;
         parameterValues = new();
         lastResult = null;
+        lastDownloadUrl = null;
         errorMessage = null;
     }
 
     private async Task GenerateReportAsync()
     {
-        if (selectedPlugin is null) return;
+        if (selectedPlugin is null)
+            return;
 
         isGenerating = true;
         errorMessage = null;
         lastResult = null;
+        lastDownloadUrl = null;
 
         try
         {
@@ -112,7 +172,14 @@
 
             if (result.Success && result.OutputType == ReportOutputType.FileDownload)
             {
-                DownloadStore.PendingDownload = result;
+                if (result.FileContent is null || result.FileContent.Length == 0)
+                {
+                    lastResult = ReportResult.Failure("The generated report did not contain any downloadable file content.");
+                    return;
+                }
+
+                string token = DownloadStore.Store(result);
+                lastDownloadUrl = $"/api/report-download/{token}";
             }
         }
         catch (Exception ex)

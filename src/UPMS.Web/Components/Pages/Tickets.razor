@@ -8,157 +8,231 @@
 
 <PageTitle>Tickets</PageTitle>
 
-<h1>Tickets</h1>
-
-<div class="d-flex flex-wrap gap-2 align-items-end">
+<section class="app-page-header">
     <div>
-        <label class="form-label" for="itsm-source">ITSM source</label>
-        <select id="itsm-source" class="form-select" data-testid="itsm-source-filter" @bind="itsmSource" @bind:after="OnItsmSourceChanged">
-            <option value="" disabled>-- Select ITSM Source --</option>
-            @foreach (var source in itsmSources)
+        <p class="page-eyebrow">Search</p>
+        <h1 class="page-title">Tickets</h1>
+        <p class="page-description">Search reconstructed ticket state across one or more ITSM sources using a specific point-in-time view.</p>
+    </div>
+    <div class="page-actions">
+        <a class="btn btn-outline-secondary" href="/itsm-sources">Manage ITSM sources</a>
+    </div>
+</section>
+
+<section class="surface-card">
+    <div class="surface-card-header">
+        <div>
+            <h2 class="surface-card-title">Search scope</h2>
+            <p class="surface-card-subtitle">Select at least one ITSM source, choose the time you want to reconstruct, and then refine with field filters.</p>
+        </div>
+        @if (normalizedItsmSources.Count > 0)
+        {
+            <span class="badge-soft badge-soft-info">@normalizedItsmSources.Count source(s) selected</span>
+        }
+    </div>
+
+    <div class="form-grid form-grid-3">
+        <div class="field-stack field-stack--tall">
+            <label class="form-label" for="itsm-source">ITSM source(s)</label>
+            <select id="itsm-source" class="form-select" data-testid="itsm-source-filter" multiple size="6" @bind="selectedItsmSources" @bind:after="OnItsmSourceChanged">
+                @foreach (var source in itsmSources)
+                {
+                    <option value="@source.Name">@source.DisplayLabel</option>
+                }
+            </select>
+            <div class="form-text">Tip: hold Ctrl or Cmd to select multiple sources.</div>
+        </div>
+
+        <div class="field-stack">
+            <label class="form-label" for="as-of">As of</label>
+            <input id="as-of"
+                   class="form-control"
+                   type="datetime-local"
+                   data-testid="as-of-datetime"
+                   value="@asOfLocal"
+                   @oninput="OnAsOfLocalChanged" />
+            <div class="helper-text">UPMS returns the latest known values up to this timestamp.</div>
+        </div>
+
+        <div class="field-stack field-stack-actions">
+            <button class="btn btn-primary btn-lg" data-testid="search-btn" @onclick="SearchAsync" disabled="@(!CanSearch || isLoading)">Search tickets</button>
+            @if (isLoading)
             {
-                <option value="@source.Name">@source.DisplayLabel</option>
+                <span class="text-muted" data-testid="loading-indicator">Loading...</span>
             }
-        </select>
+        </div>
     </div>
-
-    <div>
-        <label class="form-label" for="as-of">As of</label>
-        <input id="as-of" class="form-control" type="datetime-local" data-testid="as-of-datetime" value="@asOfLocal" @onchange="OnAsOfLocalChanged" />
-    </div>
-
-    <button class="btn btn-primary" data-testid="search-btn" @onclick="SearchAsync" disabled="@(!CanSearch || isLoading)">Search</button>
-    @if (isLoading)
-    {
-        <span class="ms-2" data-testid="loading-indicator">Loading...</span>
-    }
-</div>
+</section>
 
 @if (!string.IsNullOrWhiteSpace(searchError))
 {
-    <div class="alert alert-danger mt-3" role="alert" data-testid="tickets-search-error">
+    <div class="alert alert-danger" role="alert" data-testid="tickets-search-error">
         @searchError
     </div>
 }
 
-@if (string.IsNullOrWhiteSpace(itsmSource))
+@if (normalizedItsmSources.Count == 0)
 {
-    <p class="mt-3" data-testid="tickets-empty-hint">Select an ITSM source to begin.</p>
+    <section class="surface-card">
+        <div class="empty-state" data-testid="tickets-empty-hint">
+            <p class="empty-state-title">Select at least one ITSM source to begin</p>
+            <p class="empty-state-text">Once you choose a source, UPMS will reveal the field filters available for that mapping.</p>
+        </div>
+    </section>
 }
 else
 {
-    <div class="mt-3" data-testid="field-filters-panel">
-        <h2>Field Filters</h2>
-        <p class="text-muted" style="max-width: 80ch">
-            Filters match against the <em>canonical</em> field names for this ITSM source.
-            <span class="d-block">
-                Tip: <code>company</code> and <code>ticket_number</code> are always available as system fields.
-            </span>
-        </p>
-
-        @if (availableFilterFields.Count == 0)
-        {
-            <div class="alert alert-warning" role="alert" data-testid="no-mappings-warning">
-                No field mappings found for this ITSM source yet. Add mappings on the ITSM Source page to enable filtering.
-            </div>
-        }
-
-        @{ var rowIndex = 0; }
-        @foreach (var filter in filters)
-        {
-            var i = rowIndex++;
-            <div class="filter-row d-flex flex-wrap gap-2 align-items-center mb-2" @key="filter.Id">
-                <select class="form-select" style="max-width: 18rem" data-testid="field-filter-name-@i" @bind="filter.FieldName">
-                    <option value="" disabled>-- Field --</option>
-                    @foreach (var field in availableFilterFields)
+    <section class="surface-card" data-testid="field-filters-panel">
+        <div class="surface-card-header">
+            <div>
+                <h2 class="surface-card-title">Field filters</h2>
+                <p class="surface-card-subtitle">
+                    Filters match against the <em>canonical</em> field names for the selected ITSM source(s). System fields such as <code>company</code> and <code>ticket_number</code> are always available.
+                    @if (normalizedItsmSources.Count > 1)
                     {
-                        <option value="@field">@field</option>
+                        <span class="d-block mt-1">Custom field matching is also available when searching multiple sources.</span>
                     }
-                </select>
-                <input class="form-control" style="max-width: 24rem" type="text" placeholder="contains…" data-testid="field-filter-value-@i" @bind="filter.Value" />
-                <button type="button" class="btn btn-outline-secondary" data-testid="remove-filter-@i" @onclick="() => RemoveFilter(filter)">Remove</button>
+                </p>
             </div>
-        }
-
-        <button type="button" class="btn btn-outline-primary" data-testid="add-filter-btn" @onclick="AddFilter" disabled="@(availableFilterFields.Count == 0)">+ Add Filter</button>
-        <button type="button" class="btn btn-outline-secondary ms-2" data-testid="clear-filters-btn" @onclick="ClearFilters" disabled="@(filters.Count == 0)">Clear</button>
-    </div>
-
-    @if (!searchPerformed)
-    {
-        <p class="text-muted mt-3" data-testid="tickets-search-hint">
-            Click <strong>Search</strong> to load tickets for the selected ITSM source.
-        </p>
-    }
-    else
-    {
-        <div class="alert alert-secondary mt-3" role="alert" data-testid="tickets-search-summary">
-            Showing <strong>@tickets.Count</strong> ticket(s) as of <strong>@asOfDateTime.ToString("yyyy-MM-dd HH:mm")</strong>.
+            <div class="button-row">
+                <span class="badge-soft badge-soft-neutral">@filters.Count row(s)</span>
+                <button type="button" class="btn btn-outline-primary" data-testid="add-filter-btn" @onclick="AddFilter">Add filter</button>
+                <button type="button" class="btn btn-outline-secondary" data-testid="clear-filters-btn" @onclick="ClearFilters" disabled="@(filters.Count == 0)">Clear all</button>
+            </div>
         </div>
 
-        <table class="table table-striped table-hover" data-testid="ticket-table">
-            <thead>
-                <tr>
-                    <th>Ticket Key</th>
-                    <th>Company</th>
-                    <th>ITSM Source</th>
-                    <th>Status</th>
-                </tr>
-            </thead>
-            <tbody>
-                @if (tickets.Count == 0)
-                {
-                    <tr data-testid="ticket-table-empty">
-                        <td colspan="4">No tickets found.</td>
-                    </tr>
-                }
-                else
-                {
-                    @foreach (var ticket in tickets)
-                    {
-                        var ticketNumber = TryGetFieldValue(ticket.Fields, "ticket_number");
-                        var status = TryGetFieldValue(ticket.Fields, "status");
-                        <tr>
-                            <td>
-                                <a href="/tickets/@Uri.EscapeDataString(ticket.CompanyName)/@Uri.EscapeDataString(ticket.ItsmSource)/@Uri.EscapeDataString(ticket.TicketKey)">@(ticketNumber ?? ticket.TicketKey)</a>
-                                @if (!string.IsNullOrWhiteSpace(ticketNumber) && !string.Equals(ticketNumber, ticket.TicketKey, StringComparison.Ordinal))
-                                {
-                                    <div class="text-muted small">@ticket.TicketKey</div>
-                                }
-                            </td>
-                            <td>@ticket.CompanyName</td>
-                            <td>@ticket.ItsmSource</td>
-                            <td>@(string.IsNullOrWhiteSpace(status) ? "—" : status)</td>
-                        </tr>
-                    }
-                }
-            </tbody>
-        </table>
-    }
+        @if (!hasAnyMappings)
+        {
+            <div class="alert alert-warning" role="alert" data-testid="no-mappings-warning">
+                No field mappings were found for the selected ITSM source(s). Add mappings on the ITSM Source page to enable canonical filtering.
+            </div>
+        }
+
+        <div class="column-manager-grid">
+            @foreach (var filter in filters)
+            {
+                var i = filter.Seq;
+                <div class="filter-row-card" @key="filter.Id">
+                    <div class="form-grid" style="grid-template-columns: minmax(160px, 220px) minmax(220px, 1fr) minmax(260px, 1.2fr) auto; align-items: end;">
+                        <div class="field-stack">
+                            <label class="form-label" for="filter-mode-@i">Type</label>
+                            <select id="filter-mode-@i" class="form-select" data-testid="field-filter-mode-@i" @bind="filter.Mode">
+                                <option value="@FieldNameMode.Canonical">Canonical</option>
+                                <option value="@FieldNameMode.Custom">Custom</option>
+                            </select>
+                        </div>
+
+                        @if (filter.Mode == FieldNameMode.Canonical)
+                        {
+                            <div class="field-stack">
+                                <label class="form-label" for="filter-name-@i">Field</label>
+                                <select id="filter-name-@i" class="form-select" data-testid="field-filter-name-@i" @bind="filter.CanonicalFieldName">
+                                    <option value="" disabled>-- Field --</option>
+                                    @foreach (var field in availableFilterFields)
+                                    {
+                                        <option value="@field">@field</option>
+                                    }
+                                </select>
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="field-stack">
+                                <label class="form-label" for="filter-custom-@i">Field</label>
+                                <input id="filter-custom-@i" class="form-control" type="text" placeholder="e.g. u_custom_field" data-testid="field-filter-name-@i" @bind="filter.CustomFieldName" />
+                            </div>
+                        }
+
+                        <div class="field-stack">
+                            <label class="form-label" for="filter-value-@i">Value</label>
+                            <input id="filter-value-@i" class="form-control" type="text" placeholder="Contains value" data-testid="field-filter-value-@i" @bind="filter.Value" />
+                        </div>
+
+                        <div class="field-stack">
+                            <button type="button" class="btn btn-outline-secondary" data-testid="remove-filter-@i" @onclick="() => RemoveFilter(filter)">Remove</button>
+                        </div>
+                    </div>
+                </div>
+            }
+        </div>
+
+        @if (!searchPerformed)
+        {
+            <p class="text-muted mt-3 mb-0" data-testid="tickets-search-hint">Click <strong>Search tickets</strong> to load results for the selected ITSM source(s).</p>
+        }
+        else
+        {
+            <div class="alert alert-secondary mt-3 mb-0" role="alert" data-testid="tickets-search-summary">
+                Showing <strong>@tickets.Count</strong> ticket(s) from <strong>@normalizedItsmSources.Count</strong> source(s) as of <strong>@asOfDateTime.ToString("yyyy-MM-dd HH:mm")</strong> UTC.
+            </div>
+        }
+    </section>
 }
+
+<section class="surface-card">
+    <div class="surface-card-header">
+        <div>
+            <h2 class="surface-card-title">Results</h2>
+            <p class="surface-card-subtitle">Open any ticket to inspect its reconstructed field state and change history.</p>
+        </div>
+    </div>
+
+    <TicketTable Tickets="tickets"
+                AsOfUtc="asOfDateTime"
+                TableTestId="ticket-table"
+                EmptyRowTestId="ticket-table-empty"
+                EmptyMessage="No tickets found."
+                CanonicalFieldOptions="availableFilterFields" />
+</section>
 
 @code {
     private List<Ticket> tickets = new();
     private List<ItsmSource> itsmSources = new();
-    private List<ItsmFieldMapping> mappings = new();
     private List<string> availableFilterFields = new();
     private List<FilterRow> filters = new();
 
-    private string itsmSource = string.Empty;
+    private string[] selectedItsmSources = Array.Empty<string>();
+    private List<string> normalizedItsmSources = new();
+
     private string asOfLocal = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm");
     private bool isLoading = false;
     private DateTime asOfDateTime = DateTime.UtcNow;
     private string? searchError;
     private bool searchPerformed = false;
 
+    private bool hasAnyMappings = false;
+
+    private int nextFilterSeq = 0;
+
+    private enum FieldNameMode
+    {
+        Canonical,
+        Custom
+    }
+
     private sealed class FilterRow
     {
         public Guid Id { get; } = Guid.NewGuid();
-        public string FieldName { get; set; } = string.Empty;
+
+        public int Seq { get; init; }
+
+        public FieldNameMode Mode { get; set; } = FieldNameMode.Canonical;
+
+        public string CanonicalFieldName { get; set; } = string.Empty;
+
+        public string CustomFieldName { get; set; } = string.Empty;
+
         public string Value { get; set; } = string.Empty;
+
+        public string GetEffectiveFieldName()
+        {
+            return Mode == FieldNameMode.Custom
+                ? (CustomFieldName ?? string.Empty).Trim()
+                : (CanonicalFieldName ?? string.Empty).Trim();
+        }
     }
 
-    private bool CanSearch => !string.IsNullOrWhiteSpace(itsmSource);
+    private bool CanSearch => normalizedItsmSources.Count > 0;
 
     protected override async Task OnInitializedAsync()
     {
@@ -180,23 +254,42 @@ else
 
     private async Task OnItsmSourceChanged()
     {
-        // Reset filters and tickets
         filters.Clear();
+        nextFilterSeq = 0;
         tickets.Clear();
-        mappings.Clear();
         availableFilterFields.Clear();
+        hasAnyMappings = false;
         searchError = null;
         searchPerformed = false;
 
-        if (string.IsNullOrWhiteSpace(itsmSource))
+        normalizedItsmSources = (selectedItsmSources ?? Array.Empty<string>())
+            .Where(s => !string.IsNullOrWhiteSpace(s))
+            .Select(s => s.Trim())
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(s => s, StringComparer.Ordinal)
+            .ToList();
+
+        if (normalizedItsmSources.Count == 0)
+        {
+            StateHasChanged();
             return;
+        }
 
         try
         {
-            mappings = FieldMappingService.GetMappingsForSource(itsmSource).ToList();
+            var allMappings = new List<ItsmFieldMapping>();
+            foreach (var src in normalizedItsmSources)
+            {
+                try
+                {
+                    allMappings.AddRange(FieldMappingService.GetMappingsForSource(src));
+                }
+                catch
+                {
+                }
+            }
 
-            // Canonical fields from mappings; treat legacy ticket_key as ticket_number.
-            var canonical = mappings
+            var canonical = allMappings
                 .Select(m => m.CanonicalFieldName)
                 .Where(n => !string.IsNullOrWhiteSpace(n))
                 .Select(n => string.Equals(n, "ticket_key", StringComparison.Ordinal) ? "ticket_number" : n!)
@@ -204,7 +297,8 @@ else
                 .OrderBy(n => n, StringComparer.Ordinal)
                 .ToList();
 
-            // System fields at the top (always filterable).
+            hasAnyMappings = canonical.Count > 0;
+
             var ordered = new List<string>();
             var set = new HashSet<string>(StringComparer.Ordinal);
 
@@ -214,9 +308,13 @@ else
                     ordered.Add(name);
             }
 
+            Add("Number");
+            Add("Company");
+            Add("State");
             Add("ticket_number");
             Add("company");
-            Add("ticket_key"); // legacy / debugging alias
+            Add("ticket_key");
+            Add("status");
             foreach (var c in canonical)
                 Add(c);
 
@@ -224,12 +322,11 @@ else
         }
         catch
         {
-            mappings = new();
             availableFilterFields = new();
+            hasAnyMappings = false;
         }
 
-        // Auto-add a filter row so users immediately see the available field options.
-        if (filters.Count == 0 && availableFilterFields.Count > 0)
+        if (filters.Count == 0)
         {
             AddFilter();
         }
@@ -239,12 +336,14 @@ else
 
     private void AddFilter()
     {
-        filters.Add(new FilterRow());
+        filters.Add(new FilterRow { Seq = nextFilterSeq++ });
     }
 
     private void ClearFilters()
     {
         filters.Clear();
+
+        nextFilterSeq = 0;
 
         if (availableFilterFields.Count > 0)
             AddFilter();
@@ -270,22 +369,23 @@ else
         searchPerformed = true;
 
         DateTime asOf;
-        try
+        if (TryParseAsOfUtc(asOfLocal, out var parsedUtc, out var normalizedLocal))
         {
-            asOf = DateTime.ParseExact(asOfLocal, "yyyy-MM-ddTHH:mm", CultureInfo.InvariantCulture);
-            asOf = DateTime.SpecifyKind(asOf, DateTimeKind.Utc);
+            asOf = parsedUtc;
+            asOfDateTime = parsedUtc;
+            asOfLocal = normalizedLocal;
         }
-        catch
+        else
         {
-            asOf = DateTime.UtcNow;
+            asOf = asOfDateTime == default ? DateTime.UtcNow : asOfDateTime;
+            asOfDateTime = DateTime.SpecifyKind(asOf, DateTimeKind.Utc);
+            asOfLocal = asOfDateTime.ToString("yyyy-MM-ddTHH:mm", CultureInfo.InvariantCulture);
         }
-
-        asOfDateTime = asOf;
 
         var activeFilters = new List<TicketFieldFilter>();
         foreach (var f in filters)
         {
-            var name = f.FieldName?.Trim();
+            var name = f.GetEffectiveFieldName();
             var value = f.Value?.Trim();
             if (!string.IsNullOrEmpty(name) && !string.IsNullOrEmpty(value))
             {
@@ -296,8 +396,32 @@ else
         isLoading = true;
         try
         {
-            var results = await DataService.GetTicketsFilteredAsync(itsmSource, asOf, activeFilters);
-            tickets = results.ToList();
+            var combined = new List<Ticket>();
+            var errors = new List<string>();
+
+            foreach (var src in normalizedItsmSources)
+            {
+                try
+                {
+                    var results = await DataService.GetTicketsFilteredAsync(src, asOf, activeFilters);
+                    combined.AddRange(results);
+                }
+                catch (Exception ex)
+                {
+                    errors.Add($"{src}: {ex.Message}");
+                }
+            }
+
+            tickets = combined
+                .OrderBy(t => t.CompanyName, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(t => t.ItsmSource, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(t => t.TicketKey, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (errors.Count > 0)
+            {
+                searchError = "Some sources failed to load: " + string.Join(" | ", errors);
+            }
         }
         catch (Exception ex)
         {
@@ -312,40 +436,63 @@ else
         StateHasChanged();
     }
 
-    private static string? TryGetFieldValue(IDictionary<string, string?> fields, string fieldName)
+    private void OnAsOfLocalChanged(ChangeEventArgs args)
     {
-        if (fields.TryGetValue(fieldName, out var v))
-            return v;
+        asOfLocal = args.Value?.ToString() ?? string.Empty;
 
-        // Cheap case-insensitive fallback (dictionary is Ordinal in most of our paths)
-        foreach (var kv in fields)
+        if (TryParseAsOfUtc(asOfLocal, out var parsedUtc, out var normalizedLocal))
         {
-            if (string.Equals(kv.Key, fieldName, StringComparison.OrdinalIgnoreCase))
-                return kv.Value;
+            asOfDateTime = parsedUtc;
+            asOfLocal = normalizedLocal;
+            return;
         }
 
-        return null;
+        if (string.IsNullOrWhiteSpace(asOfLocal))
+        {
+            asOfDateTime = DateTime.UtcNow;
+            asOfLocal = asOfDateTime.ToString("yyyy-MM-ddTHH:mm", CultureInfo.InvariantCulture);
+        }
     }
 
-    private void OnAsOfLocalChanged(ChangeEventArgs e)
+    private static readonly string[] AsOfInputFormats =
+    [
+        "yyyy-MM-ddTHH:mm",
+        "yyyy-MM-ddTHH:mm:ss",
+        "yyyy-MM-ddTHH:mm:ss.fff",
+        "yyyy-MM-ddTHH:mm:ss.FFFFFFF"
+    ];
+
+    private static bool TryParseAsOfUtc(string? input, out DateTime asOfUtc, out string normalizedLocal)
     {
-        var value = e?.Value?.ToString();
-        if (!string.IsNullOrWhiteSpace(value))
+        asOfUtc = default;
+        normalizedLocal = string.Empty;
+
+        if (string.IsNullOrWhiteSpace(input))
+            return false;
+
+        if (DateTime.TryParseExact(
+            input,
+            AsOfInputFormats,
+            CultureInfo.InvariantCulture,
+            DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+            out var dt))
         {
-            if (DateTime.TryParseExact(value, "yyyy-MM-ddTHH:mm", CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var dt))
-            {
-                asOfDateTime = DateTime.SpecifyKind(dt, DateTimeKind.Utc);
-                asOfLocal = value;
-                return;
-            }
-            if (DateTime.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out dt))
-            {
-                asOfDateTime = DateTime.SpecifyKind(dt, DateTimeKind.Utc);
-                asOfLocal = value;
-                return;
-            }
+            asOfUtc = DateTime.SpecifyKind(dt, DateTimeKind.Utc);
+            normalizedLocal = asOfUtc.ToString("yyyy-MM-ddTHH:mm", CultureInfo.InvariantCulture);
+            return true;
         }
-        asOfDateTime = DateTime.UtcNow;
-        asOfLocal = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm");
+
+        if (DateTime.TryParse(
+            input,
+            CultureInfo.InvariantCulture,
+            DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+            out dt))
+        {
+            asOfUtc = DateTime.SpecifyKind(dt, DateTimeKind.Utc);
+            normalizedLocal = asOfUtc.ToString("yyyy-MM-ddTHH:mm", CultureInfo.InvariantCulture);
+            return true;
+        }
+
+        return false;
     }
 }

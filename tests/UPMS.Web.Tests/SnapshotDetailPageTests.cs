@@ -60,7 +60,7 @@ public class SnapshotDetailPageTests : PageTestBase
         // Act
         await Page.GotoAsync(SnapshotDetailUrl);
 
-        // Assert — a table listing all tickets in this snapshot.
+        // Assert â€” a table listing all tickets in this snapshot.
         var table = Page.Locator("table[data-testid='snapshot-ticket-table']");
         await Assertions.Expect(table).ToBeVisibleAsync();
     }

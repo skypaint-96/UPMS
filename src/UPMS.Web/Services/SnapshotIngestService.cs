@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using UPMS.Data;
+using UPMS.Web;
 
 /// <summary>
 /// Parses uploaded flat-table CSV and JSON snapshot files and persists extracted ticket and
@@ -79,26 +80,23 @@ public class SnapshotIngestService : ISnapshotIngestService
                 canonicalHeaders[i] = await _sourceService.GetCanonicalNameAsync(itsmSourceName, headers[i]);
             }
 
-            // Locate the column index for the canonical "ticket_number" and "company" fields.
-            // NOTE: "ticket_key" is treated as a legacy alias for "ticket_number".
-            int ticketNumberColIndex = FindCanonicalIndex(canonicalHeaders, "ticket_number");
-            if (ticketNumberColIndex < 0)
-                ticketNumberColIndex = FindCanonicalIndex(canonicalHeaders, "ticket_key");
-
-            int companyColIndex   = FindCanonicalIndex(canonicalHeaders, "company");
+            // Locate the column index for the canonical "Number" and "Company" fields.
+            // Legacy aliases (ticket_number / ticket_key / company) are still recognised.
+            int ticketNumberColIndex = FindCanonicalIndex(canonicalHeaders, CanonicalAliasesForTicketNumber);
+            int companyColIndex   = FindCanonicalIndex(canonicalHeaders, CanonicalAliasesForCompany);
 
             if (ticketNumberColIndex < 0)
             {
                 return IngestResult.Failure(
-                    "No column is mapped to canonical name 'ticket_number' (or legacy 'ticket_key') for this ITSM source. " +
-                    "Add a field mapping for ticket_number before uploading.");
+                    "No column is mapped to canonical name 'Number' (legacy aliases 'ticket_number' / 'ticket_key' are also accepted) for this ITSM source. " +
+                    "Add a field mapping for Number before uploading.");
             }
 
             if (companyColIndex < 0)
             {
                 return IngestResult.Failure(
-                    "No column is mapped to canonical name 'company' for this ITSM source. " +
-                    "Add a field mapping for company before uploading.");
+                    "No column is mapped to canonical name 'Company' for this ITSM source. " +
+                    "Add a field mapping for Company before uploading.");
             }
 
             // ── 4. Parse data rows ──────────────────────────────────────────
@@ -231,18 +229,15 @@ public class SnapshotIngestService : ISnapshotIngestService
                 }
 
                 // Resolve ticket number and company using pre-fetched canonical lookup
-                // NOTE: ticket_key is treated as a legacy alias for ticket_number.
+                // Legacy aliases are still recognised.
                 string? ticketNumber = null;
                 string? companyName = null;
                 foreach (var (sourceField, value) in fields)
                 {
-                    if (ticketNumber is null && canonicalLookup.TryGetValue(sourceField, out var can1) &&
-                        (string.Equals(can1, "ticket_number", StringComparison.Ordinal)
-                         || string.Equals(can1, "ticket_key", StringComparison.Ordinal)))
+                    if (ticketNumber is null && canonicalLookup.TryGetValue(sourceField, out var can1) && IsTicketNumberCanonical(can1))
                         ticketNumber = value;
 
-                    if (companyName is null && canonicalLookup.TryGetValue(sourceField, out var can2) &&
-                        string.Equals(can2, "company", StringComparison.Ordinal))
+                    if (companyName is null && canonicalLookup.TryGetValue(sourceField, out var can2) && IsCompanyCanonical(can2))
                         companyName = value;
 
                     if (ticketNumber != null && companyName != null)
@@ -254,7 +249,7 @@ public class SnapshotIngestService : ISnapshotIngestService
 
                 if (string.IsNullOrWhiteSpace(ticketNumber))
                 {
-                    warnings.Add($"Element {elementIndex}: could not resolve ticket_number value, skipped.");
+                    warnings.Add($"Element {elementIndex}: could not resolve Number value, skipped.");
                     continue;
                 }
 
@@ -333,12 +328,9 @@ public class SnapshotIngestService : ISnapshotIngestService
         Guid snapshotId = snapshot.Id;
 
         // Figure out which columns represent company and ticket-number metadata.
-        // NOTE: ticket_key is treated as a legacy alias for ticket_number.
-        int ticketNumberColIndex = FindCanonicalIndex(canonicalHeaders, "ticket_number");
-        if (ticketNumberColIndex < 0)
-            ticketNumberColIndex = FindCanonicalIndex(canonicalHeaders, "ticket_key");
-
-        int companyColIndex = FindCanonicalIndex(canonicalHeaders, "company");
+        // Legacy aliases are still recognised.
+        int ticketNumberColIndex = FindCanonicalIndex(canonicalHeaders, CanonicalAliasesForTicketNumber);
+        int companyColIndex = FindCanonicalIndex(canonicalHeaders, CanonicalAliasesForCompany);
 
         // Collect distinct (ticketKey, companyName) pairs and build SnapshotTicket entities
         var ticketEntries = rows
@@ -367,10 +359,9 @@ public class SnapshotIngestService : ISnapshotIngestService
 
             string? canonical = canonicalHeaders[i];
 
-            // Don't store ticket_number / ticket_key as a field change; it's part of the ticket identity.
+            // Don't store Number / ticket identity aliases as a field change; it's part of the ticket identity.
             if (i == ticketNumberColIndex
-                || string.Equals(canonical, "ticket_number", StringComparison.Ordinal)
-                || string.Equals(canonical, "ticket_key", StringComparison.Ordinal))
+                || IsTicketNumberCanonical(canonical))
             {
                 continue;
             }
@@ -393,10 +384,9 @@ public class SnapshotIngestService : ISnapshotIngestService
 
                 string? canonical = canonicalHeaders[i];
 
-                // Don't store ticket_number / ticket_key as a field change; it's part of the ticket identity.
+                // Don't store Number / ticket identity aliases as a field change; it's part of the ticket identity.
                 if (i == ticketNumberColIndex
-                    || string.Equals(canonical, "ticket_number", StringComparison.Ordinal)
-                    || string.Equals(canonical, "ticket_key", StringComparison.Ordinal))
+                    || IsTicketNumberCanonical(canonical))
                 {
                     continue;
                 }
@@ -517,9 +507,8 @@ public class SnapshotIngestService : ISnapshotIngestService
             {
                 string? canonical = canonicalLookup.TryGetValue(sourceFieldName, out var c) ? c : null;
 
-                if (string.Equals(canonical, "company", StringComparison.Ordinal)
-                    || string.Equals(canonical, "ticket_number", StringComparison.Ordinal)
-                    || string.Equals(canonical, "ticket_key", StringComparison.Ordinal))
+                if (IsCompanyCanonical(canonical)
+                    || IsTicketNumberCanonical(canonical))
                     continue;
 
                 string fieldName = canonical ?? sourceFieldName;
@@ -538,9 +527,8 @@ public class SnapshotIngestService : ISnapshotIngestService
                 string? canonical = canonicalLookup.TryGetValue(sourceFieldName, out var c) ? c : null;
 
                 // Don't store company or ticket identity fields as ticket fields
-                if (string.Equals(canonical, "company", StringComparison.Ordinal)
-                    || string.Equals(canonical, "ticket_number", StringComparison.Ordinal)
-                    || string.Equals(canonical, "ticket_key", StringComparison.Ordinal))
+                if (IsCompanyCanonical(canonical)
+                    || IsTicketNumberCanonical(canonical))
                     continue;
 
                 string fieldName = canonical ?? sourceFieldName;
@@ -595,14 +583,37 @@ public class SnapshotIngestService : ISnapshotIngestService
         };
     }
 
-    private static int FindCanonicalIndex(string?[] canonicalHeaders, string canonicalName)
+    private static readonly string[] CanonicalAliasesForTicketNumber = ["Number", "ticket_number", "ticket_key"];
+    private static readonly string[] CanonicalAliasesForCompany = ["Company", "company"];
+
+    private static int FindCanonicalIndex(string?[] canonicalHeaders, params string[] canonicalNames)
     {
         for (int i = 0; i < canonicalHeaders.Length; i++)
         {
-            if (string.Equals(canonicalHeaders[i], canonicalName, StringComparison.Ordinal))
+            if (MatchesCanonical(canonicalHeaders[i], canonicalNames))
                 return i;
         }
         return -1;
+    }
+
+    private static bool IsTicketNumberCanonical(string? canonical) => MatchesCanonical(canonical, CanonicalAliasesForTicketNumber);
+    private static bool IsCompanyCanonical(string? canonical) => MatchesCanonical(canonical, CanonicalAliasesForCompany);
+
+    private static bool MatchesCanonical(string? canonical, params string[] canonicalNames)
+    {
+        if (string.IsNullOrWhiteSpace(canonical))
+            return false;
+
+        foreach (var name in canonicalNames)
+        {
+            if (string.Equals(canonical, name, StringComparison.Ordinal)
+                || CanonicalFieldCatalog.GetAliases(name).Any(alias => string.Equals(alias, canonical, StringComparison.OrdinalIgnoreCase)))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -617,7 +628,7 @@ public class SnapshotIngestService : ISnapshotIngestService
         foreach (var (sourceField, value) in fields)
         {
             if (canonicalLookup.TryGetValue(sourceField, out var canonical) &&
-                string.Equals(canonical, targetCanonical, StringComparison.Ordinal))
+                MatchesCanonical(canonical, targetCanonical))
                 return Task.FromResult<string?>(value);
         }
         return Task.FromResult<string?>(null);

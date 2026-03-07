@@ -4,9 +4,13 @@ using UPMS.Data;
 
 /// <summary>
 /// Reporting plugin that generates HTML email notifications from pre-defined templates.
+/// Can either preview the rendered HTML or download an .eml draft ready for To/Cc editing.
 /// </summary>
 public class EmailNotificationPlugin : IReportPlugin
 {
+    public const string OutputModePreviewHtml = "Preview HTML";
+    public const string OutputModeDownloadEml = "Download EML Draft";
+
     private readonly TicketDataServiceInstance _dataService;
 
     public EmailNotificationPlugin(TicketDataServiceInstance dataService)
@@ -16,7 +20,7 @@ public class EmailNotificationPlugin : IReportPlugin
 
     public string PluginId => "email-notification";
     public string DisplayName => "Email Notification";
-    public string Description => "Generates HTML email notifications using pre-defined templates populated with ticket data.";
+    public string Description => "Generates HTML email notifications using pre-defined templates populated with ticket data. Supports browser preview or downloadable .eml drafts.";
 
     public IReadOnlyList<ReportParameterDefinition> Parameters =>
     [
@@ -31,11 +35,36 @@ public class EmailNotificationPlugin : IReportPlugin
         },
         new ReportParameterDefinition
         {
+            Key = "output_mode",
+            DisplayName = "Output Mode",
+            Type = ReportParameterType.Select,
+            IsRequired = false,
+            Description = "Preview the email in the browser or download a draft .eml file.",
+            Options = [OutputModePreviewHtml, OutputModeDownloadEml]
+        },
+        new ReportParameterDefinition
+        {
+            Key = "to",
+            DisplayName = "To",
+            Type = ReportParameterType.Text,
+            IsRequired = false,
+            Description = "Optional. Leave blank if you want to type recipients in your mail client later."
+        },
+        new ReportParameterDefinition
+        {
+            Key = "cc",
+            DisplayName = "Cc",
+            Type = ReportParameterType.Text,
+            IsRequired = false,
+            Description = "Optional. Leave blank if you want to type recipients in your mail client later."
+        },
+        new ReportParameterDefinition
+        {
             Key = "itsm_source",
             DisplayName = "ITSM Source",
-            Type = ReportParameterType.Select,
+            Type = ReportParameterType.ItsmSource,
             IsRequired = true,
-            Options = ["servicenow", "jira"]
+            Description = "Select the ITSM source to run this report against."
         },
         new ReportParameterDefinition
         {
@@ -64,11 +93,32 @@ public class EmailNotificationPlugin : IReportPlugin
         if (!request.Parameters.TryGetValue("as_of_date", out string? asOfDateStr) || !DateTime.TryParse(asOfDateStr, out DateTime asOfDate))
             return ReportResult.Failure("Required parameter 'as_of_date' is missing or invalid.");
 
+        request.Parameters.TryGetValue("output_mode", out var outputMode);
+        request.Parameters.TryGetValue("to", out var to);
+        request.Parameters.TryGetValue("cc", out var cc);
+        outputMode = string.IsNullOrWhiteSpace(outputMode) ? OutputModePreviewHtml : outputMode.Trim();
+
         try
         {
             IEnumerable<Ticket> tickets = await _dataService.GetTicketsAsync(itsmSource, company, asOfDate);
             List<Ticket> ticketList = tickets.ToList();
             string html = EmailTemplateRenderer.Render(templateName, company, itsmSource, asOfDate, ticketList);
+
+            if (string.Equals(outputMode, OutputModeDownloadEml, StringComparison.OrdinalIgnoreCase))
+            {
+                var subject = EmailDraftBuilder.BuildSubject(templateName, company, itsmSource, asOfDate, ticketList);
+                var emlBytes = EmailDraftBuilder.BuildEml(subject, html, to, cc);
+                var safeCompany = SanitizeFilePart(company);
+
+                return new ReportResult
+                {
+                    Success = true,
+                    OutputType = ReportOutputType.FileDownload,
+                    FileName = $"UPMS_Email_{safeCompany}_{asOfDate:yyyy-MM-dd}.eml",
+                    ContentType = "message/rfc822",
+                    FileContent = emlBytes
+                };
+            }
 
             return new ReportResult
             {
@@ -81,5 +131,11 @@ public class EmailNotificationPlugin : IReportPlugin
         {
             return ReportResult.Failure($"Failed to generate email: {ex.Message}");
         }
+    }
+
+    private static string SanitizeFilePart(string value)
+    {
+        var safe = new string(value.Where(ch => char.IsLetterOrDigit(ch) || ch is '_' or '-').ToArray());
+        return string.IsNullOrWhiteSpace(safe) ? "company" : safe;
     }
 }

@@ -1,5 +1,6 @@
 namespace UPMS.Web.Tests;
 
+using System.Text;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using UPMS.Data;
@@ -105,6 +106,44 @@ public class EmailNotificationPluginTests
 
             Assert.That(result.HtmlContent, Does.Contain("Monthly Problem Management Summary"));
             Assert.That(result.HtmlContent, Does.Contain("Acme"));
+        }
+    }
+
+    [Test]
+    [NonParallelizable]
+    public async Task EmailPlugin_GenerateAsync_DownloadEml_ReturnsDraftFile()
+    {
+        (TicketDataServiceInstance dataService, SqliteConnection conn) = CreateTestDataServiceWithConnection();
+        using (conn)
+        {
+            EmailNotificationPlugin plugin = new(dataService);
+            ReportRequest request = new()
+            {
+                PluginId = plugin.PluginId,
+                Parameters = new Dictionary<string, string>
+                {
+                    ["template"] = EmailTemplateRenderer.TemplateSummary,
+                    ["output_mode"] = EmailNotificationPlugin.OutputModeDownloadEml,
+                    ["itsm_source"] = "servicenow",
+                    ["company"] = "Acme",
+                    ["as_of_date"] = "2025-01-15"
+                },
+                RequestedBy = "test",
+                RequestedAt = DateTime.UtcNow
+            };
+
+            ReportResult result = await plugin.GenerateAsync(request);
+
+            Assert.That(result.Success, Is.True, result.ErrorMessage);
+            Assert.That(result.OutputType, Is.EqualTo(ReportOutputType.FileDownload));
+            Assert.That(result.ContentType, Is.EqualTo("message/rfc822"));
+            Assert.That(result.FileName, Does.EndWith(".eml"));
+            Assert.That(result.FileContent, Is.Not.Null);
+
+            var eml = Encoding.UTF8.GetString(result.FileContent!);
+            Assert.That(eml, Does.Contain("X-Unsent: 1"));
+            Assert.That(eml, Does.Contain("Subject:"));
+            Assert.That(eml, Does.Contain("Content-Type: text/html; charset=utf-8"));
         }
     }
 
