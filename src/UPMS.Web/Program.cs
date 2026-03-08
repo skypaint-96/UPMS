@@ -180,7 +180,7 @@ namespace UPMS.Web
                     logger.LogInformation("Applying EF Core migrations...");
                     await db.Database.MigrateAsync();
 
-                    logger.LogInformation("Ensuring canonical field registry schema updates...");
+                    logger.LogInformation("Seeding canonical field registry defaults...");
                     var bootstrapper = scope.ServiceProvider.GetRequiredService<UpmsSchemaBootstrapper>();
                     await bootstrapper.EnsureAsync();
 
