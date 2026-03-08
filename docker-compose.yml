@@ -15,8 +15,8 @@ services:
       # Prefer supplying the DB connection string via a docker secret file.
       - UPMS_CONNECTION_STRING_FILE=/run/secrets/upms_connection_string
       # Azure AD settings: ClientId / TenantId may be provided as env vars; ClientSecret should be provided as a docker secret.
-      - AzureAd__ClientId=${AZUREAD__CLIENTID}
-      - AzureAd__TenantId=${AZUREAD__TENANTID}
+      - AzureAd__ClientId=${AZUREAD__CLIENTID:-}
+      - AzureAd__TenantId=${AZUREAD__TENANTID:-}
       - AzureAd__ClientSecret_FILE=/run/secrets/upms_azure_client_secret
     # Removed `secrets:` here because docker compose (non-swarm) does not support external secrets.
     # In Swarm/Kubernetes you can mount secrets to /run/secrets and keep the `secrets:` mapping.

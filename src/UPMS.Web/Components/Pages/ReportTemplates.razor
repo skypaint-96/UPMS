@@ -24,7 +24,7 @@
     <article class="stat-card">
         <p class="stat-label">Supported file groups</p>
         <p class="stat-value stat-value--small">Text + OOXML</p>
-        <p class="stat-helper">Use contiguous plain-text tokens for best replacement accuracy.</p>
+        <p class="stat-helper">Word and PowerPoint templates work best when tokens appear as normal visible text in the document.</p>
     </article>
 </section>
 
@@ -71,7 +71,7 @@
             <div class="field-stack">
                 <label for="template-file">Template File</label>
                 <InputFile id="template-file" class="form-control" OnChange="OnFileSelected" accept=".html,.htm,.txt,.csv,.xml,.eml,.docx,.xlsx,.pptx" />
-                <div class="helper-text">For DOCX, XLSX, and PPTX templates, keep tokens as contiguous plain text in the document.</div>
+                <div class="helper-text">For DOCX and PPTX templates, add tokens as normal visible text. Starter examples are bundled in the template store so authors have a working pattern to copy.</div>
                 @if (selectedFile is not null)
                 {
                     <div class="file-meta">
@@ -92,33 +92,49 @@
             <div class="surface-card-header">
                 <div>
                     <h2 class="surface-card-title">Available tokens</h2>
-                    <p class="surface-card-subtitle">These are the tokens currently produced by the template plugin.</p>
+                    <p class="surface-card-subtitle">Use aggregate tokens for counts and metadata. Use per-ticket blocks when you need one repeated section, page, or slide per ticket. Text-first tokens are best for Word and PowerPoint; HTML and SVG tokens are better suited to HTML/email outputs.</p>
                 </div>
             </div>
 
+            <h3 class="h6 mb-2">Aggregate tokens</h3>
             <div class="chip-list mb-3">
-                <span class="token-chip">{{company}}</span>
-                <span class="token-chip">{{itsm_source}}</span>
-                <span class="token-chip">{{as_of_date}}</span>
-                <span class="token-chip">{{generated_at_utc}}</span>
-                <span class="token-chip">{{requested_by}}</span>
-                <span class="token-chip">{{ticket_count}}</span>
-                <span class="token-chip">{{ticket_key}}</span>
-                <span class="token-chip">{{ticket_number}}</span>
-                <span class="token-chip">{{ticket_status}}</span>
-                <span class="token-chip">{{ticket_priority}}</span>
-                <span class="token-chip">{{tickets_html_table}}</span>
-                <span class="token-chip">{{ticket_rows_html}}</span>
-                <span class="token-chip">{{tickets_text_list}}</span>
-                <span class="token-chip">{{tickets_csv_document}}</span>
-                <span class="token-chip">{{month_end_chart_svg}}</span>
-                <span class="token-chip">{{month_end_table_html}}</span>
-                <span class="token-chip">{{month_end_backlog_current}}</span>
-                <span class="token-chip">{{month_end_opened_current}}</span>
-                <span class="token-chip">{{month_end_resolved_current}}</span>
+                <span class="token-chip">{{meta.company}}</span>
+                <span class="token-chip">{{meta.itsm_source}}</span>
+                <span class="token-chip">{{meta.as_of_date}}</span>
+                <span class="token-chip">{{meta.generated_at_utc}}</span>
+                <span class="token-chip">{{kpi.ticket_count}}</span>
+                <span class="token-chip">{{kpi.month_end.backlog_current}}</span>
+                <span class="token-chip">{{table.kpis.html}}</span>
+                <span class="token-chip">{{table.tickets.html}}</span>
+                <span class="token-chip">{{table.lifecycle.month_end.html}}</span>
+                <span class="token-chip">{{output.tickets.text_list}}</span>
+                <span class="token-chip">{{output.tickets.csv_document}}</span>
+                <span class="token-chip">{{graph.lifecycle.month_end.svg}}</span>
             </div>
 
-            <p class="mb-0 text-muted">For DOCX, XLSX, and PPTX templates, keep tokens as plain contiguous text such as <code>{{company}}</code>. The current fill engine performs direct XML text replacement and works best when a token is not split across formatting runs.</p>
+            <h3 class="h6 mb-2">Per-ticket loop syntax</h3>
+            <div class="helper-text mb-2">Default behaviour repeats a section inside the current page or slide:</div>
+            <pre class="mb-3"><code>{{start per ticket Priority=High}}
+&lt;h2&gt;{{ticket.Number}}&lt;/h2&gt;
+&lt;p&gt;{{ticket.Short_Description}}&lt;/p&gt;
+{{end per ticket}}</code></pre>
+
+            <div class="helper-text mb-2">Use <code>scope=page</code> for one page per ticket in HTML/DOCX/TXT, or one whole slide per ticket in PPTX. <code>scope=slide</code> is accepted too. In Word, page-scoped markers work best when the start and end markers sit on their own paragraphs.</div>
+            <pre class="mb-3"><code>{{start per ticket State!=Closed scope=page}}
+Title: {{ticket.Number}}
+Description: {{ticket.Description}}
+{{end per ticket}}</code></pre>
+
+            <div class="helper-text mb-2">Supported filter operators inside the loop header:</div>
+            <ul class="compact-token-list mb-3">
+                <li><code>=</code> exact match, for example <code>Priority=High</code></li>
+                <li><code>!=</code> not equal, for example <code>State!=Closed</code></li>
+                <li><code>~</code> contains, for example <code>Description~database</code></li>
+                <li><code>!~</code> does not contain</li>
+                <li>Combine multiple clauses with <code>&amp;&amp;</code> or <code>;</code></li>
+            </ul>
+
+            <p class="mb-0 text-muted">For DOCX and PPTX templates, keep tokens and loop markers as visible text such as <code>{{kpi.ticket_count}}</code> or <code>{{start per ticket State=Open scope=page}}</code>. PowerPoint whole-slide loops work best when the loop markers live on the slide you want duplicated, and Word page loops work best when the markers sit in their own paragraphs.</p>
         </section>
     </aside>
 </div>

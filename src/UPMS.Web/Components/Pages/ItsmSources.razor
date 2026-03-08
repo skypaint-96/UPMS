@@ -2,8 +2,10 @@
 @rendermode InteractiveServer
 
 @using UPMS.Data
+@using UPMS.Web.Services
 
 @inject IItsmSourceService ItsmSourceService
+@inject IUpmsArchiveService ArchiveService
 
 <PageTitle>ITSM Sources - UPMS</PageTitle>
 
@@ -15,7 +17,7 @@
                 <h1>ITSM Sources</h1>
                 <p>
                     Define the systems that feed ticket snapshots into UPMS. Each source gets a friendly label,
-                    a stable slug, and its own field mapping configuration.
+                    a stable slug, its own field mappings, and export/delete controls for full retention management.
                 </p>
             </div>
 
@@ -23,12 +25,12 @@
                 <article class="stat-card">
                     <span class="stat-label">Configured sources</span>
                     <strong>@sources.Count</strong>
-                    <span class="stat-caption">Ready for uploads and reporting.</span>
+                    <span class="stat-caption">Ready for uploads, exports, and reporting.</span>
                 </article>
                 <article class="stat-card">
                     <span class="stat-label">Next step</span>
                     <strong>@GetNextStepLabel()</strong>
-                    <span class="stat-caption">Create a source, then add mappings for its CSV fields.</span>
+                    <span class="stat-caption">Create or import a source, then review its mappings.</span>
                 </article>
             </div>
         </div>
@@ -38,12 +40,19 @@
         </div>
     </section>
 
+    @if (!string.IsNullOrWhiteSpace(pageMessage))
+    {
+        <div class="@(pageMessageIsError ? "alert alert-danger" : "alert alert-success")" role="alert">
+            @pageMessage
+        </div>
+    }
+
     <div class="content-grid content-grid-sidebar-right">
         <section class="card-surface stack-md">
             <div class="section-heading">
                 <div>
                     <h2 class="section-title">Current sources</h2>
-                    <p class="section-subtitle">Open a source to manage field mappings or remove unused integrations.</p>
+                    <p class="section-subtitle">Open a source to manage mappings, export a full archive, or hard-delete all associated data.</p>
                 </div>
                 <span class="badge badge-info">@SourceSummary</span>
             </div>
@@ -84,7 +93,7 @@
                                                    data-testid="source-link-@source.Name">
                                                     @source.Name
                                                 </a>
-                                                <span class="table-meta">Stable slug used in uploads and URLs.</span>
+                                                <span class="table-meta">Stable slug used in uploads, ticket keys, and exports.</span>
                                             </div>
                                         </td>
                                         <td>
@@ -100,11 +109,11 @@
                                             @if (confirmDeleteName == source.Name)
                                             {
                                                 <div class="inline-confirm">
-                                                    <span>Delete this source?</span>
+                                                    <span>Hard-delete this source and all of its mappings, snapshots, and field history?</span>
                                                     <button class="btn btn-danger btn-sm"
                                                             data-testid="confirm-delete-@source.Name"
                                                             @onclick="() => ConfirmDeleteAsync(source.Name)">
-                                                        Yes, delete
+                                                        Yes, delete all data
                                                     </button>
                                                     <button class="btn btn-secondary btn-sm" @onclick="CancelDelete">Cancel</button>
                                                 </div>
@@ -113,10 +122,11 @@
                                             {
                                                 <div class="button-row wrap gap-sm">
                                                     <a class="btn btn-secondary btn-sm" href="/itsm-sources/@source.Name">Manage mappings</a>
+                                                    <a class="btn btn-secondary btn-sm" href="/api/export/itsm-sources/@source.Name">Export archive</a>
                                                     <button class="btn btn-danger btn-sm"
                                                             data-testid="delete-source-@source.Name"
                                                             @onclick="() => RequestDelete(source.Name)">
-                                                        Delete
+                                                        Hard delete
                                                     </button>
                                                 </div>
                                             }
@@ -171,13 +181,44 @@
                 </div>
             </section>
 
+            <section class="card-surface stack-md">
+                <div class="section-heading">
+                    <div>
+                        <h2 class="section-title">Import ITSM source</h2>
+                        <p class="section-subtitle">Restore a previously exported source archive, including mappings and snapshots.</p>
+                    </div>
+                </div>
+
+                <div class="form-grid">
+                    <div class="form-field">
+                        <label for="import-source-file" class="form-label">Archive file</label>
+                        <InputFile id="import-source-file" class="form-control" OnChange="OnImportFileSelected" accept=".json" />
+                        <span class="helper-text">Choose a JSON archive previously exported from UPMS.</span>
+                    </div>
+
+                    <div class="form-field checkbox-field">
+                        <label class="checkbox-label">
+                            <input type="checkbox" @bind="replaceExistingOnImport" />
+                            <span>Replace existing source with the same name</span>
+                        </label>
+                        <span class="helper-text">When enabled, the current source, mappings, snapshots, and history are removed before import.</span>
+                    </div>
+                </div>
+
+                <div class="button-row">
+                    <button class="btn btn-primary" @onclick="ImportSourceAsync" disabled="@(selectedImportFile is null)">Import source archive</button>
+                </div>
+            </section>
+
             <section class="card-surface stack-sm">
                 <h2 class="section-title">Recommended setup</h2>
                 <ol class="info-steps">
-                    <li>Create the source with a stable slug.</li>
-                    <li>Open the source and map incoming CSV columns to canonical fields.</li>
-                    <li>Upload a snapshot to validate the mapping and populate the dashboard.</li>
+                    <li>Create or import the source with a stable slug.</li>
+                    <li>Open the source and map incoming fields to canonical names.</li>
+                    <li>Upload a snapshot to validate mappings and populate history.</li>
+                    <li>Export before hard delete when you need a recoverable copy.</li>
                 </ol>
+                <a class="btn btn-secondary" href="/canonical-fields">Manage canonical fields</a>
             </section>
         </aside>
     </div>
@@ -189,6 +230,10 @@
     private string newSourceLabel = string.Empty;
     private string? addError;
     private string? confirmDeleteName;
+    private string? pageMessage;
+    private bool pageMessageIsError;
+    private IBrowserFile? selectedImportFile;
+    private bool replaceExistingOnImport;
 
     private string SourceSummary => sources.Count switch
     {
@@ -211,6 +256,8 @@
     private async Task AddSourceAsync()
     {
         addError = null;
+        pageMessage = null;
+        pageMessageIsError = false;
 
         if (string.IsNullOrWhiteSpace(newSourceName))
         {
@@ -230,6 +277,7 @@
             newSourceName = string.Empty;
             newSourceLabel = string.Empty;
             await LoadSourcesAsync();
+            pageMessage = "ITSM source added.";
         }
         catch (Exception ex)
         {
@@ -240,6 +288,8 @@
     private void RequestDelete(string name)
     {
         confirmDeleteName = name;
+        pageMessage = null;
+        pageMessageIsError = false;
     }
 
     private void CancelDelete()
@@ -250,10 +300,56 @@
     private async Task ConfirmDeleteAsync(string name)
     {
         confirmDeleteName = null;
-        await ItsmSourceService.DeleteSourceAsync(name);
-        await LoadSourcesAsync();
+        pageMessage = null;
+        pageMessageIsError = false;
+
+        try
+        {
+            await ArchiveService.DeleteSourceAsync(name);
+            await LoadSourcesAsync();
+            pageMessage = $"Deleted ITSM source '{name}' and all associated mappings, snapshots, and history.";
+        }
+        catch (Exception ex)
+        {
+            pageMessage = ex.Message;
+            pageMessageIsError = true;
+        }
+    }
+
+    private void OnImportFileSelected(InputFileChangeEventArgs args)
+    {
+        selectedImportFile = args.File;
+        pageMessage = null;
+        pageMessageIsError = false;
+    }
+
+    private async Task ImportSourceAsync()
+    {
+        pageMessage = null;
+        pageMessageIsError = false;
+
+        if (selectedImportFile is null)
+        {
+            pageMessage = "Please choose an archive file to import.";
+            pageMessageIsError = true;
+            return;
+        }
+
+        try
+        {
+            await using var stream = selectedImportFile.OpenReadStream(maxAllowedSize: 50 * 1024 * 1024);
+            var result = await ArchiveService.ImportSourceAsync(stream, replaceExistingOnImport);
+            await LoadSourcesAsync();
+            selectedImportFile = null;
+            pageMessage = $"Imported source '{result.SourceName}' with {result.MappingCount} mapping(s), {result.SnapshotCount} snapshot(s), and {result.FieldChangeCount} field change(s).";
+        }
+        catch (Exception ex)
+        {
+            pageMessage = ex.Message;
+            pageMessageIsError = true;
+        }
     }
 
     private string GetNextStepLabel()
-        => sources.Count == 0 ? "Create first source" : "Map fields";
+        => sources.Count == 0 ? "Create first source" : "Review mappings";
 }

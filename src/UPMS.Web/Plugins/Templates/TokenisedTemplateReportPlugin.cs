@@ -52,7 +52,7 @@ public sealed class TokenisedTemplateReportPlugin : IReportPlugin
 
     public string PluginId => "tokenised-template-report";
     public string DisplayName => "Tokenised Template Fill";
-    public string Description => "Fills uploaded email, document, or spreadsheet templates using {{token}} fields and returns the rendered output.";
+    public string Description => "Fills uploaded email, document, or spreadsheet templates using aggregate {{token}} fields plus per-ticket loop blocks such as {{start per ticket ...}}...{{end per ticket}}.";
 
     public IReadOnlyList<ReportParameterDefinition> Parameters
     {
@@ -94,7 +94,9 @@ public sealed class TokenisedTemplateReportPlugin : IReportPlugin
                     Key = "company",
                     DisplayName = "Company",
                     Type = ReportParameterType.Text,
-                    IsRequired = true
+                    IsRequired = true,
+                    Placeholder = "Start typing a company name",
+                    CanonicalFieldName = "Company"
                 },
                 new ReportParameterDefinition
                 {
@@ -162,13 +164,13 @@ public sealed class TokenisedTemplateReportPlugin : IReportPlugin
                     .OrderBy(t => t.TicketKey, StringComparer.OrdinalIgnoreCase)
                     .ToList();
 
-            var tokens = TemplateReportTokenBuilder.Build(itsmSource, company, asOfDate, selectedTickets, detailFields, request.RequestedBy);
-            var renderedBytes = TemplateTokenRenderer.RenderBytes(template.FileContent, template.Metadata.Extension, tokens);
+            var renderContext = TemplateReportTokenBuilder.BuildContext(itsmSource, company, asOfDate, selectedTickets, detailFields, request.RequestedBy);
+            var renderedBytes = TemplateTokenRenderer.RenderBytes(template.FileContent, template.Metadata.Extension, renderContext);
             var renderedText = ReportTemplateContentTypeMapper.IsTextLike(template.Metadata.Extension)
                 ? Encoding.UTF8.GetString(renderedBytes)
                 : null;
 
-            return BuildResult(template.Metadata, renderedBytes, renderedText, tokens, outputMode, company, asOfDate);
+            return BuildResult(template.Metadata, renderedBytes, renderedText, renderContext.GlobalTokens, outputMode, company, asOfDate);
         }
         catch (Exception ex)
         {

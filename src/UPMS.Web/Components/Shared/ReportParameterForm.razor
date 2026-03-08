@@ -1,10 +1,14 @@
 @inject IItsmSourceService ItsmSourceService
+@inject ICanonicalFieldService CanonicalFieldService
+@inject ICanonicalValueSuggestionService CanonicalValueSuggestionService
 
 <div class="report-parameter-grid">
     @foreach (var param in Parameters)
     {
         var fromKey = param.Key + "_from";
         var toKey = param.Key + "_to";
+        var suggestionListId = GetSuggestionListId(param);
+        var suggestions = GetValueSuggestions(param);
 
         <div class="@GetFieldClass(param)">
             <label for="@param.Key">
@@ -22,17 +26,44 @@
 
             @if (param.Type == ReportParameterType.Text)
             {
-                <input id="@param.Key"
-                       class="form-control"
-                       type="text"
-                       value="@GetValue(param.Key)"
-                       @onchange="e => SetValue(param.Key, e.Value?.ToString() ?? string.Empty)" />
+                if (TryGetCanonicalDataType(param, out var canonicalDataType) && canonicalDataType == CanonicalFieldDataType.Boolean)
+                {
+                    <select id="@param.Key"
+                            class="form-select"
+                            @onchange="e => SetValue(param.Key, e.Value?.ToString() ?? string.Empty)">
+                        <option value="">-- Select --</option>
+                        <option value="true" selected="@(GetValue(param.Key) == "true")">True</option>
+                        <option value="false" selected="@(GetValue(param.Key) == "false")">False</option>
+                    </select>
+                }
+                else
+                {
+                    <input id="@param.Key"
+                           class="form-control"
+                           type="@GetTextInputType(param)"
+                           value="@GetRenderedTextValue(param)"
+                           placeholder="@GetPlaceholder(param)"
+                           list="@(ShouldUseSuggestionList(param) ? suggestionListId : null)"
+                           @onfocus="() => LoadSuggestionsAsync(param)"
+                           @onchange="e => SetValue(param.Key, e.Value?.ToString() ?? string.Empty)" />
+
+                    @if (ShouldUseSuggestionList(param) && suggestions.Count > 0)
+                    {
+                        <datalist id="@suggestionListId">
+                            @foreach (var suggestion in suggestions)
+                            {
+                                <option value="@suggestion"></option>
+                            }
+                        </datalist>
+                    }
+                }
             }
             else if (param.Type == ReportParameterType.TextArea)
             {
                 <textarea id="@param.Key"
                           class="form-control"
                           rows="5"
+                          placeholder="@GetPlaceholder(param)"
                           @onchange="e => SetValue(param.Key, e.Value?.ToString() ?? string.Empty)">@GetValue(param.Key)</textarea>
             }
             else if (param.Type == ReportParameterType.Date)
@@ -144,6 +175,8 @@
     [Parameter] public EventCallback OnValuesChanged { get; set; }
 
     private IReadOnlyList<ItsmSource> itsmSources = Array.Empty<ItsmSource>();
+    private IReadOnlyDictionary<string, CanonicalFieldDefinition> canonicalFields = new Dictionary<string, CanonicalFieldDefinition>(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, IReadOnlyList<string>> suggestionCache = new(StringComparer.OrdinalIgnoreCase);
 
     protected override async Task OnInitializedAsync()
     {
@@ -157,6 +190,16 @@
         catch
         {
             itsmSources = Array.Empty<ItsmSource>();
+        }
+
+        try
+        {
+            canonicalFields = (await CanonicalFieldService.GetLookupAsync())
+                .ToDictionary(kvp => kvp.Key, kvp => kvp.Value, StringComparer.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            canonicalFields = new Dictionary<string, CanonicalFieldDefinition>(StringComparer.OrdinalIgnoreCase);
         }
     }
 
@@ -173,6 +216,12 @@
     private async Task SetValue(string key, string value)
     {
         Values[key] = value;
+
+        if (string.Equals(key, "itsm_source", StringComparison.OrdinalIgnoreCase))
+        {
+            suggestionCache.Clear();
+        }
+
         await OnValuesChanged.InvokeAsync();
     }
 
@@ -216,5 +265,96 @@
         }
 
         await SetValue(key, serialized);
+    }
+
+    private bool TryGetCanonicalDataType(ReportParameterDefinition param, out CanonicalFieldDataType dataType)
+    {
+        dataType = CanonicalFieldDataType.Text;
+
+        if (string.IsNullOrWhiteSpace(param.CanonicalFieldName))
+            return false;
+
+        if (!canonicalFields.TryGetValue(param.CanonicalFieldName, out var definition))
+            return false;
+
+        dataType = definition.DataType;
+        return true;
+    }
+
+    private string GetTextInputType(ReportParameterDefinition param)
+    {
+        if (!TryGetCanonicalDataType(param, out var dataType))
+            return "text";
+
+        return dataType switch
+        {
+            CanonicalFieldDataType.Integer => "number",
+            CanonicalFieldDataType.Decimal => "number",
+            CanonicalFieldDataType.DateTime => "datetime-local",
+            _ => "text"
+        };
+    }
+
+    private string GetRenderedTextValue(ReportParameterDefinition param)
+    {
+        var value = GetValue(param.Key);
+        if (string.IsNullOrWhiteSpace(value))
+            return string.Empty;
+
+        if (TryGetCanonicalDataType(param, out var dataType)
+            && dataType == CanonicalFieldDataType.DateTime
+            && DateTime.TryParse(value, out var parsed))
+        {
+            return parsed.ToString("yyyy-MM-ddTHH:mm", System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        return value;
+    }
+
+    private string GetPlaceholder(ReportParameterDefinition param)
+    {
+        if (!string.IsNullOrWhiteSpace(param.Placeholder))
+            return param.Placeholder!;
+
+        if (string.Equals(param.CanonicalFieldName, "Company", StringComparison.OrdinalIgnoreCase))
+            return "Start typing to see known company names";
+
+        return string.Empty;
+    }
+
+    private bool ShouldUseSuggestionList(ReportParameterDefinition param)
+    {
+        return param.Type == ReportParameterType.Text
+            && param.EnableSuggestions
+            && string.Equals(GetTextInputType(param), "text", StringComparison.Ordinal)
+            && !string.IsNullOrWhiteSpace(param.CanonicalFieldName);
+    }
+
+    private string GetSuggestionListId(ReportParameterDefinition param) => $"suggestions-{param.Key}";
+
+    private IReadOnlyList<string> GetValueSuggestions(ReportParameterDefinition param)
+    {
+        if (suggestionCache.TryGetValue(param.Key, out var cached))
+            return cached;
+
+        return Array.Empty<string>();
+    }
+
+    private async Task LoadSuggestionsAsync(ReportParameterDefinition param)
+    {
+        if (!ShouldUseSuggestionList(param) || string.IsNullOrWhiteSpace(param.CanonicalFieldName))
+            return;
+
+        var sources = GetCurrentItsmSources();
+        suggestionCache[param.Key] = await CanonicalValueSuggestionService.GetSuggestionsAsync(param.CanonicalFieldName!, sources);
+        StateHasChanged();
+    }
+
+    private IReadOnlyList<string> GetCurrentItsmSources()
+    {
+        if (!Values.TryGetValue("itsm_source", out var itsmSource) || string.IsNullOrWhiteSpace(itsmSource))
+            return Array.Empty<string>();
+
+        return [itsmSource.Trim()];
     }
 }

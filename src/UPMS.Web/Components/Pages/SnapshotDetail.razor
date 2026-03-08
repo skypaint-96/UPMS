@@ -2,6 +2,7 @@
 @rendermode InteractiveServer
 
 @using System.Globalization
+@using UPMS.Web.Services
 
 <PageTitle>Snapshot @SnapshotId - UPMS</PageTitle>
 
@@ -15,10 +16,14 @@
     <div>
         <p class="page-eyebrow">Snapshot detail</p>
         <h1 class="page-title">Snapshot details</h1>
-        <p class="page-description">Inspect the imported ticket list and open any record using the exact snapshot timestamp as context.</p>
+        <p class="page-description">Inspect the imported ticket list, export this snapshot, or permanently remove it and its recorded field changes.</p>
     </div>
     <div class="page-actions">
         <a class="btn btn-outline-secondary" href="/snapshots">Back to snapshots</a>
+        @if (snapshotMetadata is not null)
+        {
+            <a class="btn btn-secondary" href="/api/export/snapshots/@snapshotMetadata.Id">Export snapshot</a>
+        }
     </div>
 </section>
 
@@ -48,6 +53,13 @@
     </div>
 }
 
+@if (!string.IsNullOrWhiteSpace(pageMessage))
+{
+    <div class="@(pageMessageIsError ? "alert alert-danger" : "alert alert-success")" role="alert">
+        @pageMessage
+    </div>
+}
+
 <section class="surface-card">
     <div class="surface-card-header">
         <div>
@@ -64,6 +76,38 @@
                 CanonicalFieldOptions="availableFieldNames" />
 </section>
 
+<section class="surface-card">
+    <div class="surface-card-header">
+        <div>
+            <h2 class="surface-card-title">Retention controls</h2>
+            <p class="surface-card-subtitle">Deleting the snapshot removes the snapshot row, its snapshot-ticket rows, and all field changes recorded as part of it.</p>
+        </div>
+    </div>
+
+    @if (confirmDelete)
+    {
+        <div class="stack-sm">
+            <div class="alert alert-danger">
+                This permanently removes this snapshot and the associated audit entries captured by it.
+            </div>
+            <div class="button-row wrap gap-sm">
+                <button class="btn btn-danger" @onclick="ConfirmDeleteAsync">Delete snapshot</button>
+                <button class="btn btn-secondary" @onclick="CancelDelete">Cancel</button>
+            </div>
+        </div>
+    }
+    else
+    {
+        <div class="button-row wrap gap-sm">
+            @if (snapshotMetadata is not null)
+            {
+                <a class="btn btn-secondary" href="/api/export/snapshots/@snapshotMetadata.Id">Export snapshot</a>
+            }
+            <button class="btn btn-danger" @onclick="RequestDelete">Delete snapshot</button>
+        </div>
+    }
+</section>
+
 @code {
     [Parameter]
     public string SnapshotId { get; set; } = string.Empty;
@@ -74,11 +118,21 @@
     [Inject]
     private IItsmFieldMappingService FieldMappingService { get; set; } = default!;
 
+    [Inject]
+    private IUpmsArchiveService ArchiveService { get; set; } = default!;
+
+    [Inject]
+    private NavigationManager Navigation { get; set; } = default!;
+
+    private Snapshot? snapshotMetadata;
     private List<Ticket> tickets = [];
     private string itsmSource = string.Empty;
     private string snapshotDate = string.Empty;
     private DateTime snapshotDateUtc = DateTime.UtcNow;
     private string? loadError;
+    private string? pageMessage;
+    private bool pageMessageIsError;
+    private bool confirmDelete;
     private List<string> availableFieldNames = new();
 
     private string DisplayItsmSource => string.IsNullOrWhiteSpace(itsmSource) ? "Not available" : itsmSource;
@@ -86,7 +140,26 @@
 
     protected override async Task OnInitializedAsync()
     {
+        await LoadAsync();
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
         loadError = null;
+        pageMessage = null;
+        pageMessageIsError = false;
+        confirmDelete = false;
+        tickets = [];
+        snapshotMetadata = null;
+        availableFieldNames = new();
+        itsmSource = string.Empty;
+        snapshotDate = string.Empty;
+        snapshotDateUtc = DateTime.UtcNow;
 
         try
         {
@@ -96,54 +169,94 @@
                 return;
             }
 
+            snapshotMetadata = await DataService.GetSnapshotByIdAsync(parsedId);
+            if (snapshotMetadata is null)
+            {
+                loadError = "Snapshot not found.";
+                return;
+            }
+
+            itsmSource = snapshotMetadata.ItsmSource;
+            snapshotDateUtc = DateTime.SpecifyKind(snapshotMetadata.SnapshotDate, DateTimeKind.Utc);
+            snapshotDate = snapshotDateUtc.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
+
             IEnumerable<Ticket> results = await DataService.GetTicketsBySnapshotAsync(parsedId);
             tickets = results.ToList();
 
-            Ticket? first = tickets.FirstOrDefault();
-            if (first is not null)
+            try
             {
-                itsmSource = first.ItsmSource;
-                snapshotDateUtc = DateTime.SpecifyKind(first.SnapshotDate, DateTimeKind.Utc);
-                snapshotDate = snapshotDateUtc.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
+                var mappings = FieldMappingService.GetMappingsForSource(itsmSource).ToList();
 
-                try
+                var canonical = mappings
+                    .Select(m => m.CanonicalFieldName)
+                    .Where(n => !string.IsNullOrWhiteSpace(n))
+                    .Select(n => string.Equals(n, "ticket_key", StringComparison.Ordinal) ? "ticket_number" : n!)
+                    .Distinct(StringComparer.Ordinal)
+                    .OrderBy(n => n, StringComparer.Ordinal)
+                    .ToList();
+
+                var ordered = new List<string>();
+                var set = new HashSet<string>(StringComparer.Ordinal);
+
+                void Add(string name)
                 {
-                    var mappings = FieldMappingService.GetMappingsForSource(itsmSource).ToList();
-
-                    var canonical = mappings
-                        .Select(m => m.CanonicalFieldName)
-                        .Where(n => !string.IsNullOrWhiteSpace(n))
-                        .Select(n => string.Equals(n, "ticket_key", StringComparison.Ordinal) ? "ticket_number" : n!)
-                        .Distinct(StringComparer.Ordinal)
-                        .OrderBy(n => n, StringComparer.Ordinal)
-                        .ToList();
-
-                    var ordered = new List<string>();
-                    var set = new HashSet<string>(StringComparer.Ordinal);
-
-                    void Add(string name)
-                    {
-                        if (set.Add(name))
-                            ordered.Add(name);
-                    }
-
-                    Add("State");
-                    Add("status");
-                    foreach (var c in canonical)
-                        Add(c);
-
-                    availableFieldNames = ordered;
+                    if (set.Add(name))
+                        ordered.Add(name);
                 }
-                catch
+
+                Add("State");
+                Add("status");
+                foreach (var c in canonical)
+                    Add(c);
+
+                foreach (var ticket in tickets)
                 {
-                    availableFieldNames = new();
+                    foreach (var fieldName in ticket.Fields.Keys.OrderBy(k => k, StringComparer.OrdinalIgnoreCase))
+                        Add(fieldName);
                 }
+
+                availableFieldNames = ordered;
+            }
+            catch
+            {
+                availableFieldNames = new();
             }
         }
         catch
         {
             tickets = [];
+            snapshotMetadata = null;
             loadError = "Snapshot details could not be loaded.";
+        }
+    }
+
+    private void RequestDelete()
+    {
+        confirmDelete = true;
+        pageMessage = null;
+        pageMessageIsError = false;
+    }
+
+    private void CancelDelete()
+    {
+        confirmDelete = false;
+    }
+
+    private async Task ConfirmDeleteAsync()
+    {
+        if (!Guid.TryParse(SnapshotId, out Guid parsedId))
+            return;
+
+        try
+        {
+            await ArchiveService.DeleteSnapshotAsync(parsedId);
+            Navigation.NavigateTo("/snapshots", forceLoad: true);
+        }
+        catch (Exception ex)
+        {
+            pageMessage = ex.Message;
+            pageMessageIsError = true;
+            confirmDelete = false;
         }
     }
 }

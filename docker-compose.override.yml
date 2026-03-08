@@ -12,8 +12,6 @@ services:
       # Dev-friendly direct secrets (avoid committing these):
       - UPMS_DB_PASSWORD=upms
       - AZURE_CLIENT_SECRET=dev_secret
-      - AUTH_MODE=None
-      - ASPNETCORE_ENVIRONMENT=Development
     ports:
       - "8081:8080"
     volumes:

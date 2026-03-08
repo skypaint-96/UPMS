@@ -33,7 +33,10 @@ namespace UPMS.Web
             // or appsettings. In Development the default is permissive (None).
             // Auth:Mode = "Entra" to enable Azure AD (production).
             // ------------------------------------------------------------------
-            string authMode = builder.Configuration["Auth:Mode"] ?? (builder.Environment.IsDevelopment() ? "None" : "Entra");
+            string? authModeOverride = Environment.GetEnvironmentVariable("AUTH_MODE");
+            string authMode = !string.IsNullOrWhiteSpace(authModeOverride)
+                ? authModeOverride
+                : builder.Configuration["Auth:Mode"] ?? (builder.Environment.IsDevelopment() ? "None" : "Entra");
 
             // Support reading secrets provided as files under /run/secrets. These are
             // mapped by docker-compose to secret names. If present, inject them into
@@ -147,8 +150,10 @@ namespace UPMS.Web
             // Register plugin registry (Scoped: receives IEnumerable<IReportPlugin> which are Scoped)
             builder.Services.AddScoped<PluginRegistry>();
 
-            // Register ingest service
+            // Register ingest / archive services
             builder.Services.AddScoped<ISnapshotIngestService, SnapshotIngestService>();
+            builder.Services.AddScoped<IUpmsArchiveService, UpmsArchiveService>();
+            builder.Services.AddScoped<ICanonicalValueSuggestionService, CanonicalValueSuggestionService>();
 
             // Register report download store (singleton temporary cache keyed by token)
             builder.Services.AddSingleton<ReportDownloadStore>();
@@ -178,6 +183,11 @@ namespace UPMS.Web
                 {
                     logger.LogInformation("Applying EF Core migrations...");
                     await db.Database.MigrateAsync();
+
+                    logger.LogInformation("Seeding canonical field registry defaults...");
+                    var bootstrapper = scope.ServiceProvider.GetRequiredService<UpmsSchemaBootstrapper>();
+                    await bootstrapper.EnsureAsync();
+
                     logger.LogInformation("Migrations applied successfully.");
                 }
                 catch (Exception ex)
@@ -311,6 +321,32 @@ namespace UPMS.Web
                 var bytes = await templateService.GetTemplateBytesAsync(sourceName, requiredOnly: false);
                 if (bytes is null) return Results.NotFound();
                 return Results.File(bytes, "text/csv", $"{sourceName}-template.csv");
+            });
+
+            app.MapGet("/api/export/snapshots/{snapshotId:guid}", async (Guid snapshotId, IUpmsArchiveService archiveService, CancellationToken ct) =>
+            {
+                try
+                {
+                    var archive = await archiveService.ExportSnapshotAsync(snapshotId, ct);
+                    return Results.File(archive.Content, archive.ContentType, archive.FileName);
+                }
+                catch (KeyNotFoundException ex)
+                {
+                    return Results.NotFound(ex.Message);
+                }
+            });
+
+            app.MapGet("/api/export/itsm-sources/{sourceName}", async (string sourceName, IUpmsArchiveService archiveService, CancellationToken ct) =>
+            {
+                try
+                {
+                    var archive = await archiveService.ExportSourceAsync(sourceName, ct);
+                    return Results.File(archive.Content, archive.ContentType, archive.FileName);
+                }
+                catch (KeyNotFoundException ex)
+                {
+                    return Results.NotFound(ex.Message);
+                }
             });
 
             app.Run();

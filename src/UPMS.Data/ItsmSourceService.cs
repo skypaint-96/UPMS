@@ -70,13 +70,26 @@ public class ItsmSourceService : IItsmSourceService
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
 
-        await _context.ItsmFieldMappings
-            .Where(m => m.ItsmSource == name)
+        string normalizedName = name.Trim();
+
+        await using var tx = await _context.Database.BeginTransactionAsync();
+
+        await _context.Snapshots
+            .Where(s => s.ItsmSource == normalizedName)
             .ExecuteDeleteAsync();
 
-        await _context.ItsmSources
-            .Where(s => s.Name == name)
+        await _context.ItsmFieldMappings
+            .Where(m => m.ItsmSource == normalizedName)
             .ExecuteDeleteAsync();
+
+        int deletedSources = await _context.ItsmSources
+            .Where(s => s.Name == normalizedName)
+            .ExecuteDeleteAsync();
+
+        if (deletedSources == 0)
+            throw new KeyNotFoundException($"ITSM source '{normalizedName}' was not found.");
+
+        await tx.CommitAsync();
     }
 
     public async Task UpsertMappingAsync(string sourceName, string sourceFieldName, string canonicalName, bool isRequired)
@@ -84,6 +97,17 @@ public class ItsmSourceService : IItsmSourceService
         ArgumentException.ThrowIfNullOrWhiteSpace(sourceName);
         ArgumentException.ThrowIfNullOrWhiteSpace(sourceFieldName);
         ArgumentException.ThrowIfNullOrWhiteSpace(canonicalName);
+
+        string normalizedCanonicalName = canonicalName.Trim();
+        string normalizedLookup = normalizedCanonicalName.ToLowerInvariant();
+
+        var definition = await _context.CanonicalFieldDefinitions
+            .AsNoTracking()
+            .FirstOrDefaultAsync(d => d.Name.ToLower() == normalizedLookup)
+            ?? throw new InvalidOperationException($"Canonical field '{normalizedCanonicalName}' is not registered. Add it on the Canonical Fields page first.");
+
+        normalizedCanonicalName = definition.Name;
+        bool effectiveRequired = isRequired || definition.IsSystemRequired;
 
         var existing = await _context.ItsmFieldMappings
             .FirstOrDefaultAsync(m => m.ItsmSource == sourceName && m.SourceFieldName == sourceFieldName);
@@ -94,14 +118,14 @@ public class ItsmSourceService : IItsmSourceService
             {
                 ItsmSource = sourceName,
                 SourceFieldName = sourceFieldName,
-                CanonicalFieldName = canonicalName,
-                IsRequired = isRequired
+                CanonicalFieldName = normalizedCanonicalName,
+                IsRequired = effectiveRequired
             });
         }
         else
         {
-            existing.CanonicalFieldName = canonicalName;
-            existing.IsRequired = isRequired;
+            existing.CanonicalFieldName = normalizedCanonicalName;
+            existing.IsRequired = effectiveRequired;
         }
 
         await _context.SaveChangesAsync();
@@ -121,12 +145,26 @@ public class ItsmSourceService : IItsmSourceService
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(sourceName);
 
-        return await _context.ItsmFieldMappings
+        var mappings = await _context.ItsmFieldMappings
             .AsNoTracking()
-            .Where(m => m.ItsmSource == sourceName && m.IsRequired)
+            .Where(m => m.ItsmSource == sourceName)
+            .ToListAsync();
+
+        var requiredCanonicalNames = (await _context.CanonicalFieldDefinitions
+            .AsNoTracking()
+            .Where(d => d.IsSystemRequired)
+            .Select(d => d.Name)
+            .ToListAsync())
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var required = mappings
+            .Where(m => m.IsRequired || requiredCanonicalNames.Contains(m.CanonicalFieldName))
             .OrderBy(m => m.SourceFieldName)
             .Select(m => m.SourceFieldName)
-            .ToListAsync();
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        return required;
     }
 
     public async Task<string?> GetCanonicalNameAsync(string sourceName, string sourceFieldName)

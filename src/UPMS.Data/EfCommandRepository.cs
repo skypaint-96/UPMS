@@ -96,6 +96,7 @@ public class EfCommandRepository : ICommandRepository
             CompanyName = source.CompanyName?.Trim() ?? string.Empty,
             TicketKey = source.TicketKey?.Trim() ?? string.Empty,
             FieldName = source.FieldName?.Trim() ?? string.Empty,
+            CanonicalFieldName = source.CanonicalFieldName?.Trim(),
             FieldValue = source.FieldValue,
             ObservedAt = source.ObservedAt,
             SnapshotId = source.SnapshotId,

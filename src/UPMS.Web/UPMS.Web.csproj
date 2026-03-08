@@ -22,4 +22,17 @@
     <PackageReference Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" Version="10.0.3" />
   </ItemGroup>
 
+
+  <ItemGroup>
+    <Content Remove="App_Data\**\*" />
+    <None Remove="App_Data\**\*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="App_Data\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+  </ItemGroup>
+
 </Project>
