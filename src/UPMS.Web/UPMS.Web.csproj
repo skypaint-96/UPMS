@@ -24,6 +24,11 @@
 
 
   <ItemGroup>
+    <Content Remove="App_Data\**\*" />
+    <None Remove="App_Data\**\*" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Content Include="App_Data\**\*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>

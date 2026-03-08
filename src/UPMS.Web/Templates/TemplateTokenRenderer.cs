@@ -504,7 +504,7 @@ public static class TemplateTokenRenderer
                 return match.Value;
 
             return encodeForXml
-                ? EscapeXmlText(resolved)
+                ? EscapeXmlText(resolved ?? string.Empty)
                 : resolved ?? string.Empty;
         });
     }
