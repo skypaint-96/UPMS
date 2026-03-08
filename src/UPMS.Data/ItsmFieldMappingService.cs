@@ -40,6 +40,16 @@ public class ItsmFieldMappingService : IItsmFieldMappingService
         ArgumentNullException.ThrowIfNull(sourceFieldName);
         ArgumentNullException.ThrowIfNull(canonicalFieldName);
 
+        string normalizedCanonicalName = canonicalFieldName.Trim();
+        string normalizedLookup = normalizedCanonicalName.ToLowerInvariant();
+
+        var definition = await _context.CanonicalFieldDefinitions
+            .AsNoTracking()
+            .FirstOrDefaultAsync(d => d.Name.ToLower() == normalizedLookup)
+            ?? throw new InvalidOperationException($"Canonical field '{normalizedCanonicalName}' is not registered.");
+
+        normalizedCanonicalName = definition.Name;
+
         var existing = await _context.ItsmFieldMappings
             .FirstOrDefaultAsync(m => m.ItsmSource == itsmSource && m.SourceFieldName == sourceFieldName);
 
@@ -49,13 +59,14 @@ public class ItsmFieldMappingService : IItsmFieldMappingService
             {
                 ItsmSource = itsmSource,
                 SourceFieldName = sourceFieldName,
-                CanonicalFieldName = canonicalFieldName,
-                IsRequired = false
+                CanonicalFieldName = normalizedCanonicalName,
+                IsRequired = definition.IsSystemRequired
             });
         }
         else
         {
-            existing.CanonicalFieldName = canonicalFieldName;
+            existing.CanonicalFieldName = normalizedCanonicalName;
+            existing.IsRequired = existing.IsRequired || definition.IsSystemRequired;
         }
 
         await _context.SaveChangesAsync();

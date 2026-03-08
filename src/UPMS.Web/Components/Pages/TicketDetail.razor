@@ -89,27 +89,31 @@
     <div class="surface-card-header">
         <div>
             <h2 class="surface-card-title">Current fields</h2>
-            <p class="surface-card-subtitle">All field values known for the selected point in time.</p>
+            <p class="surface-card-subtitle">All field values known for the selected point in time, displayed by canonical field name where available.</p>
         </div>
-        <span class="badge-soft badge-soft-neutral">@fields.Count field(s)</span>
+        <span class="badge-soft badge-soft-neutral">@currentFieldRows.Count field(s)</span>
     </div>
 
-    @if (fields.Count > 0)
+    @if (currentFieldRows.Count > 0)
     {
         <div class="data-table-wrap">
             <table class="table table-sm align-middle data-table">
                 <thead>
                     <tr>
                         <th style="width: 18rem">Field</th>
+                        <th style="width: 10rem">Data Type</th>
                         <th>Value</th>
+                        <th style="width: 10rem">Validation</th>
                     </tr>
                 </thead>
                 <tbody>
-                    @foreach (KeyValuePair<string, string?> field in fields.OrderBy(k => k.Key, StringComparer.OrdinalIgnoreCase))
+                    @foreach (var field in currentFieldRows)
                     {
                         <tr>
-                            <td><strong>@field.Key</strong></td>
-                            <td>@(field.Value ?? "-")</td>
+                            <td><strong>@field.FieldName</strong></td>
+                            <td>@GetDataTypeText(field.DataType)</td>
+                            <td>@(field.FieldValue ?? "-")</td>
+                            <td>@GetValidationText(field.IsValid, field.DataType)</td>
                         </tr>
                     }
                 </tbody>
@@ -176,16 +180,28 @@
                 <thead>
                     <tr>
                         <th>Field</th>
+                        <th>Data Type</th>
                         <th>Value</th>
+                        <th>Validation</th>
                         <th>Observed At</th>
                     </tr>
                 </thead>
                 <tbody>
-                    @foreach (FieldChange change in fieldChanges.OrderByDescending(c => c.ObservedAt).ThenBy(c => c.FieldName, StringComparer.OrdinalIgnoreCase))
+                    @foreach (FieldChange change in fieldChanges.OrderByDescending(c => c.ObservedAt).ThenBy(c => c.DisplayFieldName, StringComparer.OrdinalIgnoreCase))
                     {
                         <tr>
-                            <td>@change.FieldName</td>
+                            <td>
+                                <div class="stack-xs">
+                                    <span>@change.DisplayFieldName</span>
+                                    @if (!string.Equals(change.FieldName, change.DisplayFieldName, StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        <span class="table-meta">Source field: @change.FieldName</span>
+                                    }
+                                </div>
+                            </td>
+                            <td>@GetDataTypeText(change.RegisteredDataType)</td>
                             <td>@(change.FieldValue ?? "-")</td>
+                            <td>@GetValidationText(change.IsValueValid, change.RegisteredDataType)</td>
                             <td>@change.ObservedAt.ToString("yyyy-MM-dd HH:mm:ss") UTC</td>
                         </tr>
                     }
@@ -219,6 +235,9 @@
     private TicketDataServiceInstance DataService { get; set; } = default!;
 
     [Inject]
+    private ICanonicalFieldService CanonicalFieldService { get; set; } = default!;
+
+    [Inject]
     private NavigationManager Navigation { get; set; } = default!;
 
     private string resolvedItsmSource = string.Empty;
@@ -226,6 +245,7 @@
     private string decodedTicketKey = string.Empty;
 
     private Dictionary<string, string?> fields = [];
+    private List<CurrentFieldRow> currentFieldRows = [];
     private List<FieldChange> fieldChanges = [];
     private string? loadError;
     private string? asOfContextText;
@@ -235,6 +255,8 @@
     private string asOfLocal = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm", CultureInfo.InvariantCulture);
 
     private record FieldDelta(string FieldName, string? PreviousValue, string? CurrentValue);
+    private record CurrentFieldRow(string FieldName, string? FieldValue, CanonicalFieldDataType? DataType, bool? IsValid);
+
     private List<FieldDelta> snapshotFieldDeltas = [];
 
     protected override async Task OnParametersSetAsync()
@@ -248,6 +270,7 @@
         loadError = null;
         asOfContextText = null;
         fields = [];
+        currentFieldRows = [];
         fieldChanges = [];
         snapshotFieldDeltas.Clear();
 
@@ -302,6 +325,7 @@
             }
 
             fields = new Dictionary<string, string?>(ticket.Fields, StringComparer.Ordinal);
+            currentFieldRows = await BuildCurrentFieldRowsAsync(fields);
 
             if (ticket.SnapshotDate != default && ticket.SnapshotDate != DateTime.MinValue)
             {
@@ -315,7 +339,6 @@
             }
 
             asOfContextText = BuildAsOfContextText(asOfDateTime, ticket.SnapshotDate);
-
             fieldChanges = (await DataService.GetTicketHistoryAsync(decodedCompany, decodedTicketKey)).ToList();
         }
         catch (Exception ex)
@@ -326,6 +349,38 @@
         {
             isLoading = false;
         }
+    }
+
+    private async Task<List<CurrentFieldRow>> BuildCurrentFieldRowsAsync(IDictionary<string, string?> currentFields)
+    {
+        var lookup = await CanonicalFieldService.GetLookupAsync();
+
+        return currentFields
+            .OrderBy(k => k.Key, StringComparer.OrdinalIgnoreCase)
+            .Select(kvp =>
+            {
+                CanonicalFieldDefinition? definition = lookup.TryGetValue(kvp.Key, out var found) ? found : null;
+                bool? isValid = definition is not null
+                    ? CanonicalFieldValueValidator.IsValid(definition.DataType, kvp.Value)
+                    : null;
+
+                return new CurrentFieldRow(kvp.Key, kvp.Value, definition?.DataType, isValid);
+            })
+            .ToList();
+    }
+
+    private static string GetDataTypeText(CanonicalFieldDataType? dataType)
+        => dataType?.ToString() ?? "Not registered";
+
+    private static string GetValidationText(bool? isValid, CanonicalFieldDataType? dataType)
+    {
+        if (dataType is null)
+            return "Not registered";
+
+        if (isValid is null)
+            return "Not checked";
+
+        return isValid.Value ? "Valid" : "Invalid";
     }
 
     private static string BuildAsOfContextText(DateTime asOfUtc, DateTime effectiveSnapshotDate)

@@ -107,7 +107,7 @@ public static class TicketDocumentGenerator
                 lines.Add(new DocumentLine("Field Change History", Bold: true, SizeHalfPoints: 24));
                 foreach (var change in history.Take(50))
                 {
-                    lines.Add(new DocumentLine($"{change.ObservedAt:yyyy-MM-dd HH:mm} | {change.FieldName} = {change.FieldValue ?? "(blank)"}"));
+                    lines.Add(new DocumentLine($"{change.ObservedAt:yyyy-MM-dd HH:mm} | {change.DisplayFieldName} = {change.FieldValue ?? "(blank)"}"));
                 }
             }
 
