@@ -150,6 +150,7 @@ namespace UPMS.Web
             // Register ingest / archive services
             builder.Services.AddScoped<ISnapshotIngestService, SnapshotIngestService>();
             builder.Services.AddScoped<IUpmsArchiveService, UpmsArchiveService>();
+            builder.Services.AddScoped<ICanonicalValueSuggestionService, CanonicalValueSuggestionService>();
 
             // Register report download store (singleton temporary cache keyed by token)
             builder.Services.AddSingleton<ReportDownloadStore>();

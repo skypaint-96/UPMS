@@ -34,7 +34,9 @@ public class PowerPointReportPlugin : IReportPlugin
             Key = "company",
             DisplayName = "Company",
             Type = ReportParameterType.Text,
-            IsRequired = true
+            IsRequired = true,
+            Placeholder = "Start typing a company name",
+            CanonicalFieldName = "Company"
         },
         new ReportParameterDefinition
         {

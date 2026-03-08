@@ -97,10 +97,45 @@ public class TemplateTokenRendererTests
 
         Assert.That(slide2, Does.Contain("INC1001"));
         Assert.That(slide2, Does.Contain("Database outage"));
+        Assert.That(slide2, Does.Contain("Acme"));
         Assert.That(slide3, Does.Contain("INC1002"));
         Assert.That(slide3, Does.Contain("Network degradation"));
+        Assert.That(slide3, Does.Contain("Acme"));
         Assert.That(slide2, Does.Not.Contain("start per ticket"));
         Assert.That(slide3, Does.Not.Contain("start per ticket"));
+        Assert.That(slide2, Does.Not.Contain("ticket.Number"));
+        Assert.That(slide3, Does.Not.Contain("ticket.Number"));
+        Assert.That(slide2, Does.Not.Contain("meta.company"));
+        Assert.That(slide3, Does.Not.Contain("meta.company"));
+    }
+
+    [Test]
+    public void RenderBytes_DocxSplitRunTokensAndPageScopedLoop_RendersFilledPages()
+    {
+        var tickets = new List<Ticket>
+        {
+            CreateTicket("servicenow", "Acme", "INC1001", ("Number", "INC1001"), ("State", "Open"), ("Short Description", "Database outage")),
+            CreateTicket("servicenow", "Acme", "INC1002", ("Number", "INC1002"), ("State", "Open"), ("Short Description", "Network degradation"))
+        };
+
+        var context = TemplateReportTokenBuilder.BuildContext("servicenow", "Acme", new DateTime(2026, 1, 31, 0, 0, 0, DateTimeKind.Utc), tickets);
+        var templateBytes = CreateDocxTemplateWithSplitRunLoop();
+
+        var renderedBytes = TemplateTokenRenderer.RenderBytes(templateBytes, ".docx", context);
+
+        using MemoryStream stream = new(renderedBytes);
+        using ZipArchive archive = new(stream, ZipArchiveMode.Read, leaveOpen: false);
+        string documentXml = ReadText(archive.GetEntry("word/document.xml")!);
+
+        Assert.That(documentXml, Does.Contain("Acme"));
+        Assert.That(documentXml, Does.Contain("INC1001"));
+        Assert.That(documentXml, Does.Contain("INC1002"));
+        Assert.That(documentXml, Does.Contain("Database outage"));
+        Assert.That(documentXml, Does.Contain("Network degradation"));
+        Assert.That(documentXml, Does.Contain("w:br"));
+        Assert.That(documentXml, Does.Not.Contain("start per ticket"));
+        Assert.That(documentXml, Does.Not.Contain("ticket.Number"));
+        Assert.That(documentXml, Does.Not.Contain("meta.company"));
     }
 
     private static Ticket CreateTicket(string itsmSource, string company, string number, params (string FieldName, string? Value)[] fields)
@@ -156,12 +191,21 @@ public class TemplateTokenRendererTests
                           <p:cSld><p:spTree>
                             <p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>
                             <p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>
-                            <p:sp><p:nvSpPr><p:cNvPr id="2" name="Title"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr><p:ph type="title"/></p:nvPr></p:nvSpPr>
-                              <p:spPr><a:xfrm><a:off x="457200" y="274638"/><a:ext cx="8229600" cy="1143000"/></a:xfrm></p:spPr>
-                              <p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>{{start per ticket scope=page}}{{ticket.Number}}{{end per ticket}}</a:t></a:r></a:p></p:txBody></p:sp>
-                            <p:sp><p:nvSpPr><p:cNvPr id="3" name="Body"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr><p:ph idx="1"/></p:nvPr></p:nvSpPr>
-                              <p:spPr><a:xfrm><a:off x="457200" y="1524000"/><a:ext cx="8229600" cy="4525963"/></a:xfrm></p:spPr>
-                              <p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>{{ticket.Short_Description}}</a:t></a:r></a:p></p:txBody></p:sp>
+                            <p:sp><p:nvSpPr><p:cNvPr id="2" name="LoopStart"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr/></p:nvSpPr>
+                              <p:spPr><a:xfrm><a:off x="457200" y="274638"/><a:ext cx="8229600" cy="457200"/></a:xfrm></p:spPr>
+                              <p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>{{sta</a:t></a:r><a:r><a:t>rt per ticket scope=page}}</a:t></a:r></a:p></p:txBody></p:sp>
+                            <p:sp><p:nvSpPr><p:cNvPr id="3" name="TicketTitle"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr/></p:nvSpPr>
+                              <p:spPr><a:xfrm><a:off x="457200" y="1066800"/><a:ext cx="8229600" cy="762000"/></a:xfrm></p:spPr>
+                              <p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>Ticket </a:t></a:r><a:r><a:t>{{ticket.</a:t></a:r><a:r><a:t>Number}}</a:t></a:r></a:p></p:txBody></p:sp>
+                            <p:sp><p:nvSpPr><p:cNvPr id="4" name="Company"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr/></p:nvSpPr>
+                              <p:spPr><a:xfrm><a:off x="457200" y="1828800"/><a:ext cx="8229600" cy="762000"/></a:xfrm></p:spPr>
+                              <p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>Company </a:t></a:r><a:r><a:t>{{meta.co</a:t></a:r><a:r><a:t>mpany}}</a:t></a:r></a:p></p:txBody></p:sp>
+                            <p:sp><p:nvSpPr><p:cNvPr id="5" name="Body"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr/></p:nvSpPr>
+                              <p:spPr><a:xfrm><a:off x="457200" y="2590800"/><a:ext cx="8229600" cy="1371600"/></a:xfrm></p:spPr>
+                              <p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>{{ticket.Short_</a:t></a:r><a:r><a:t>Description}}</a:t></a:r></a:p></p:txBody></p:sp>
+                            <p:sp><p:nvSpPr><p:cNvPr id="6" name="LoopEnd"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr/></p:nvSpPr>
+                              <p:spPr><a:xfrm><a:off x="457200" y="4114800"/><a:ext cx="8229600" cy="457200"/></a:xfrm></p:spPr>
+                              <p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>{{end per </a:t></a:r><a:r><a:t>ticket}}</a:t></a:r></a:p></p:txBody></p:sp>
                           </p:spTree></p:cSld>
                         </p:sld>
                         """;
@@ -177,6 +221,78 @@ public class TemplateTokenRendererTests
         }
 
         return output.ToArray();
+    }
+
+    private static byte[] CreateDocxTemplateWithSplitRunLoop()
+    {
+        const string contentTypes = """
+            <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+            <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+              <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+              <Default Extension="xml" ContentType="application/xml"/>
+              <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+            </Types>
+            """;
+
+        const string packageRels = """
+            <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+            <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+              <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+            </Relationships>
+            """;
+
+        const string documentXml = """
+            <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+            <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+              <w:body>
+                <w:p>
+                  <w:r><w:t>Company: </w:t></w:r>
+                  <w:r><w:t>{{meta.</w:t></w:r>
+                  <w:r><w:t>company}}</w:t></w:r>
+                </w:p>
+                <w:p>
+                  <w:r><w:t>{{sta</w:t></w:r>
+                  <w:r><w:t>rt per ticket State=Open scope=page}}</w:t></w:r>
+                </w:p>
+                <w:p>
+                  <w:r><w:t>Ticket </w:t></w:r>
+                  <w:r><w:t>{{ticket.</w:t></w:r>
+                  <w:r><w:t>Number}}</w:t></w:r>
+                </w:p>
+                <w:p>
+                  <w:r><w:t>Summary </w:t></w:r>
+                  <w:r><w:t>{{ticket.Short_</w:t></w:r>
+                  <w:r><w:t>Description}}</w:t></w:r>
+                </w:p>
+                <w:p>
+                  <w:r><w:t>{{end per </w:t></w:r>
+                  <w:r><w:t>ticket}}</w:t></w:r>
+                </w:p>
+                <w:sectPr>
+                  <w:pgSz w:w="12240" w:h="15840"/>
+                  <w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/>
+                </w:sectPr>
+              </w:body>
+            </w:document>
+            """;
+
+        using MemoryStream output = new();
+        using (ZipArchive archive = new(output, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            WriteZipText(archive, "[Content_Types].xml", contentTypes);
+            WriteZipText(archive, "_rels/.rels", packageRels);
+            WriteZipText(archive, "word/document.xml", documentXml);
+        }
+
+        return output.ToArray();
+    }
+
+    private static void WriteZipText(ZipArchive archive, string path, string content)
+    {
+        var entry = archive.CreateEntry(path, CompressionLevel.Optimal);
+        using var stream = entry.Open();
+        using StreamWriter writer = new(stream, new UTF8Encoding(false), leaveOpen: false);
+        writer.Write(content);
     }
 
     private static string ReadText(ZipArchiveEntry entry)

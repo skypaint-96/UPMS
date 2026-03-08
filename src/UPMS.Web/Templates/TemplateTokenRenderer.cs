@@ -1,6 +1,7 @@
 namespace UPMS.Web.Templates;
 
 using System.IO.Compression;
+using System.Security;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Xml;
@@ -12,9 +13,19 @@ public static class TemplateTokenRenderer
     private const string PowerPointSlideRelationshipType = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide";
     private const string PowerPointSlideContentType = "application/vnd.openxmlformats-officedocument.presentationml.slide+xml";
 
+    private static readonly XNamespace WordNs = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+    private static readonly XNamespace DrawingNs = "http://schemas.openxmlformats.org/drawingml/2006/main";
+    private static readonly XNamespace XmlNs = XNamespace.Xml;
+
     private static readonly Regex TokenRegex = new(@"\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}", RegexOptions.Compiled);
     private static readonly Regex PerTicketBlockRegex = new(
         @"\{\{\s*start\s+per\s+ticket(?<directive>.*?)\}\}(?<body>.*?)\{\{\s*end\s+per\s+ticket\s*\}\}",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline);
+    private static readonly Regex PerTicketStartRegex = new(
+        @"\{\{\s*start\s+per\s+ticket(?<directive>.*?)\}\}",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline);
+    private static readonly Regex PerTicketEndRegex = new(
+        @"\{\{\s*end\s+per\s+ticket\s*\}\}",
         RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline);
     private static readonly Regex ScopeRegex = new(@"\b(?:scope|mode)\s*=\s*(section|page|slide)\b", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex ClauseRegex = new(@"^\s*(?<field>[A-Za-z0-9_.-]+)\s*(?<op>!=|!~|=|~)\s*(?<value>.+?)\s*$", RegexOptions.Compiled);
@@ -49,9 +60,13 @@ public static class TemplateTokenRenderer
 
         if (ReportTemplateContentTypeMapper.IsOoxmlPackage(normalized))
         {
-            return normalized.Equals(".pptx", StringComparison.OrdinalIgnoreCase)
-                ? RenderPowerPointPackage(templateContent, context)
-                : RenderOoxmlPackage(templateContent, normalized, context);
+            if (normalized.Equals(".pptx", StringComparison.OrdinalIgnoreCase))
+                return RenderPowerPointPackage(templateContent, context);
+
+            if (normalized.Equals(".docx", StringComparison.OrdinalIgnoreCase))
+                return RenderWordPackage(templateContent, context);
+
+            return RenderOoxmlPackage(templateContent, normalized, context);
         }
 
         return templateContent;
@@ -88,6 +103,179 @@ public static class TemplateTokenRenderer
         return output.ToArray();
     }
 
+    private static byte[] RenderWordPackage(byte[] templateContent, TemplateRenderContext context)
+    {
+        using MemoryStream input = new(templateContent);
+        using ZipArchive source = new(input, ZipArchiveMode.Read, leaveOpen: false);
+        using MemoryStream output = new();
+        using (ZipArchive target = new(output, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            foreach (var entry in source.Entries)
+            {
+                var targetEntry = target.CreateEntry(entry.FullName, CompressionLevel.Optimal);
+                using var entryInput = entry.Open();
+                using var entryOutput = targetEntry.Open();
+
+                if (entry.FullName.StartsWith("word/", StringComparison.OrdinalIgnoreCase)
+                    && entry.FullName.EndsWith(".xml", StringComparison.OrdinalIgnoreCase))
+                {
+                    var text = ReadStreamText(entryInput);
+                    var renderedWordXml = entry.FullName.Equals("word/document.xml", StringComparison.OrdinalIgnoreCase)
+                        ? RenderWordDocumentXml(text, context)
+                        : RenderWordTextXml(text, context);
+
+                    using StreamWriter writer = new(entryOutput, new UTF8Encoding(false), leaveOpen: true);
+                    writer.Write(renderedWordXml);
+                }
+                else if (ShouldTokenReplace(entry.FullName))
+                {
+                    using StreamReader reader = new(entryInput, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, leaveOpen: true);
+                    var text = reader.ReadToEnd();
+                    var rendered = RenderText(text, context, ".docx", entry.FullName, currentTicketState: null, allowSlideScopedBlocks: false);
+                    using StreamWriter writer = new(entryOutput, new UTF8Encoding(false), leaveOpen: true);
+                    writer.Write(rendered);
+                }
+                else
+                {
+                    entryInput.CopyTo(entryOutput);
+                }
+            }
+        }
+
+        return output.ToArray();
+    }
+
+    private static string RenderWordDocumentXml(string xml, TemplateRenderContext context)
+    {
+        var doc = TryParseXml(xml);
+        if (doc is null)
+            return RenderText(xml, context, ".docx", "word/document.xml", currentTicketState: null, allowSlideScopedBlocks: false);
+
+        NormalizeParagraphTextRuns(doc.Root, WordNs + "p", WordNs + "t");
+
+        var body = doc.Root?.Element(WordNs + "body");
+        if (body is null)
+            return RenderWordTextXml(xml, context);
+
+        var renderedBody = RenderWordBodyChildren(body.Elements().ToList(), context);
+        body.ReplaceNodes(renderedBody);
+        return SerializeXml(doc);
+    }
+
+    private static string RenderWordTextXml(string xml, TemplateRenderContext context)
+    {
+        var doc = TryParseXml(xml);
+        if (doc is null)
+            return RenderText(xml, context, ".docx", entryName: null, currentTicketState: null, allowSlideScopedBlocks: false);
+
+        NormalizeParagraphTextRuns(doc.Root, WordNs + "p", WordNs + "t");
+        ReplaceTokensInTextElements(doc.Root, context, currentTicketState: null, WordNs + "t");
+        return SerializeXml(doc);
+    }
+
+    private static IReadOnlyList<XNode> RenderWordBodyChildren(IReadOnlyList<XElement> bodyElements, TemplateRenderContext context)
+    {
+        List<XNode> rendered = new();
+
+        for (int i = 0; i < bodyElements.Count; i++)
+        {
+            var current = bodyElements[i];
+            if (TryExtractWordLoopDirective(current, out var directive))
+            {
+                int endIndex = FindWordLoopEnd(bodyElements, i + 1);
+                if (endIndex > i)
+                {
+                    var loopElements = bodyElements
+                        .Skip(i + 1)
+                        .Take(endIndex - i - 1)
+                        .ToList();
+
+                    var matchingTickets = context.Tickets
+                        .Where(directive.Matches)
+                        .ToList();
+
+                    for (int ticketIndex = 0; ticketIndex < matchingTickets.Count; ticketIndex++)
+                    {
+                        var ticketState = new TicketRenderState(matchingTickets[ticketIndex], ticketIndex);
+                        foreach (var clone in CloneAndRenderWordElements(loopElements, context, ticketState))
+                        {
+                            rendered.Add(clone);
+                        }
+
+                        if (directive.Scope == PerTicketLoopScope.Page && ticketIndex < matchingTickets.Count - 1)
+                        {
+                            rendered.Add(CreateWordPageBreakParagraph());
+                        }
+                    }
+
+                    i = endIndex;
+                    continue;
+                }
+            }
+
+            rendered.Add(RenderWordBodyElement(current, context, currentTicketState: null));
+        }
+
+        return rendered;
+    }
+
+    private static IEnumerable<XElement> CloneAndRenderWordElements(
+        IReadOnlyList<XElement> sourceElements,
+        TemplateRenderContext context,
+        TicketRenderState ticketState)
+    {
+        foreach (var source in sourceElements)
+        {
+            yield return RenderWordBodyElement(source, context, ticketState);
+        }
+    }
+
+    private static XElement RenderWordBodyElement(XElement source, TemplateRenderContext context, TicketRenderState? currentTicketState)
+    {
+        var clone = new XElement(source);
+        NormalizeParagraphTextRuns(clone, WordNs + "p", WordNs + "t");
+        ReplaceTokensInTextElements(clone, context, currentTicketState, WordNs + "t");
+        return clone;
+    }
+
+    private static bool TryExtractWordLoopDirective(XElement bodyElement, out PerTicketDirective directive)
+    {
+        directive = new PerTicketDirective(PerTicketLoopScope.Section, Array.Empty<FilterClause>());
+        if (bodyElement.Name != WordNs + "p")
+            return false;
+
+        var paragraphText = GetCombinedText(bodyElement, WordNs + "t");
+        var match = PerTicketStartRegex.Match(paragraphText);
+        if (!match.Success)
+            return false;
+
+        directive = ParseDirective(match.Groups["directive"].Value, ".docx", "word/document.xml");
+        return true;
+    }
+
+    private static int FindWordLoopEnd(IReadOnlyList<XElement> bodyElements, int startIndex)
+    {
+        for (int i = startIndex; i < bodyElements.Count; i++)
+        {
+            if (bodyElements[i].Name != WordNs + "p")
+                continue;
+
+            var paragraphText = GetCombinedText(bodyElements[i], WordNs + "t");
+            if (PerTicketEndRegex.IsMatch(paragraphText))
+                return i;
+        }
+
+        return -1;
+    }
+
+    private static XElement CreateWordPageBreakParagraph()
+    {
+        return new XElement(WordNs + "p",
+            new XElement(WordNs + "r",
+                new XElement(WordNs + "br",
+                    new XAttribute(WordNs + "type", "page"))));
+    }
+
     private static byte[] RenderPowerPointPackage(byte[] templateContent, TemplateRenderContext context)
     {
         using MemoryStream input = new(templateContent);
@@ -119,7 +307,7 @@ public static class TemplateTokenRenderer
         {
             var firstSlide = slideEntries[0];
             renderedSlides.Add(new RenderedPowerPointSlide(
-                RenderText(ReadEntryText(firstSlide), context, ".pptx", firstSlide.FullName, currentTicketState: null, allowSlideScopedBlocks: false),
+                RenderPowerPointSlideWithoutLoop(ReadEntryText(firstSlide), context),
                 source.GetEntry($"ppt/slides/_rels/{Path.GetFileName(firstSlide.FullName)}.rels") is ZipArchiveEntry firstRels
                     ? ReadEntryText(firstRels)
                     : null));
@@ -160,32 +348,76 @@ public static class TemplateTokenRenderer
 
     private static IReadOnlyList<string> ExpandPowerPointSlide(string slideXml, string entryName, TemplateRenderContext context)
     {
-        var slideScopedMatches = PerTicketBlockRegex.Matches(slideXml)
-            .Select(match => ParseDirective(match.Groups["directive"].Value, ".pptx", entryName))
-            .Where(directive => directive.Scope == PerTicketLoopScope.Slide)
-            .ToList();
-
-        if (slideScopedMatches.Count == 0)
+        var slideDoc = TryParseXml(slideXml);
+        if (slideDoc is null)
         {
             return [RenderText(slideXml, context, ".pptx", entryName, currentTicketState: null, allowSlideScopedBlocks: false)];
         }
 
-        var primaryDirective = slideScopedMatches[0];
-        var tickets = context.Tickets
-            .Where(primaryDirective.Matches)
+        NormalizeParagraphTextRuns(slideDoc.Root, DrawingNs + "p", DrawingNs + "t");
+
+        if (!TryExtractPowerPointSlideDirective(slideDoc, entryName, out var directive))
+        {
+            ReplaceTokensInTextElements(slideDoc.Root, context, currentTicketState: null, DrawingNs + "t");
+            return [SerializeXml(slideDoc)];
+        }
+
+        var matchingTickets = context.Tickets
+            .Where(directive.Matches)
             .ToList();
 
-        if (tickets.Count == 0)
+        if (matchingTickets.Count == 0)
             return [];
 
-        List<string> slides = new(tickets.Count);
-        for (int i = 0; i < tickets.Count; i++)
+        List<string> slides = new(matchingTickets.Count);
+        for (int i = 0; i < matchingTickets.Count; i++)
         {
-            var ticketState = new TicketRenderState(tickets[i], i);
-            slides.Add(RenderText(slideXml, context, ".pptx", entryName, ticketState, allowSlideScopedBlocks: true));
+            var clone = new XDocument(slideDoc);
+            RemovePerTicketMarkers(clone.Root, DrawingNs + "t");
+            ReplaceTokensInTextElements(clone.Root, context, new TicketRenderState(matchingTickets[i], i), DrawingNs + "t");
+            slides.Add(SerializeXml(clone));
         }
 
         return slides;
+    }
+
+    private static string RenderPowerPointSlideWithoutLoop(string slideXml, TemplateRenderContext context)
+    {
+        var slideDoc = TryParseXml(slideXml);
+        if (slideDoc is null)
+            return RenderText(slideXml, context, ".pptx", entryName: null, currentTicketState: null, allowSlideScopedBlocks: false);
+
+        NormalizeParagraphTextRuns(slideDoc.Root, DrawingNs + "p", DrawingNs + "t");
+        RemovePerTicketMarkers(slideDoc.Root, DrawingNs + "t");
+        ReplaceTokensInTextElements(slideDoc.Root, context, currentTicketState: null, DrawingNs + "t");
+        return SerializeXml(slideDoc);
+    }
+
+    private static bool TryExtractPowerPointSlideDirective(XDocument slideDoc, string entryName, out PerTicketDirective directive)
+    {
+        directive = new PerTicketDirective(PerTicketLoopScope.Section, Array.Empty<FilterClause>());
+
+        var textNodes = slideDoc
+            .Descendants(DrawingNs + "t")
+            .ToList();
+
+        var startMatch = textNodes
+            .Select(node => PerTicketStartRegex.Match(node.Value))
+            .FirstOrDefault(match => match.Success);
+
+        if (startMatch is null || !startMatch.Success)
+            return false;
+
+        var parsedDirective = ParseDirective(startMatch.Groups["directive"].Value, ".pptx", entryName);
+        if (parsedDirective.Scope != PerTicketLoopScope.Slide)
+            return false;
+
+        var hasEndMarker = textNodes.Any(node => PerTicketEndRegex.IsMatch(node.Value));
+        if (!hasEndMarker)
+            return false;
+
+        directive = parsedDirective;
+        return true;
     }
 
     private static string RenderText(
@@ -197,7 +429,7 @@ public static class TemplateTokenRenderer
         bool allowSlideScopedBlocks)
     {
         var afterBlocks = RenderPerTicketBlocks(templateContent, context, extension, entryName, currentTicketState, allowSlideScopedBlocks);
-        return ReplaceSimpleTokens(afterBlocks, context, currentTicketState);
+        return ReplaceSimpleTokens(afterBlocks, context, currentTicketState, encodeForXml: ShouldEncodeTokensForXml(extension, entryName));
     }
 
     private static string RenderPerTicketBlocks(
@@ -246,23 +478,34 @@ public static class TemplateTokenRenderer
         });
     }
 
-    private static string ReplaceSimpleTokens(string content, TemplateRenderContext context, TicketRenderState? currentTicketState)
+    private static string ReplaceSimpleTokens(string content, TemplateRenderContext context, TicketRenderState? currentTicketState, bool encodeForXml)
     {
         var lookup = CreateLookup(context.GlobalTokens);
         return TokenRegex.Replace(content, match =>
         {
             var key = match.Groups[1].Value;
+            string? resolved = null;
+            bool found = false;
 
             if (currentTicketState is not null
                 && key.StartsWith("ticket.", StringComparison.OrdinalIgnoreCase)
                 && TemplateTicketTokenResolver.TryResolve(currentTicketState.Ticket, currentTicketState.Index, key["ticket.".Length..], out var ticketValue))
             {
-                return ticketValue ?? string.Empty;
+                resolved = ticketValue ?? string.Empty;
+                found = true;
+            }
+            else if (lookup.TryGetValue(key, out var value))
+            {
+                resolved = value ?? string.Empty;
+                found = true;
             }
 
-            return lookup.TryGetValue(key, out var value)
-                ? value ?? string.Empty
-                : match.Value;
+            if (!found)
+                return match.Value;
+
+            return encodeForXml
+                ? EscapeXmlText(resolved)
+                : resolved ?? string.Empty;
         });
     }
 
@@ -275,6 +518,124 @@ public static class TemplateTokenRenderer
         }
 
         return lookup;
+    }
+
+    private static bool ShouldEncodeTokensForXml(string extension, string? entryName)
+    {
+        if (!string.IsNullOrWhiteSpace(entryName)
+            && Path.GetExtension(entryName).Equals(".xml", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return ReportTemplateContentTypeMapper.Normalize(extension).Equals(".xml", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string EscapeXmlText(string value) => SecurityElement.Escape(value) ?? string.Empty;
+
+    private static void NormalizeParagraphTextRuns(XContainer? root, XName paragraphName, XName textName)
+    {
+        if (root is null)
+            return;
+
+        foreach (var paragraph in root.Descendants(paragraphName).ToList())
+        {
+            var textNodes = paragraph
+                .Descendants(textName)
+                .ToList();
+
+            if (textNodes.Count <= 1)
+                continue;
+
+            var combined = string.Concat(textNodes.Select(node => node.Value));
+            if (!LooksLikeTemplateText(combined))
+                continue;
+
+            SetTextElementValue(textNodes[0], combined);
+            foreach (var extraNode in textNodes.Skip(1).ToList())
+            {
+                extraNode.Remove();
+            }
+        }
+    }
+
+    private static bool LooksLikeTemplateText(string value)
+    {
+        return value.Contains("{{", StringComparison.Ordinal)
+            || value.Contains("}}", StringComparison.Ordinal);
+    }
+
+    private static void ReplaceTokensInTextElements(XContainer? root, TemplateRenderContext context, TicketRenderState? currentTicketState, XName textName)
+    {
+        if (root is null)
+            return;
+
+        foreach (var textNode in root.Descendants(textName).ToList())
+        {
+            var original = textNode.Value;
+            if (string.IsNullOrEmpty(original))
+                continue;
+
+            var rendered = ReplaceSimpleTokens(original, context, currentTicketState, encodeForXml: false);
+            if (!string.Equals(original, rendered, StringComparison.Ordinal))
+            {
+                SetTextElementValue(textNode, rendered);
+            }
+        }
+    }
+
+    private static void RemovePerTicketMarkers(XContainer? root, XName textName)
+    {
+        if (root is null)
+            return;
+
+        foreach (var textNode in root.Descendants(textName).ToList())
+        {
+            var cleaned = PerTicketStartRegex.Replace(textNode.Value, string.Empty);
+            cleaned = PerTicketEndRegex.Replace(cleaned, string.Empty);
+
+            if (!string.Equals(textNode.Value, cleaned, StringComparison.Ordinal))
+            {
+                SetTextElementValue(textNode, cleaned);
+            }
+        }
+    }
+
+    private static string GetCombinedText(XContainer element, XName textName) =>
+        string.Concat(element.Descendants(textName).Select(node => node.Value));
+
+    private static void SetTextElementValue(XElement textElement, string value)
+    {
+        textElement.Value = value;
+
+        if (NeedsXmlSpacePreserve(value))
+            textElement.SetAttributeValue(XmlNs + "space", "preserve");
+        else
+            textElement.Attribute(XmlNs + "space")?.Remove();
+    }
+
+    private static bool NeedsXmlSpacePreserve(string value)
+    {
+        if (string.IsNullOrEmpty(value))
+            return false;
+
+        return char.IsWhiteSpace(value[0])
+            || char.IsWhiteSpace(value[^1])
+            || value.Contains("  ", StringComparison.Ordinal)
+            || value.Contains('\n')
+            || value.Contains('\t');
+    }
+
+    private static XDocument? TryParseXml(string xml)
+    {
+        try
+        {
+            return XDocument.Parse(xml, LoadOptions.PreserveWhitespace);
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static string GetPageSeparator(string extension, string? entryName)
@@ -308,7 +669,6 @@ public static class TemplateTokenRenderer
             working = ScopeRegex.Replace(working, string.Empty).Trim();
         }
 
-        // PowerPoint slide XML treats page scope as whole-slide expansion; other formats treat slide as page.
         if (ReportTemplateContentTypeMapper.Normalize(extension) == ".pptx"
             && entryName is not null
             && SlideEntryRegex.IsMatch(entryName)
@@ -447,6 +807,12 @@ public static class TemplateTokenRenderer
     {
         using var stream = entry.Open();
         using StreamReader reader = new(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, leaveOpen: false);
+        return reader.ReadToEnd();
+    }
+
+    private static string ReadStreamText(Stream stream)
+    {
+        using StreamReader reader = new(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, leaveOpen: true);
         return reader.ReadToEnd();
     }
 

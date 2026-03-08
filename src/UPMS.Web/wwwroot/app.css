@@ -1173,3 +1173,71 @@ textarea:focus,
 .progress-stacked {
     --bs-progress-bar-bg: #5236ab;
 }
+
+.home-top-grid {
+    align-items: start;
+}
+
+.action-tile-grid {
+    display: grid;
+    gap: 1rem;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.action-tile {
+    background: linear-gradient(180deg, #ffffff 0%, #f8f8f8 100%);
+    border: 1px solid var(--upms-border);
+    border-radius: var(--upms-radius);
+    box-shadow: var(--upms-shadow-sm);
+    color: var(--upms-text);
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+    min-height: 156px;
+    padding: 1rem 1.05rem;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+}
+
+.action-tile:hover {
+    border-color: #cbc3e6;
+    box-shadow: 0 1rem 2rem rgba(32, 10, 88, 0.08);
+    color: var(--upms-text);
+    transform: translateY(-1px);
+}
+
+.action-tile strong {
+    color: var(--upms-accent-strong);
+    font-size: 1.02rem;
+    line-height: 1.25;
+}
+
+.action-tile span:last-child {
+    color: var(--upms-muted);
+}
+
+.action-tile-kicker {
+    color: var(--upms-highlight);
+    font-size: 0.77rem;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+@media (max-width: 992px) {
+    .content-grid-2,
+    .sidebar-layout,
+    .form-grid-3 {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 640px) {
+    .action-tile-grid,
+    .stat-grid,
+    .plugin-grid,
+    .report-parameter-grid,
+    .multi-select,
+    .date-range {
+        grid-template-columns: 1fr;
+    }
+}
