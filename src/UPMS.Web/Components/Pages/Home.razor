@@ -1,18 +1,21 @@
 @page "/"
 @rendermode InteractiveServer
 
+@inject IItsmSourceService ItsmSourceService
+@inject NavigationManager Navigation
+
 <PageTitle>UPMS</PageTitle>
 
 <section class="app-page-header" data-testid="dashboard-summary">
     <div>
-        <p class="page-eyebrow">Dashboard</p>
+        <p class="page-eyebrow">Everyday workspace</p>
         <h1 class="page-title">Unified Problem Management System</h1>
-        <p class="page-description">Review historical ticket state, upload new snapshots, and generate reporting packs across your ITSM sources from a single workspace.</p>
+        <p class="page-description">UPMS is now centred on the jobs most people do every day: upload a snapshot, run or download a report, and quickly confirm whether a ticket already exists in the historical record.</p>
     </div>
     <div class="page-actions">
         <a class="btn btn-primary" href="/upload">Upload snapshot</a>
-        <a class="btn btn-outline-primary" href="/tickets">Browse tickets</a>
-        <a class="btn btn-outline-secondary" href="/reports">Open reports</a>
+        <a class="btn btn-outline-primary" href="/reports">Download reports</a>
+        <a class="btn btn-outline-secondary" href="/tickets">Check ticket history</a>
     </div>
 </section>
 
@@ -21,8 +24,8 @@
     <section class="surface-card">
         <div class="surface-card-header">
             <div>
-                <h2 class="surface-card-title">Loading dashboard</h2>
-                <p class="surface-card-subtitle">We are collecting the latest snapshot and source statistics.</p>
+                <h2 class="surface-card-title">Loading workspace</h2>
+                <p class="surface-card-subtitle">UPMS is collecting the latest snapshot and source statistics.</p>
             </div>
         </div>
         <p class="text-muted mb-0">Loading statistics...</p>
@@ -37,6 +40,71 @@ else
         </div>
     }
 
+    <section class="content-grid content-grid-2 home-top-grid">
+        <section class="surface-card">
+            <div class="surface-card-header">
+                <div>
+                    <h2 class="surface-card-title">Regular user tasks</h2>
+                    <p class="surface-card-subtitle">The most common journey should be simple and visible as soon as the app opens.</p>
+                </div>
+            </div>
+
+            <div class="action-tile-grid">
+                <a class="action-tile" href="/upload">
+                    <span class="action-tile-kicker">Upload</span>
+                    <strong>Upload a new snapshot</strong>
+                    <span>Import the latest CSV or JSON export from your ITSM source.</span>
+                </a>
+                <a class="action-tile" href="/reports">
+                    <span class="action-tile-kicker">Report</span>
+                    <strong>Download a report pack</strong>
+                    <span>Choose a template or plugin, fill the parameters, and download the finished output.</span>
+                </a>
+                <a class="action-tile" href="/tickets">
+                    <span class="action-tile-kicker">Check</span>
+                    <strong>Check whether a ticket was uploaded</strong>
+                    <span>Search ticket history across snapshots to confirm it already exists in UPMS.</span>
+                </a>
+            </div>
+        </section>
+
+        <aside class="surface-card">
+            <div class="surface-card-header">
+                <div>
+                    <h2 class="surface-card-title">Quick ticket check</h2>
+                    <p class="surface-card-subtitle">Jump straight into ticket history with the source and ticket filter prefilled.</p>
+                </div>
+            </div>
+
+            <div class="field-stack field-stack--tall">
+                <label class="form-label" for="home-quick-source">ITSM source</label>
+                <select id="home-quick-source" class="form-select" @bind="quickItsmSource">
+                    <option value="">-- Select --</option>
+                    @foreach (var source in quickCheckSources)
+                    {
+                        <option value="@source.Name">@source.DisplayLabel</option>
+                    }
+                </select>
+                <div class="helper-text">Choose the source the ticket came from so UPMS can search the correct history.</div>
+            </div>
+
+            <div class="field-stack field-stack--tall mt-3">
+                <label class="form-label" for="home-quick-ticket">Ticket number or key</label>
+                <input id="home-quick-ticket"
+                       class="form-control"
+                       type="text"
+                       placeholder="For example PRB0012345"
+                       @bind="quickTicketNumber" />
+                <div class="helper-text">This opens the Tickets page with a ticket-number filter already applied.</div>
+            </div>
+
+            <div class="button-row mt-4">
+                <button class="btn btn-primary" @onclick="OpenQuickTicketCheck" disabled="@(!CanQuickCheck)">Check ticket</button>
+                <a class="btn btn-outline-secondary" href="/tickets">Advanced search</a>
+            </div>
+        </aside>
+    </section>
+
     <section class="stat-grid">
         <article class="stat-card emphasis">
             <p class="stat-label">Total snapshots</p>
@@ -46,7 +114,7 @@ else
         <article class="stat-card">
             <p class="stat-label">ITSM sources</p>
             <p class="stat-value">@sourceCount</p>
-            <p class="stat-helper">Distinct source instances represented in snapshot history.</p>
+            <p class="stat-helper">Distinct configured or historically observed source instances.</p>
         </article>
         <article class="stat-card">
             <p class="stat-label">Latest snapshot</p>
@@ -60,7 +128,7 @@ else
             <div class="surface-card-header">
                 <div>
                     <h2 class="surface-card-title">Recent snapshots</h2>
-                    <p class="surface-card-subtitle">Open a snapshot to inspect the tickets that were present at that point in time.</p>
+                    <p class="surface-card-subtitle">Open a snapshot to inspect the tickets that were present at that point in time, export it, or audit a suspect upload.</p>
                 </div>
                 <a class="btn btn-sm btn-outline-secondary" href="/snapshots">View all snapshots</a>
             </div>
@@ -98,26 +166,37 @@ else
             }
         </div>
 
-        <aside class="surface-card">
-            <div class="surface-card-header">
-                <div>
-                    <h2 class="surface-card-title">Recommended next steps</h2>
-                    <p class="surface-card-subtitle">The interface is designed around a simple review workflow.</p>
+        <aside class="section-stack">
+            <section class="surface-card">
+                <div class="surface-card-header">
+                    <div>
+                        <h2 class="surface-card-title">Power users and admins</h2>
+                        <p class="surface-card-subtitle">Configuration, audit, and governance tools stay available without dominating the first screen for everyday users.</p>
+                    </div>
                 </div>
-            </div>
 
-            <ol class="guidance-list mb-4">
-                <li>Define or confirm the ITSM source mapping for the export you plan to ingest.</li>
-                <li>Upload the latest source extract as a dated snapshot.</li>
-                <li>Search reconstructed ticket state and run reports from the same snapshot context.</li>
-            </ol>
+                <div class="app-link-list">
+                    <a href="/itsm-sources">Set up or change ITSM sources <span aria-hidden="true">-&gt;</span></a>
+                    <a href="/report-templates">Upload and manage report templates <span aria-hidden="true">-&gt;</span></a>
+                    <a href="/snapshots">Audit or delete bad snapshots <span aria-hidden="true">-&gt;</span></a>
+                    <a href="/canonical-fields">Review canonical fields and future access rules <span aria-hidden="true">-&gt;</span></a>
+                </div>
+            </section>
 
-            <div class="app-link-list">
-                <a href="/itsm-sources">Manage ITSM sources <span aria-hidden="true">-></span></a>
-                <a href="/upload">Upload a new snapshot <span aria-hidden="true">-></span></a>
-                <a href="/reports">Generate a report <span aria-hidden="true">-></span></a>
-                <a href="/report-templates">Review report templates <span aria-hidden="true">-></span></a>
-            </div>
+            <section class="surface-card">
+                <div class="surface-card-header">
+                    <div>
+                        <h2 class="surface-card-title">Recommended flow</h2>
+                        <p class="surface-card-subtitle">A simple path for most users, with admin activities clearly separated.</p>
+                    </div>
+                </div>
+
+                <ol class="guidance-list mb-0">
+                    <li>Confirm the correct ITSM source and mapping are in place.</li>
+                    <li>Upload the latest source extract as a dated snapshot.</li>
+                    <li>Run reports or check ticket history from the same UPMS workspace.</li>
+                </ol>
+            </section>
         </aside>
     </section>
 }
@@ -127,43 +206,92 @@ else
     private TicketDataServiceInstance DataService { get; set; } = default!;
 
     private bool isLoading = true;
-    private int snapshotCount = 0;
-    private int sourceCount = 0;
+    private int snapshotCount;
+    private int sourceCount;
     private string latestSnapshotText = "No uploads yet";
     private string? loadError;
     private List<Snapshot> recentSnapshots = [];
+    private List<ItsmSource> quickCheckSources = [];
+    private string quickItsmSource = string.Empty;
+    private string quickTicketNumber = string.Empty;
+
+    private bool CanQuickCheck => !string.IsNullOrWhiteSpace(quickItsmSource) && !string.IsNullOrWhiteSpace(quickTicketNumber);
 
     protected override async Task OnInitializedAsync()
     {
         try
         {
-            IEnumerable<Snapshot> snapshots = await DataService.GetSnapshotsAsync();
-            List<Snapshot> all = snapshots
+            var snapshots = (await DataService.GetSnapshotsAsync())
                 .OrderByDescending(s => s.SnapshotDate)
                 .ToList();
 
-            snapshotCount = all.Count;
-            sourceCount = all
-                .Select(s => s.ItsmSource)
-                .Where(s => !string.IsNullOrWhiteSpace(s))
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .Count();
-            latestSnapshotText = all.Count == 0
+            snapshotCount = snapshots.Count;
+            recentSnapshots = snapshots.Take(5).ToList();
+            latestSnapshotText = snapshots.Count == 0
                 ? "No uploads yet"
-                : all[0].SnapshotDate.ToString("yyyy-MM-dd HH:mm") + " UTC";
-            recentSnapshots = all.Take(5).ToList();
+                : snapshots[0].SnapshotDate.ToString("yyyy-MM-dd HH:mm") + " UTC";
+
+            try
+            {
+                quickCheckSources = (await ItsmSourceService.GetAllSourcesAsync())
+                    .OrderBy(s => s.DisplayLabel)
+                    .ThenBy(s => s.Name)
+                    .ToList();
+            }
+            catch
+            {
+                quickCheckSources = [];
+            }
+
+            if (quickCheckSources.Count == 0)
+            {
+                quickCheckSources = snapshots
+                    .Select(s => new ItsmSource
+                    {
+                        Name = s.ItsmSource,
+                        DisplayLabel = s.ItsmSource
+                    })
+                    .Where(s => !string.IsNullOrWhiteSpace(s.Name))
+                    .DistinctBy(s => s.Name, StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(s => s.DisplayLabel)
+                    .ToList();
+            }
+
+            sourceCount = quickCheckSources.Count > 0
+                ? quickCheckSources.Count
+                : snapshots
+                    .Select(s => s.ItsmSource)
+                    .Where(s => !string.IsNullOrWhiteSpace(s))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Count();
+
+            if (quickCheckSources.Count == 1)
+            {
+                quickItsmSource = quickCheckSources[0].Name;
+            }
         }
         catch
         {
-            loadError = "Dashboard statistics could not be loaded. The rest of the application is still available.";
+            loadError = "Workspace statistics could not be loaded. The rest of the application is still available.";
             snapshotCount = 0;
             sourceCount = 0;
             latestSnapshotText = "Unavailable";
             recentSnapshots = [];
+            quickCheckSources = [];
         }
         finally
         {
             isLoading = false;
         }
+    }
+
+    private void OpenQuickTicketCheck()
+    {
+        if (!CanQuickCheck)
+            return;
+
+        var source = Uri.EscapeDataString(quickItsmSource.Trim());
+        var ticket = Uri.EscapeDataString(quickTicketNumber.Trim());
+        Navigation.NavigateTo($"/tickets?source={source}&ticket={ticket}");
     }
 }

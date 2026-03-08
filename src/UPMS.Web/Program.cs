@@ -33,7 +33,10 @@ namespace UPMS.Web
             // or appsettings. In Development the default is permissive (None).
             // Auth:Mode = "Entra" to enable Azure AD (production).
             // ------------------------------------------------------------------
-            string authMode = builder.Configuration["Auth:Mode"] ?? (builder.Environment.IsDevelopment() ? "None" : "Entra");
+            string? authModeOverride = Environment.GetEnvironmentVariable("AUTH_MODE");
+            string authMode = !string.IsNullOrWhiteSpace(authModeOverride)
+                ? authModeOverride
+                : builder.Configuration["Auth:Mode"] ?? (builder.Environment.IsDevelopment() ? "None" : "Entra");
 
             // Support reading secrets provided as files under /run/secrets. These are
             // mapped by docker-compose to secret names. If present, inject them into
@@ -150,6 +153,7 @@ namespace UPMS.Web
             // Register ingest / archive services
             builder.Services.AddScoped<ISnapshotIngestService, SnapshotIngestService>();
             builder.Services.AddScoped<IUpmsArchiveService, UpmsArchiveService>();
+            builder.Services.AddScoped<ICanonicalValueSuggestionService, CanonicalValueSuggestionService>();
 
             // Register report download store (singleton temporary cache keyed by token)
             builder.Services.AddSingleton<ReportDownloadStore>();

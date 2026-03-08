@@ -24,7 +24,7 @@
     <article class="stat-card">
         <p class="stat-label">Supported file groups</p>
         <p class="stat-value stat-value--small">Text + OOXML</p>
-        <p class="stat-helper">Use contiguous plain-text tokens for best replacement accuracy.</p>
+        <p class="stat-helper">Word and PowerPoint templates work best when tokens appear as normal visible text in the document.</p>
     </article>
 </section>
 
@@ -71,7 +71,7 @@
             <div class="field-stack">
                 <label for="template-file">Template File</label>
                 <InputFile id="template-file" class="form-control" OnChange="OnFileSelected" accept=".html,.htm,.txt,.csv,.xml,.eml,.docx,.xlsx,.pptx" />
-                <div class="helper-text">For DOCX, XLSX, and PPTX templates, keep tokens as contiguous plain text in the document.</div>
+                <div class="helper-text">For DOCX and PPTX templates, add tokens as normal visible text. Starter examples are bundled in the template store so authors have a working pattern to copy.</div>
                 @if (selectedFile is not null)
                 {
                     <div class="file-meta">
@@ -92,7 +92,7 @@
             <div class="surface-card-header">
                 <div>
                     <h2 class="surface-card-title">Available tokens</h2>
-                    <p class="surface-card-subtitle">Use aggregate tokens for multi-ticket KPIs, graphs, tables, and outputs. Use per-ticket blocks when you need one repeated section, page, or slide per ticket.</p>
+                    <p class="surface-card-subtitle">Use aggregate tokens for counts and metadata. Use per-ticket blocks when you need one repeated section, page, or slide per ticket. Text-first tokens are best for Word and PowerPoint; HTML and SVG tokens are better suited to HTML/email outputs.</p>
                 </div>
             </div>
 
@@ -119,7 +119,7 @@
 &lt;p&gt;{{ticket.Short_Description}}&lt;/p&gt;
 {{end per ticket}}</code></pre>
 
-            <div class="helper-text mb-2">Use <code>scope=page</code> for one page per ticket in HTML/DOCX/TXT, or one whole slide per ticket in PPTX. <code>scope=slide</code> is accepted too.</div>
+            <div class="helper-text mb-2">Use <code>scope=page</code> for one page per ticket in HTML/DOCX/TXT, or one whole slide per ticket in PPTX. <code>scope=slide</code> is accepted too. In Word, page-scoped markers work best when the start and end markers sit on their own paragraphs.</div>
             <pre class="mb-3"><code>{{start per ticket State!=Closed scope=page}}
 Title: {{ticket.Number}}
 Description: {{ticket.Description}}
@@ -134,7 +134,7 @@ Description: {{ticket.Description}}
                 <li>Combine multiple clauses with <code>&amp;&amp;</code> or <code>;</code></li>
             </ul>
 
-            <p class="mb-0 text-muted">For DOCX, XLSX, and PPTX templates, keep tokens and loop markers as plain contiguous text such as <code>{{kpi.ticket_count}}</code> or <code>{{start per ticket State=Open scope=page}}</code>. In PowerPoint, whole-slide loops work best when the loop markers live on the slide you want duplicated.</p>
+            <p class="mb-0 text-muted">For DOCX and PPTX templates, keep tokens and loop markers as visible text such as <code>{{kpi.ticket_count}}</code> or <code>{{start per ticket State=Open scope=page}}</code>. PowerPoint whole-slide loops work best when the loop markers live on the slide you want duplicated, and Word page loops work best when the markers sit in their own paragraphs.</p>
         </section>
     </aside>
 </div>

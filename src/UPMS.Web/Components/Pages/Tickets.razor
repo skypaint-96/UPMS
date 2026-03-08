@@ -2,20 +2,20 @@
 @rendermode InteractiveServer
 
 @using System.Globalization
-@inject TicketDataServiceInstance DataService
+
 @inject IItsmSourceService ItsmSourceService
 @inject IItsmFieldMappingService FieldMappingService
+@inject ICanonicalFieldService CanonicalFieldService
+@inject ICanonicalValueSuggestionService CanonicalValueSuggestionService
+@inject TicketDataServiceInstance DataService
 
-<PageTitle>Tickets</PageTitle>
+<PageTitle>Tickets - UPMS</PageTitle>
 
 <section class="app-page-header">
     <div>
-        <p class="page-eyebrow">Search</p>
+        <p class="page-eyebrow">Ticket history</p>
         <h1 class="page-title">Tickets</h1>
-        <p class="page-description">Search reconstructed ticket state across one or more ITSM sources using a specific point-in-time view.</p>
-    </div>
-    <div class="page-actions">
-        <a class="btn btn-outline-secondary" href="/itsm-sources">Manage ITSM sources</a>
+        <p class="page-description">Choose one or more ITSM sources, set the point in time you want to reconstruct, and then refine the result with user-friendly canonical filters.</p>
     </div>
 </section>
 
@@ -87,7 +87,7 @@ else
             <div>
                 <h2 class="surface-card-title">Field filters</h2>
                 <p class="surface-card-subtitle">
-                    Filters match against the <em>canonical</em> field names for the selected ITSM source(s). System fields such as <code>company</code> and <code>ticket_number</code> are always available.
+                    Filters use the <em>canonical</em> field names configured for the selected ITSM source(s). Where UPMS knows the field type, the value control becomes more helpful automatically.
                     @if (normalizedItsmSources.Count > 1)
                     {
                         <span class="d-block mt-1">Custom field matching is also available when searching multiple sources.</span>
@@ -104,7 +104,7 @@ else
         @if (!hasAnyMappings)
         {
             <div class="alert alert-warning" role="alert" data-testid="no-mappings-warning">
-                No field mappings were found for the selected ITSM source(s). Add mappings on the ITSM Source page to enable canonical filtering.
+                No field mappings were found for the selected ITSM source(s). Add mappings on the ITSM Source page to enable richer canonical filtering.
             </div>
         }
 
@@ -112,11 +112,14 @@ else
             @foreach (var filter in filters)
             {
                 var i = filter.Seq;
+                var suggestionListId = GetSuggestionListId(filter);
+                var suggestions = filter.Suggestions;
+                var hasFilterDataType = TryGetFilterDataType(filter, out var filterDataType);
                 <div class="filter-row-card" @key="filter.Id">
                     <div class="form-grid" style="grid-template-columns: minmax(160px, 220px) minmax(220px, 1fr) minmax(260px, 1.2fr) auto; align-items: end;">
                         <div class="field-stack">
                             <label class="form-label" for="filter-mode-@i">Type</label>
-                            <select id="filter-mode-@i" class="form-select" data-testid="field-filter-mode-@i" @bind="filter.Mode">
+                            <select id="filter-mode-@i" class="form-select" data-testid="field-filter-mode-@i" @bind="filter.Mode" @bind:after="() => OnFilterModeChangedAsync(filter)">
                                 <option value="@FieldNameMode.Canonical">Canonical</option>
                                 <option value="@FieldNameMode.Custom">Custom</option>
                             </select>
@@ -126,8 +129,8 @@ else
                         {
                             <div class="field-stack">
                                 <label class="form-label" for="filter-name-@i">Field</label>
-                                <select id="filter-name-@i" class="form-select" data-testid="field-filter-name-@i" @bind="filter.CanonicalFieldName">
-                                    <option value="" disabled>-- Field --</option>
+                                <select id="filter-name-@i" class="form-select" data-testid="field-filter-name-@i" @bind="filter.CanonicalFieldName" @bind:after="() => OnCanonicalFieldChangedAsync(filter)">
+                                    <option value="">-- Field --</option>
                                     @foreach (var field in availableFilterFields)
                                     {
                                         <option value="@field">@field</option>
@@ -145,7 +148,44 @@ else
 
                         <div class="field-stack">
                             <label class="form-label" for="filter-value-@i">Value</label>
-                            <input id="filter-value-@i" class="form-control" type="text" placeholder="Contains value" data-testid="field-filter-value-@i" @bind="filter.Value" />
+                            @if (filter.Mode == FieldNameMode.Canonical && hasFilterDataType && filterDataType == CanonicalFieldDataType.Boolean)
+                            {
+                                <select id="filter-value-@i" class="form-select" data-testid="field-filter-value-@i" @bind="filter.Value">
+                                    <option value="">-- Select --</option>
+                                    <option value="true">True</option>
+                                    <option value="false">False</option>
+                                </select>
+                            }
+                            else if (filter.Mode == FieldNameMode.Canonical && hasFilterDataType && filterDataType == CanonicalFieldDataType.DateTime)
+                            {
+                                <input id="filter-value-@i" class="form-control" type="datetime-local" placeholder="Choose a date/time" data-testid="field-filter-value-@i" value="@filter.Value" @onchange="e => filter.Value = e.Value?.ToString() ?? string.Empty" />
+                            }
+                            else if (filter.Mode == FieldNameMode.Canonical && hasFilterDataType && (filterDataType == CanonicalFieldDataType.Integer || filterDataType == CanonicalFieldDataType.Decimal))
+                            {
+                                <input id="filter-value-@i" class="form-control" type="number" step="@(filterDataType == CanonicalFieldDataType.Decimal ? "0.01" : "1")" placeholder="Enter a value" data-testid="field-filter-value-@i" value="@filter.Value" @onchange="e => filter.Value = e.Value?.ToString() ?? string.Empty" />
+                            }
+                            else
+                            {
+                                <input id="filter-value-@i"
+                                       class="form-control"
+                                       type="text"
+                                       placeholder="@GetFilterValuePlaceholder(filter)"
+                                       data-testid="field-filter-value-@i"
+                                       list="@(ShouldUseSuggestionList(filter) && suggestions.Count > 0 ? suggestionListId : null)"
+                                       value="@filter.Value"
+                                       @onfocus="() => LoadSuggestionsAsync(filter)"
+                                       @onchange="e => filter.Value = e.Value?.ToString() ?? string.Empty" />
+
+                                @if (ShouldUseSuggestionList(filter) && suggestions.Count > 0)
+                                {
+                                    <datalist id="@suggestionListId">
+                                        @foreach (var suggestion in suggestions)
+                                        {
+                                            <option value="@suggestion"></option>
+                                        }
+                                    </datalist>
+                                }
+                            }
                         </div>
 
                         <div class="field-stack">
@@ -186,23 +226,30 @@ else
 </section>
 
 @code {
+    [SupplyParameterFromQuery(Name = "source")]
+    public string? QueryItsmSource { get; set; }
+
+    [SupplyParameterFromQuery(Name = "ticket")]
+    public string? QueryTicket { get; set; }
+
     private List<Ticket> tickets = new();
     private List<ItsmSource> itsmSources = new();
     private List<string> availableFilterFields = new();
     private List<FilterRow> filters = new();
+    private IReadOnlyDictionary<string, CanonicalFieldDefinition> canonicalFieldLookup = new Dictionary<string, CanonicalFieldDefinition>(StringComparer.OrdinalIgnoreCase);
 
     private string[] selectedItsmSources = Array.Empty<string>();
     private List<string> normalizedItsmSources = new();
 
     private string asOfLocal = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm");
-    private bool isLoading = false;
+    private bool isLoading;
+    private bool initialized;
     private DateTime asOfDateTime = DateTime.UtcNow;
     private string? searchError;
-    private bool searchPerformed = false;
-
-    private bool hasAnyMappings = false;
-
-    private int nextFilterSeq = 0;
+    private bool searchPerformed;
+    private bool hasAnyMappings;
+    private int nextFilterSeq;
+    private string? lastAppliedQuerySignature;
 
     private enum FieldNameMode
     {
@@ -213,16 +260,12 @@ else
     private sealed class FilterRow
     {
         public Guid Id { get; } = Guid.NewGuid();
-
         public int Seq { get; init; }
-
         public FieldNameMode Mode { get; set; } = FieldNameMode.Canonical;
-
         public string CanonicalFieldName { get; set; } = string.Empty;
-
         public string CustomFieldName { get; set; } = string.Empty;
-
         public string Value { get; set; } = string.Empty;
+        public IReadOnlyList<string> Suggestions { get; set; } = Array.Empty<string>();
 
         public string GetEffectiveFieldName()
         {
@@ -237,18 +280,75 @@ else
     protected override async Task OnInitializedAsync()
     {
         await LoadItsmSourcesAsync();
+        await LoadCanonicalFieldsAsync();
+        initialized = true;
+        await ApplyQueryStateAsync();
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (!initialized)
+            return;
+
+        await ApplyQueryStateAsync();
     }
 
     private async Task LoadItsmSourcesAsync()
     {
         try
         {
-            var sources = await ItsmSourceService.GetAllSourcesAsync();
-            itsmSources = sources.OrderBy(s => s.DisplayLabel).ToList();
+            itsmSources = (await ItsmSourceService.GetAllSourcesAsync())
+                .OrderBy(s => s.DisplayLabel)
+                .ThenBy(s => s.Name)
+                .ToList();
         }
         catch
         {
             itsmSources = new();
+        }
+    }
+
+    private async Task LoadCanonicalFieldsAsync()
+    {
+        try
+        {
+            canonicalFieldLookup = await CanonicalFieldService.GetLookupAsync();
+        }
+        catch
+        {
+            canonicalFieldLookup = new Dictionary<string, CanonicalFieldDefinition>(StringComparer.OrdinalIgnoreCase);
+        }
+    }
+
+    private async Task ApplyQueryStateAsync()
+    {
+        string signature = $"{QueryItsmSource?.Trim()}|{QueryTicket?.Trim()}";
+        if (string.Equals(signature, lastAppliedQuerySignature, StringComparison.Ordinal))
+            return;
+
+        lastAppliedQuerySignature = signature;
+
+        if (string.IsNullOrWhiteSpace(QueryItsmSource))
+            return;
+
+        selectedItsmSources = [QueryItsmSource.Trim()];
+        await OnItsmSourceChanged();
+
+        if (!string.IsNullOrWhiteSpace(QueryTicket))
+        {
+            if (filters.Count == 0)
+                AddFilter();
+
+            var firstFilter = filters[0];
+            firstFilter.Mode = FieldNameMode.Canonical;
+            firstFilter.CanonicalFieldName = "Number";
+            firstFilter.Value = QueryTicket.Trim();
+            firstFilter.Suggestions = Array.Empty<string>();
+        }
+
+        if (CanSearch)
+        {
+            await SearchAsync();
         }
     }
 
@@ -265,8 +365,8 @@ else
         normalizedItsmSources = (selectedItsmSources ?? Array.Empty<string>())
             .Where(s => !string.IsNullOrWhiteSpace(s))
             .Select(s => s.Trim())
-            .Distinct(StringComparer.Ordinal)
-            .OrderBy(s => s, StringComparer.Ordinal)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(s => s, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
         if (normalizedItsmSources.Count == 0)
@@ -290,31 +390,26 @@ else
             }
 
             var canonical = allMappings
-                .Select(m => m.CanonicalFieldName)
+                .Select(m => NormalizeUiCanonicalFieldName(m.CanonicalFieldName))
                 .Where(n => !string.IsNullOrWhiteSpace(n))
-                .Select(n => string.Equals(n, "ticket_key", StringComparison.Ordinal) ? "ticket_number" : n!)
-                .Distinct(StringComparer.Ordinal)
-                .OrderBy(n => n, StringComparer.Ordinal)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
             hasAnyMappings = canonical.Count > 0;
 
             var ordered = new List<string>();
-            var set = new HashSet<string>(StringComparer.Ordinal);
+            var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             void Add(string name)
             {
-                if (set.Add(name))
+                if (!string.IsNullOrWhiteSpace(name) && set.Add(name))
                     ordered.Add(name);
             }
 
             Add("Number");
             Add("Company");
             Add("State");
-            Add("ticket_number");
-            Add("company");
-            Add("ticket_key");
-            Add("status");
             foreach (var c in canonical)
                 Add(c);
 
@@ -342,7 +437,6 @@ else
     private void ClearFilters()
     {
         filters.Clear();
-
         nextFilterSeq = 0;
 
         if (availableFilterFields.Count > 0)
@@ -358,6 +452,32 @@ else
 
         if (filters.Count == 0 && availableFilterFields.Count > 0)
             AddFilter();
+    }
+
+    private async Task OnFilterModeChangedAsync(FilterRow row)
+    {
+        row.CanonicalFieldName = string.Empty;
+        row.CustomFieldName = string.Empty;
+        row.Value = string.Empty;
+        row.Suggestions = Array.Empty<string>();
+        await Task.CompletedTask;
+    }
+
+    private async Task OnCanonicalFieldChangedAsync(FilterRow row)
+    {
+        row.Value = string.Empty;
+        row.Suggestions = Array.Empty<string>();
+        await LoadSuggestionsAsync(row);
+    }
+
+    private async Task LoadSuggestionsAsync(FilterRow row)
+    {
+        if (!ShouldUseSuggestionList(row))
+            return;
+
+        var fieldName = NormalizeUiCanonicalFieldName(row.CanonicalFieldName);
+        row.Suggestions = await CanonicalValueSuggestionService.GetSuggestionsAsync(fieldName, normalizedItsmSources);
+        StateHasChanged();
     }
 
     private async Task SearchAsync()
@@ -385,11 +505,11 @@ else
         var activeFilters = new List<TicketFieldFilter>();
         foreach (var f in filters)
         {
-            var name = f.GetEffectiveFieldName();
+            var name = NormalizeUiCanonicalFieldName(f.GetEffectiveFieldName());
             var value = f.Value?.Trim();
             if (!string.IsNullOrEmpty(name) && !string.IsNullOrEmpty(value))
             {
-                activeFilters.Add(new TicketFieldFilter(name, value));
+                activeFilters.Add(new TicketFieldFilter(name, value, GetFilterDataTypeOrNull(f)));
             }
         }
 
@@ -452,6 +572,73 @@ else
             asOfDateTime = DateTime.UtcNow;
             asOfLocal = asOfDateTime.ToString("yyyy-MM-ddTHH:mm", CultureInfo.InvariantCulture);
         }
+    }
+
+    private bool ShouldUseSuggestionList(FilterRow filter)
+    {
+        return filter.Mode == FieldNameMode.Canonical
+            && !string.IsNullOrWhiteSpace(filter.CanonicalFieldName)
+            && GetFilterDataTypeOrNull(filter) == CanonicalFieldDataType.Text;
+    }
+
+    private string GetSuggestionListId(FilterRow filter) => $"filter-suggestions-{filter.Seq}";
+
+    private string GetFilterValuePlaceholder(FilterRow filter)
+    {
+        var field = NormalizeUiCanonicalFieldName(filter.CanonicalFieldName);
+        return field switch
+        {
+            "Company" => "Start typing to see known companies",
+            "Number" => "Ticket number, for example PRB0012345",
+            _ => "Contains value"
+        };
+    }
+
+    private CanonicalFieldDataType? GetFilterDataTypeOrNull(FilterRow filter)
+    {
+        if (filter.Mode != FieldNameMode.Canonical)
+            return null;
+
+        return TryGetFilterDataType(filter, out var dataType)
+            ? dataType
+            : null;
+    }
+
+    private bool TryGetFilterDataType(FilterRow filter, out CanonicalFieldDataType dataType)
+    {
+        dataType = CanonicalFieldDataType.Text;
+        if (filter.Mode != FieldNameMode.Canonical)
+            return false;
+
+        string fieldName = NormalizeUiCanonicalFieldName(filter.CanonicalFieldName);
+        if (string.IsNullOrWhiteSpace(fieldName))
+            return false;
+
+        if (canonicalFieldLookup.TryGetValue(fieldName, out var definition))
+        {
+            dataType = definition.DataType;
+            return true;
+        }
+
+        return fieldName is "Number" or "Company" or "State";
+    }
+
+    private static string NormalizeUiCanonicalFieldName(string? fieldName)
+    {
+        if (string.IsNullOrWhiteSpace(fieldName))
+            return string.Empty;
+
+        string trimmed = fieldName.Trim();
+        return trimmed.ToLowerInvariant() switch
+        {
+            "ticket_number" => "Number",
+            "ticket_key" => "Number",
+            "number" => "Number",
+            "company" => "Company",
+            "company_name" => "Company",
+            "status" => "State",
+            _ => trimmed
+        };
     }
 
     private static readonly string[] AsOfInputFormats =

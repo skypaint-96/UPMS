@@ -620,23 +620,23 @@ public async Task RecordFieldChangeAsync(
         if (string.Equals(field, "company", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(field, "company_name", StringComparison.OrdinalIgnoreCase))
         {
-            return ticket.CompanyName.Contains(value, StringComparison.OrdinalIgnoreCase);
+            return ValueMatches(ticket.CompanyName, value, filter.DataType);
         }
 
         if (string.Equals(field, "itsm_source", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(field, "source", StringComparison.OrdinalIgnoreCase))
         {
-            return ticket.ItsmSource.Contains(value, StringComparison.OrdinalIgnoreCase);
+            return ValueMatches(ticket.ItsmSource, value, filter.DataType);
         }
 
         if (string.Equals(field, "ticket_key", StringComparison.OrdinalIgnoreCase))
         {
             // Legacy: some mappings used 'ticket_key' as the canonical name for the ticket number.
-            if (ticket.TicketKey.Contains(value, StringComparison.OrdinalIgnoreCase))
+            if (ValueMatches(ticket.TicketKey, value, CanonicalFieldDataType.Text))
                 return true;
 
             if (TryGetFieldValue(ticket.Fields, "ticket_number", out var ticketNumber) && !string.IsNullOrEmpty(ticketNumber))
-                return ticketNumber.Contains(value, StringComparison.OrdinalIgnoreCase);
+                return ValueMatches(ticketNumber, value, filter.DataType ?? CanonicalFieldDataType.Text);
 
             return false;
         }
@@ -645,16 +645,118 @@ public async Task RecordFieldChangeAsync(
             string.Equals(field, "number", StringComparison.OrdinalIgnoreCase))
         {
             if (TryGetFieldValue(ticket.Fields, "ticket_number", out var ticketNumber) && !string.IsNullOrEmpty(ticketNumber))
-                return ticketNumber.Contains(value, StringComparison.OrdinalIgnoreCase);
+                return ValueMatches(ticketNumber, value, filter.DataType ?? CanonicalFieldDataType.Text);
 
             // Fallback: match the composite ticket key.
-            return ticket.TicketKey.Contains(value, StringComparison.OrdinalIgnoreCase);
+            return ValueMatches(ticket.TicketKey, value, CanonicalFieldDataType.Text);
         }
 
         // Normal mapped fields
         if (TryGetFieldValue(ticket.Fields, field, out var v) && v is not null)
-            return v.Contains(value, StringComparison.OrdinalIgnoreCase);
+            return ValueMatches(v, value, filter.DataType);
 
+        return false;
+    }
+
+    private static bool ValueMatches(string? actual, string expected, CanonicalFieldDataType? dataType)
+    {
+        if (string.IsNullOrWhiteSpace(actual) || string.IsNullOrWhiteSpace(expected))
+            return false;
+
+        actual = actual.Trim();
+        expected = expected.Trim();
+
+        switch (dataType)
+        {
+            case CanonicalFieldDataType.Boolean:
+                if (TryParseBoolean(actual, out var actualBool) && TryParseBoolean(expected, out var expectedBool))
+                    return actualBool == expectedBool;
+                break;
+            case CanonicalFieldDataType.Integer:
+                if (long.TryParse(actual, NumberStyles.Integer, CultureInfo.InvariantCulture, out var actualInt)
+                    && long.TryParse(expected, NumberStyles.Integer, CultureInfo.InvariantCulture, out var expectedInt))
+                {
+                    return actualInt == expectedInt;
+                }
+                break;
+            case CanonicalFieldDataType.Decimal:
+                if (decimal.TryParse(actual, NumberStyles.Number, CultureInfo.InvariantCulture, out var actualDecimal)
+                    && decimal.TryParse(expected, NumberStyles.Number, CultureInfo.InvariantCulture, out var expectedDecimal))
+                {
+                    return actualDecimal == expectedDecimal;
+                }
+                break;
+            case CanonicalFieldDataType.DateTime:
+                if (TryParseFlexibleDateTime(actual, out var actualDateTime)
+                    && TryParseFlexibleDateTime(expected, out var expectedDateTime))
+                {
+                    if (expected.Length <= 10)
+                        return actualDateTime.Date == expectedDateTime.Date;
+
+                    return actualDateTime.ToString("yyyy-MM-ddTHH:mm", CultureInfo.InvariantCulture)
+                        == expectedDateTime.ToString("yyyy-MM-ddTHH:mm", CultureInfo.InvariantCulture);
+                }
+                break;
+        }
+
+        return actual.Contains(expected, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool TryParseBoolean(string input, out bool value)
+    {
+        if (bool.TryParse(input, out value))
+            return true;
+
+        switch (input.Trim().ToLowerInvariant())
+        {
+            case "1":
+            case "yes":
+            case "y":
+            case "on":
+                value = true;
+                return true;
+            case "0":
+            case "no":
+            case "n":
+            case "off":
+                value = false;
+                return true;
+            default:
+                value = false;
+                return false;
+        }
+    }
+
+    private static bool TryParseFlexibleDateTime(string input, out DateTime value)
+    {
+        if (DateTime.TryParseExact(
+            input,
+            [
+                "yyyy-MM-ddTHH:mm",
+                "yyyy-MM-ddTHH:mm:ss",
+                "yyyy-MM-dd HH:mm:ss",
+                "yyyy-MM-dd HH:mm",
+                "yyyy-MM-dd"
+            ],
+            CultureInfo.InvariantCulture,
+            DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+            out var parsed))
+        {
+            value = NormalizeToUtc(parsed);
+            return true;
+        }
+
+        if (DateTime.TryParse(
+            input,
+            CultureInfo.InvariantCulture,
+            DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+            out parsed))
+        {
+            value = NormalizeToUtc(parsed);
+            return true;
+        }
+
+        value = default;
         return false;
     }
 
