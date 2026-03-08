@@ -194,12 +194,22 @@ Supported prototype behaviours:
 - **Text-like templates**: `.html`, `.htm`, `.txt`, `.csv`, `.xml`, `.eml`
 - **OOXML package templates**: `.docx`, `.xlsx`, `.pptx`
 - **Token syntax**: `{{token_name}}`
+- **Per-ticket loop syntax**: `{{start per ticket <filter> [scope=section|page|slide]}} ... {{end per ticket}}`
 
-Useful built-in tokens currently include:
+Useful built-in aggregate tokens currently include:
 
-- `{{company}}`, `{{itsm_source}}`, `{{as_of_date}}`, `{{generated_at_utc}}`, `{{requested_by}}`
-- `{{ticket_count}}`, `{{ticket_key}}`, `{{ticket_number}}`, `{{ticket_status}}`, `{{ticket_priority}}`
-- `{{tickets_html_table}}`, `{{ticket_rows_html}}`, `{{tickets_text_list}}`, `{{tickets_csv_document}}`
-- `{{month_end_chart_svg}}`, `{{month_end_table_html}}`, `{{month_end_backlog_current}}`, `{{month_end_opened_current}}`, `{{month_end_resolved_current}}`
+- `{{meta.company}}`, `{{meta.itsm_source}}`, `{{meta.as_of_date}}`, `{{meta.generated_at_utc}}`, `{{meta.requested_by}}`
+- `{{kpi.ticket_count}}`, `{{kpi.month_end.backlog_current}}`, `{{kpi.month_end.opened_current}}`, `{{kpi.month_end.resolved_current}}`
+- `{{table.kpis.html}}`, `{{table.tickets.html}}`, `{{table.tickets.rows_html}}`, `{{table.lifecycle.month_end.html}}`
+- `{{output.tickets.text_list}}`, `{{output.tickets.csv_document}}`, `{{output.ticket_keys.csv}}`, `{{output.ticket_keys.text}}`
+- `{{graph.lifecycle.month_end.svg}}`
 
-Current limitation: the OOXML prototype performs direct XML text replacement, so tokens should remain contiguous plain text inside the source document or workbook.
+Useful per-ticket tokens inside loops include:
+
+- `{{ticket.Number}}`, `{{ticket.State}}`, `{{ticket.Priority}}`, `{{ticket.Description}}`, `{{ticket.Short_Description}}`, `{{ticket.Assigned_To}}`, `{{ticket.TicketKey}}`
+- Filter operators in the loop header: `=`, `!=`, `~`, `!~`
+- Combine filters with `&&` or `;`
+- `scope=page` repeats one page per ticket in HTML/DOCX/TXT and one full slide per ticket in PPTX
+- `scope=slide` is accepted as an alias for PowerPoint slide duplication
+
+Current limitation: the OOXML prototype still performs direct XML text replacement, so tokens and loop markers should remain contiguous plain text inside the source document or workbook. Whole-slide PowerPoint loops work best when the loop markers live on the slide that should be duplicated.

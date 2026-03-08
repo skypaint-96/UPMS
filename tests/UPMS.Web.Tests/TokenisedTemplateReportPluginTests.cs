@@ -75,4 +75,82 @@ public class TokenisedTemplateReportPluginTests
                 Directory.Delete(tempDir, recursive: true);
         }
     }
+
+    [Test]
+    [NonParallelizable]
+    public async Task GenerateAsync_HtmlTemplate_WithPerTicketLoopsAndAggregateAliases_RendersExpectedContent()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), $"upms-template-tests-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+
+        try
+        {
+            var store = new FileSystemReportTemplateStore(tempDir);
+            await store.SaveAsync(
+                new ReportTemplateUploadRequest
+                {
+                    DisplayName = "Loop Html",
+                    Kind = ReportTemplateKind.Document,
+                    OriginalFileName = "loop.html"
+                },
+                new MemoryStream(Encoding.UTF8.GetBytes("<html><body><h1>{{kpi.ticket_count}}</h1>{{start per ticket Priority=High}}<article><h2>{{ticket.Number}}</h2><p>{{ticket.Description}}</p></article>{{end per ticket}}</body></html>")));
+
+            var template = store.GetAllTemplates().Single();
+            var (dataService, context, connection) = ReportPluginTestDataHelper.CreateDataService();
+            using (connection)
+            using (context)
+            {
+                var itsmSource = "servicenow";
+                var company = "Acme";
+                var snapshotDate = new DateTime(2026, 1, 31, 0, 0, 0, DateTimeKind.Utc);
+                await ReportPluginTestDataHelper.SeedTicketAsync(
+                    dataService,
+                    itsmSource,
+                    company,
+                    "INC3001",
+                    snapshotDate,
+                    ("Number", "INC3001"),
+                    ("Priority", "High"),
+                    ("Description", "Primary database unavailable"),
+                    ("Short Description", "Database outage"));
+                await ReportPluginTestDataHelper.SeedTicketAsync(
+                    dataService,
+                    itsmSource,
+                    company,
+                    "INC3002",
+                    snapshotDate,
+                    ("Number", "INC3002"),
+                    ("Priority", "Low"),
+                    ("Description", "Minor dashboard issue"),
+                    ("Short Description", "Dashboard issue"));
+
+                var plugin = new TokenisedTemplateReportPlugin(dataService, store);
+                var request = new ReportRequest
+                {
+                    Parameters = new Dictionary<string, string>
+                    {
+                        ["template_id"] = template.Id,
+                        ["itsm_source"] = itsmSource,
+                        ["company"] = company,
+                        ["as_of_date"] = snapshotDate.ToString("yyyy-MM-dd"),
+                        ["detail_fields"] = "Priority,Description"
+                    }
+                };
+
+                var result = await plugin.GenerateAsync(request);
+
+                Assert.That(result.Success, Is.True, result.ErrorMessage);
+                Assert.That(result.OutputType, Is.EqualTo(ReportOutputType.HtmlContent));
+                Assert.That(result.HtmlContent, Does.Contain("<h1>2</h1>"));
+                Assert.That(result.HtmlContent, Does.Contain("INC3001"));
+                Assert.That(result.HtmlContent, Does.Contain("Primary database unavailable"));
+                Assert.That(result.HtmlContent, Does.Not.Contain("INC3002"));
+            }
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+                Directory.Delete(tempDir, recursive: true);
+        }
+    }
 }
