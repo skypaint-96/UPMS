@@ -2,13 +2,13 @@ namespace UPMS.Reporting.Plugins.Templates;
 
 using System.Text;
 using UPMS.Data;
-using UPMS.Reporting.Templates;
 using UPMS.Reporting;
 using UPMS.Reporting.Plugins.Email;
+using UPMS.Reporting.Templates;
 
 /// <summary>
-/// Generic template-driven report plugin. Supports uploaded HTML/email/document/spreadsheet templates
-/// with {{token}} placeholders that are filled from the selected ticket scope.
+/// Template-first report runner. Every generated report is driven by an uploaded tokenised template,
+/// with the selected template deciding the output format and authoring experience.
 /// </summary>
 public sealed class TokenisedTemplateReportPlugin : IReportPlugin
 {
@@ -43,23 +43,37 @@ public sealed class TokenisedTemplateReportPlugin : IReportPlugin
 
     private readonly TicketDataServiceInstance _dataService;
     private readonly IReportTemplateStore _templateStore;
+    private readonly ReportTemplateTypeRegistry _typeRegistry;
 
-    public TokenisedTemplateReportPlugin(TicketDataServiceInstance dataService, IReportTemplateStore templateStore)
+    public TokenisedTemplateReportPlugin(
+        TicketDataServiceInstance dataService,
+        IReportTemplateStore templateStore,
+        ReportTemplateTypeRegistry typeRegistry)
     {
         _dataService = dataService ?? throw new ArgumentNullException(nameof(dataService));
         _templateStore = templateStore ?? throw new ArgumentNullException(nameof(templateStore));
+        _typeRegistry = typeRegistry ?? throw new ArgumentNullException(nameof(typeRegistry));
     }
 
     public string PluginId => "tokenised-template-report";
-    public string DisplayName => "Tokenised Template Fill";
-    public string Description => "Fills uploaded email, document, or spreadsheet templates using aggregate {{token}} fields plus per-ticket loop blocks such as {{start per ticket ...}}...{{end per ticket}}.";
+    public string DisplayName => "Template-Driven Report Generation";
+    public string Description => "Generates user-facing reports from uploaded tokenised templates, including starter examples for each supported template type.";
 
     public IReadOnlyList<ReportParameterDefinition> Parameters
     {
         get
         {
             var templateOptions = _templateStore.GetAllTemplates()
-                .Select(t => $"{t.Id} | {t.DisplayName} ({t.Extension})")
+                .OrderBy(template => template.Kind)
+                .ThenByDescending(template => template.IsStarterTemplate)
+                .ThenBy(template => template.DisplayName, StringComparer.OrdinalIgnoreCase)
+                .Select(template =>
+                {
+                    var typeDefinition = _typeRegistry.Resolve(template);
+                    var typeLabel = typeDefinition?.DisplayName ?? $"{template.Kind} {template.Extension}";
+                    var starterLabel = template.IsStarterTemplate ? " starter" : string.Empty;
+                    return $"{template.Id} | {template.DisplayName} ({typeLabel}{starterLabel})";
+                })
                 .ToList();
 
             return
@@ -70,7 +84,7 @@ public sealed class TokenisedTemplateReportPlugin : IReportPlugin
                     DisplayName = "Template",
                     Type = ReportParameterType.Select,
                     IsRequired = true,
-                    Description = "Choose an uploaded template from the report template library.",
+                    Description = "Choose a starter or uploaded template from the report library.",
                     Options = templateOptions
                 },
                 new ReportParameterDefinition
@@ -79,7 +93,7 @@ public sealed class TokenisedTemplateReportPlugin : IReportPlugin
                     DisplayName = "Output Mode",
                     Type = ReportParameterType.Select,
                     IsRequired = false,
-                    Description = "Auto chooses the most natural output based on template type.",
+                    Description = "Auto chooses the most natural output based on the selected template type.",
                     Options = [OutputModeAuto, OutputModePreviewHtml, OutputModeDownloadFile, OutputModeDownloadEml]
                 },
                 new ReportParameterDefinition
@@ -157,11 +171,11 @@ public sealed class TokenisedTemplateReportPlugin : IReportPlugin
             var allTickets = (await _dataService.GetTicketsAsync(itsmSource, company, asOfDate)).ToList();
             var requestedTicketIds = ParseTicketIds(ticketKeysRaw);
             var selectedTickets = requestedTicketIds.Count == 0
-                ? allTickets.OrderBy(t => t.TicketKey, StringComparer.OrdinalIgnoreCase).ToList()
+                ? allTickets.OrderBy(ticket => ticket.TicketKey, StringComparer.OrdinalIgnoreCase).ToList()
                 : allTickets
-                    .Where(t => requestedTicketIds.Contains(t.TicketKey)
-                        || requestedTicketIds.Contains(TicketFieldHelpers.GetFieldValue(t, "Number", fallback: t.TicketKey)))
-                    .OrderBy(t => t.TicketKey, StringComparer.OrdinalIgnoreCase)
+                    .Where(ticket => requestedTicketIds.Contains(ticket.TicketKey)
+                        || requestedTicketIds.Contains(TicketFieldHelpers.GetFieldValue(ticket, "Number", fallback: ticket.TicketKey)))
+                    .OrderBy(ticket => ticket.TicketKey, StringComparer.OrdinalIgnoreCase)
                     .ToList();
 
             var renderContext = TemplateReportTokenBuilder.BuildContext(itsmSource, company, asOfDate, selectedTickets, detailFields, request.RequestedBy);

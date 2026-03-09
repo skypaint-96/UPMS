@@ -7,4 +7,6 @@ public interface IReportTemplateStore
     ReportTemplateMetadata? GetTemplateById(string templateId);
     Task<StoredReportTemplate?> GetTemplateContentAsync(string templateId, CancellationToken ct = default);
     Task<ReportTemplateMetadata> SaveAsync(ReportTemplateUploadRequest request, Stream content, CancellationToken ct = default);
+    Task<ReportTemplateMetadata> UpdateAsync(string templateId, ReportTemplateUploadRequest request, Stream? content, CancellationToken ct = default);
+    Task<bool> DeleteAsync(string templateId, CancellationToken ct = default);
 }

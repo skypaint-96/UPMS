@@ -106,7 +106,7 @@ function AppShell() {
     () => [
       { text: 'Dashboard', route: '/', icon: HomeOutlined, helper: 'System overview' },
       { text: 'Tickets', route: '/tickets', icon: SellOutlined, helper: 'Query ticket state' },
-      { text: 'Reports', route: '/reports', icon: DescriptionOutlined, helper: 'Run user-facing reports' },
+      { text: 'Reports', route: '/reports', icon: DescriptionOutlined, helper: 'Generate from templates' },
     ],
     [],
   );
@@ -117,7 +117,7 @@ function AppShell() {
       { text: 'Upload Snapshot', route: '/upload', icon: UploadFileOutlined, helper: 'Queue snapshot ingest' },
       { text: 'Snapshots', route: '/snapshots', icon: DatasetOutlined, helper: 'Browse uploaded snapshots' },
       { text: 'Jobs', route: '/jobs', icon: WorkHistoryOutlined, helper: 'Monitor worker jobs' },
-      { text: 'Report Templates', route: '/report-templates', icon: ArticleOutlined, helper: 'Upload reusable templates' },
+      { text: 'Report Templates', route: '/report-templates', icon: ArticleOutlined, helper: 'Curate template library' },
     ],
     [],
   );
@@ -183,7 +183,7 @@ function AppShell() {
             Power user menu
           </Typography>
           <Typography color="text.secondary" sx={{ mb: 2 }}>
-            Use these admin pages to manage ITSM source definitions, snapshots, jobs, and report templates.
+            Use these admin pages to manage ITSM source definitions, snapshots, jobs, and the shared report-template library.
           </Typography>
           <Divider sx={{ mb: 1 }} />
           <NavigationList

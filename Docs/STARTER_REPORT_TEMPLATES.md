@@ -1,18 +1,37 @@
 # Starter report templates
 
-The project now ships with a small starter pack under `src/UPMS.Web/App_Data/ReportTemplates/` so power users can immediately test the tokenised reporting flow without building templates from scratch.
+The modern API/worker reporting flow now seeds a starter pack from `src/UPMS.Reporting/StarterTemplates/` into the configured report-template storage on startup. This means a fresh environment immediately has example templates available in both the **Reports** page and the **Report Templates** workspace.
 
-## Included templates
+## Included starter types
 
-- **Starter HTML - Operations Brief**
-  - KPI cards for company, source, ticket count, and backlog.
-  - Repeats one ticket card per matching ticket using `{{start per ticket ...}}`.
-- **Starter Word - Operations Summary**
-  - Summary page followed by one repeated page per matching ticket.
-  - Loop markers are kept on their own paragraphs because that is the most reliable structure for DOCX page duplication.
-- **Starter PowerPoint - Ticket Deck**
-  - Executive summary cover slide followed by one repeated slide per active ticket.
-  - Uses whole-slide per-ticket markers so the renderer can duplicate the slide cleanly.
+Fresh state now includes one seeded starter for each supported built-in template type:
+
+- **HTML document** (`html-document`, `.html`)
+  - Operations brief with KPI cards and repeated ticket sections.
+- **HTML email** (`html-email`, `.html`)
+  - Update email that can generate a downloadable `.eml` draft in Auto mode.
+- **EML draft** (`eml-email`, `.eml`)
+  - Raw RFC822 email shell with tokenised headers and body.
+- **Plain text document** (`text-document`, `.txt`)
+  - Text-first operational summary with repeated ticket sections.
+- **CSV spreadsheet** (`csv-spreadsheet`, `.csv`)
+  - Export-friendly ticket register with looped ticket rows.
+- **XML payload** (`xml-generic`, `.xml`)
+  - Structured payload with repeated `<ticket>` fragments.
+- **Word document** (`word-document`, `.docx`)
+  - Summary page followed by one repeated page-style section per ticket.
+- **Excel workbook** (`excel-workbook`, `.xlsx`)
+  - Workbook with summary/helper sheets for spreadsheet consumers.
+- **PowerPoint presentation** (`powerpoint-presentation`, `.pptx`)
+  - Cover slide plus one repeated slide per ticket.
+
+## How starter seeding works
+
+- Supported template types come from the `ReportTemplateTypeRegistry`.
+- Each type can declare starter metadata plus an embedded resource name.
+- `IReportTemplateBootstrapper` seeds any missing starter templates when the API or worker starts.
+- If a starter template already exists for a type, it is left in place.
+- Additional supported types can be introduced by registering more `IReportTemplateTypeProvider` implementations.
 
 ## Example token patterns
 
@@ -21,9 +40,10 @@ Aggregate tokens:
 - `{{meta.company}}`
 - `{{meta.itsm_source}}`
 - `{{meta.as_of_date}}`
+- `{{meta.generated_at_utc}}`
 - `{{kpi.ticket_count}}`
-- `{{kpi.month_end.backlog_current}}`
-- `{{kpi.month_end.high_priority_backlog_current}}`
+- `{{table.kpis.html}}`
+- `{{output.tickets.csv_document}}`
 
 Per-ticket tokens:
 
@@ -40,12 +60,13 @@ Per-ticket tokens:
 Loop markers:
 
 - `{{start per ticket State!=Closed}}`
-- `{{start per ticket State!=Closed scope=page}}`
+- `{{start per ticket Priority=High scope=page}}`
+- `{{start per ticket State!=Closed scope=slide}}`
 - `{{end per ticket}}`
 
 ## Authoring notes
 
-- Keep Word and PowerPoint tokens as normal visible text instead of hiding them in comments or metadata.
-- In Word, put page-level loop markers on their own paragraphs.
-- In PowerPoint, put slide-level loop markers on the slide that should be duplicated.
-- For canonical fields such as **Company**, the updated UI now offers suggestion lists when the field type is known and the current ITSM source has data.
+- Text-like types (`.html`, `.txt`, `.csv`, `.xml`, `.eml`) can be edited inline from the React template workspace.
+- OOXML types (`.docx`, `.xlsx`, `.pptx`) should be uploaded as real files authored externally.
+- Keep Word and PowerPoint loop markers as visible text, ideally on their own paragraph or slide text box when duplicating whole pages/slides.
+- The **Reports** page now generates directly from the shared template library instead of relying on a separate set of hard-coded concrete report definitions.

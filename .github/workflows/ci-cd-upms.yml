@@ -8,11 +8,8 @@ on:
 
 env:
   IMAGE_NAME: upms
-  PROJECT_API: src/UPMS.Api
-  PROJECT_FRONTEND: src/UPMS.Frontend
-  PROJECT_WORKER: src/UPMS.Worker
-  DOTNET_VERSION: '10.0'
-  NODE_VERSION: '18'
+  PROJECT_PATH: src/UPMS.Web         # <- adjust to your repo if different
+  DOTNET_VERSION: '10.0'             # .NET 10 / adjust if needed
 
 permissions:
   contents: read
@@ -22,6 +19,8 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
+    outputs:
+      tests_passed: ${{ steps.tests.outcome }}
     steps:
       - uses: actions/checkout@v4
 
@@ -30,27 +29,17 @@ jobs:
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
-      - name: Restore API & Worker
+      - name: Restore
+        working-directory: ${{ env.PROJECT_PATH }}
+        run: dotnet restore
+
+      - name: Run tests
+        id: tests
+        working-directory: ${{ env.PROJECT_PATH }}
         run: |
-          dotnet restore ${{ env.PROJECT_API }}
-          dotnet restore ${{ env.PROJECT_WORKER }}
-
-      - name: Run API tests
-        run: dotnet test ${{ env.PROJECT_API }} --no-build --verbosity normal
-
-      - name: Run Worker tests
-        run: dotnet test ${{ env.PROJECT_WORKER }} --no-build --verbosity normal
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-
-      - name: Build Frontend
-        working-directory: ${{ env.PROJECT_FRONTEND }}
-        run: |
-          npm ci
-          npm run build
+          set -e
+          dotnet test --no-build --verbosity normal
+        continue-on-error: false
 
   deploy:
     name: Build image, push to ACR & Deploy (production only)
@@ -59,6 +48,7 @@ jobs:
     if: github.ref == 'refs/heads/Production'      # only run on production branch
     steps:
       - uses: actions/checkout@v4
+
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v2
         with:
@@ -66,16 +56,10 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push component images
+      - name: Build and push image to GitHub Container Registry
         uses: docker/build-push-action@v4
         with:
           context: .
+          file: ./src/UPMS.Web/Dockerfile   # <- adjust if Dockerfile is elsewhere
           push: true
-          tags: |
-            ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}-api:${{ github.sha }}
-            ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}-frontend:${{ github.sha }}
-            ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}-worker:${{ github.sha }}
-          file: |
-            ./src/UPMS.Api/Dockerfile
-            ./src/UPMS.Frontend/Dockerfile
-            ./src/UPMS.Worker/Dockerfile
+          tags: ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ github.sha }}

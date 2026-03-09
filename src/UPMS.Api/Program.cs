@@ -6,6 +6,7 @@ using UPMS.Api.Security;
 using UPMS.Data;
 using UPMS.Ingestion;
 using UPMS.Reporting;
+using UPMS.Reporting.Templates;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -69,6 +70,8 @@ using (var scope = app.Services.CreateScope())
     }
     var schemaBootstrapper = scope.ServiceProvider.GetRequiredService<UpmsSchemaBootstrapper>();
     await schemaBootstrapper.EnsureAsync();
+    var templateBootstrapper = scope.ServiceProvider.GetRequiredService<IReportTemplateBootstrapper>();
+    await templateBootstrapper.EnsureSeededAsync();
 }
 
 app.MapGet("/", () => Results.Redirect("/openapi/v1.json")).ExcludeFromDescription();
