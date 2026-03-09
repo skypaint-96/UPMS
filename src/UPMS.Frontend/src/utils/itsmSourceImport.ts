@@ -21,17 +21,47 @@ function coerceBoolean(value: unknown) {
   return text === 'true' || text === '1' || text === 'yes' || text === 'y' || text === 'required';
 }
 
+function readSourceFieldName(lookup: Map<string, unknown>) {
+  return String(
+    lookup.get('sourcefieldname')
+      ?? lookup.get('sourcefield')
+      ?? lookup.get('sourcecolumn')
+      ?? lookup.get('sourcecolumnname')
+      ?? lookup.get('csvcolumn')
+      ?? lookup.get('fieldname')
+      ?? lookup.get('rawfieldname')
+      ?? lookup.get('field')
+      ?? '',
+  ).trim();
+}
+
+function readCanonicalFieldName(lookup: Map<string, unknown>) {
+  return String(
+    lookup.get('canonicalfieldname')
+      ?? lookup.get('canonicalfield')
+      ?? lookup.get('canonicalname')
+      ?? lookup.get('displayfieldname')
+      ?? lookup.get('displayname')
+      ?? lookup.get('normalizedfieldname')
+      ?? lookup.get('canonical')
+      ?? lookup.get('targetfield')
+      ?? '',
+  ).trim();
+}
+
 function mapRow(row: Record<string, unknown>): ImportedItsmMapping | null {
   const lookup = new Map<string, unknown>();
   Object.entries(row).forEach(([key, value]) => lookup.set(normalizeKey(key), value));
 
-  const sourceFieldName = String(
-    lookup.get('sourcefieldname') ?? lookup.get('sourcefield') ?? lookup.get('fieldname') ?? lookup.get('field') ?? '',
-  ).trim();
-  const canonicalFieldName = String(
-    lookup.get('canonicalfieldname') ?? lookup.get('canonicalfield') ?? lookup.get('canonical') ?? lookup.get('targetfield') ?? '',
-  ).trim();
-  const isRequired = coerceBoolean(lookup.get('isrequired') ?? lookup.get('required') ?? false);
+  const sourceFieldName = readSourceFieldName(lookup);
+  const canonicalFieldName = readCanonicalFieldName(lookup);
+  const isRequired = coerceBoolean(
+    lookup.get('isrequired')
+      ?? lookup.get('required')
+      ?? lookup.get('requiredfield')
+      ?? lookup.get('mandatory')
+      ?? false,
+  );
 
   if (!sourceFieldName || !canonicalFieldName) {
     return null;
@@ -106,6 +136,15 @@ function parseCsv(text: string): ImportedItsmSourceDefinition {
   return { mappings };
 }
 
+function getObjectValue(objectValue: Record<string, unknown>, ...keys: string[]) {
+  for (const key of keys) {
+    if (key in objectValue) {
+      return objectValue[key];
+    }
+  }
+  return undefined;
+}
+
 function parseJson(text: string): ImportedItsmSourceDefinition {
   const value = JSON.parse(text) as unknown;
 
@@ -123,8 +162,10 @@ function parseJson(text: string): ImportedItsmSourceDefinition {
   }
 
   const objectValue = value as Record<string, unknown>;
-  const mappings = Array.isArray(objectValue.mappings)
-    ? objectValue.mappings.map((item) => mapRow((item ?? {}) as Record<string, unknown>)).filter((row): row is ImportedItsmMapping => row !== null)
+  const sourceObject = (getObjectValue(objectValue, 'source', 'Source') ?? {}) as Record<string, unknown>;
+  const rawMappings = getObjectValue(objectValue, 'mappings', 'Mappings', 'fieldMappings', 'FieldMappings', 'mappingRows', 'MappingRows');
+  const mappings = Array.isArray(rawMappings)
+    ? rawMappings.map((item) => mapRow((item ?? {}) as Record<string, unknown>)).filter((row): row is ImportedItsmMapping => row !== null)
     : [];
 
   if (mappings.length === 0) {
@@ -132,8 +173,16 @@ function parseJson(text: string): ImportedItsmSourceDefinition {
   }
 
   return {
-    name: String(objectValue.name ?? objectValue.sourceName ?? objectValue.itsmSource ?? '').trim() || undefined,
-    displayLabel: String(objectValue.displayLabel ?? objectValue.displayName ?? objectValue.label ?? '').trim() || undefined,
+    name: String(
+      getObjectValue(objectValue, 'name', 'Name', 'sourceName', 'SourceName', 'itsmSource', 'ItsmSource')
+        ?? getObjectValue(sourceObject, 'name', 'Name')
+        ?? '',
+    ).trim() || undefined,
+    displayLabel: String(
+      getObjectValue(objectValue, 'displayLabel', 'DisplayLabel', 'displayName', 'DisplayName', 'label', 'Label')
+        ?? getObjectValue(sourceObject, 'displayLabel', 'DisplayLabel', 'displayName', 'DisplayName', 'label', 'Label')
+        ?? '',
+    ).trim() || undefined,
     mappings,
   };
 }

@@ -9,9 +9,15 @@ COPY src/UPMS.Worker/UPMS.Worker.csproj src/UPMS.Worker/
 RUN dotnet restore src/UPMS.Worker/UPMS.Worker.csproj
 
 COPY . .
-RUN dotnet publish src/UPMS.Worker/UPMS.Worker.csproj -c Release -o /app/publish /p:UseAppHost=false
+RUN dotnet publish src/UPMS.Worker/UPMS.Worker.csproj -c Release -o /app/publish
 
-FROM mcr.microsoft.com/dotnet/runtime:10.0 AS final
+FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libgssapi-krb5-2 \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY --from=build /app/publish .
-ENTRYPOINT ["dotnet", "UPMS.Worker.dll"]
+RUN chmod +x /app/UPMS.Worker
+ENTRYPOINT ["./UPMS.Worker"]

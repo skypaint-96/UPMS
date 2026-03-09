@@ -126,3 +126,10 @@ This package includes two important fixes on top of the original modernization s
 2. **`eds-react-app` stylesheet vendoring for Vite builds**. The CGI EDS tarball contains `dist/style.css`, but its package `exports` map does not expose that subpath. The frontend now imports a local vendored copy at `src/styles/eds-react-app.css` so `vite build` succeeds without modifying the upstream package tarball.
 
 The more permanent upstream library fix would be to add `./dist/style.css` to the `exports` section of the CGI EDS package.
+
+## Notes from the latest patch
+
+- The worker container now starts via the published application host (`./UPMS.Worker`) rather than invoking `dotnet` directly at container entrypoint time.
+- Frontend data tables now explicitly disable the EDS `displaySelected` mode so rows are visible by default.
+- ITSM source import now accepts a broader set of legacy JSON and CSV field names, and canonical aliases such as `ticket_key`, `company`, `title`, and `status` are normalized to the current registered canonical fields.
+- Sample ITSM source definitions and matching snapshot CSV files are available under `Docs/Modernisation/SampleItsmSources/`.

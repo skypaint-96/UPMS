@@ -1,0 +1,3 @@
+number,company,short_description,description,priority,incident_state,assigned_to,assignment_group,category,opened_at,updated_on
+INC0001001,Acme Corp,Unable to connect to VPN,Remote user cannot establish VPN session,High,In Progress,Alice Jones,Service Desk,Access,2026-03-01 08:15:00,2026-03-09 09:45:00
+INC0001002,Globex,Email delivery delay,Outbound email is delayed for several users,Medium,New,Bob Smith,Messaging,Email,2026-03-03 10:00:00,2026-03-09 10:10:00

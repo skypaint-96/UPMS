@@ -24,8 +24,10 @@ export function UpmsDataTable({
       }))}
       rows={rows}
       showHeaderCheckbox={false}
+      displaySelected={false}
       tableIndex={0}
-      showPagination={true}
+      showPagination={rows.length > 10}
+      totalPageCount={rows.length}
       onSelectedItemsChange={() => undefined}
       dataTestId={dataTestId}
     />

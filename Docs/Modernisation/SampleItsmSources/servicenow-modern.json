@@ -1,0 +1,17 @@
+{
+  "name": "servicenow-client-a",
+  "displayLabel": "ServiceNow - Client A",
+  "mappings": [
+    { "sourceFieldName": "number", "canonicalFieldName": "Number", "isRequired": true },
+    { "sourceFieldName": "company", "canonicalFieldName": "Company", "isRequired": true },
+    { "sourceFieldName": "short_description", "canonicalFieldName": "Short Description", "isRequired": false },
+    { "sourceFieldName": "description", "canonicalFieldName": "Description", "isRequired": false },
+    { "sourceFieldName": "priority", "canonicalFieldName": "Priority", "isRequired": false },
+    { "sourceFieldName": "incident_state", "canonicalFieldName": "State", "isRequired": false },
+    { "sourceFieldName": "assigned_to", "canonicalFieldName": "Assigned To", "isRequired": false },
+    { "sourceFieldName": "assignment_group", "canonicalFieldName": "Assignment Group", "isRequired": false },
+    { "sourceFieldName": "category", "canonicalFieldName": "Category", "isRequired": false },
+    { "sourceFieldName": "opened_at", "canonicalFieldName": "Opened At", "isRequired": false },
+    { "sourceFieldName": "updated_on", "canonicalFieldName": "Updated On", "isRequired": false }
+  ]
+}
