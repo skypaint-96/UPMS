@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk.Worker">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\UPMS.Data\UPMS.Data.csproj" />
+    <ProjectReference Include="..\UPMS.Ingestion\UPMS.Ingestion.csproj" />
+    <ProjectReference Include="..\UPMS.Reporting\UPMS.Reporting.csproj" />
+  </ItemGroup>
+
+</Project>

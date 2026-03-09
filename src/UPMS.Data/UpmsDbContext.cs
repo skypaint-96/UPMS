@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using UPMS.Data.ReadModels;
+using UPMS.Data.Jobs;
 
 /// <summary>
 /// EF Core database context for UPMS. Covers all persisted entities plus
@@ -21,6 +22,7 @@ public class UpmsDbContext : DbContext
     public DbSet<ItsmSource> ItsmSources => Set<ItsmSource>();
     public DbSet<ItsmFieldMapping> ItsmFieldMappings => Set<ItsmFieldMapping>();
     public DbSet<CanonicalFieldDefinition> CanonicalFieldDefinitions => Set<CanonicalFieldDefinition>();
+    public DbSet<BackgroundJob> BackgroundJobs => Set<BackgroundJob>();
 
     // ── Keyless result sets (stored-procedure reads) ───────────────────────
 
@@ -192,6 +194,77 @@ public class UpmsDbContext : DbContext
                 .HasColumnName("is_required")
                 .HasColumnType("boolean")
                 .HasDefaultValue(false);
+        });
+
+        // ── background_job ───────────────────────────────────────────────────
+        modelBuilder.Entity<BackgroundJob>(e =>
+        {
+            e.ToTable("background_job");
+            e.HasKey(x => x.Id);
+
+            e.Property(x => x.Id)
+                .HasColumnName("id")
+                .HasColumnType("uuid")
+                .ValueGeneratedNever();
+            e.Property(x => x.JobType)
+                .HasColumnName("job_type")
+                .HasColumnType("varchar(100)")
+                .IsRequired();
+            e.Property(x => x.Status)
+                .HasColumnName("status")
+                .HasColumnType("varchar(50)")
+                .IsRequired();
+            e.Property(x => x.PayloadJson)
+                .HasColumnName("payload_json")
+                .HasColumnType("text")
+                .IsRequired();
+            e.Property(x => x.ResultJson)
+                .HasColumnName("result_json")
+                .HasColumnType("text")
+                .IsRequired(false);
+            e.Property(x => x.RequestedBy)
+                .HasColumnName("requested_by")
+                .HasColumnType("varchar(255)")
+                .IsRequired(false);
+            e.Property(x => x.CreatedAt)
+                .HasColumnName("created_at")
+                .HasColumnType("timestamptz")
+                .IsRequired();
+            e.Property(x => x.StartedAt)
+                .HasColumnName("started_at")
+                .HasColumnType("timestamptz")
+                .IsRequired(false);
+            e.Property(x => x.CompletedAt)
+                .HasColumnName("completed_at")
+                .HasColumnType("timestamptz")
+                .IsRequired(false);
+            e.Property(x => x.ErrorMessage)
+                .HasColumnName("error_message")
+                .HasColumnType("text")
+                .IsRequired(false);
+            e.Property(x => x.LeaseOwner)
+                .HasColumnName("lease_owner")
+                .HasColumnType("varchar(255)")
+                .IsRequired(false);
+            e.Property(x => x.LeaseExpiresAt)
+                .HasColumnName("lease_expires_at")
+                .HasColumnType("timestamptz")
+                .IsRequired(false);
+            e.Property(x => x.OutputFilePath)
+                .HasColumnName("output_file_path")
+                .HasColumnType("text")
+                .IsRequired(false);
+            e.Property(x => x.OutputFileName)
+                .HasColumnName("output_file_name")
+                .HasColumnType("varchar(512)")
+                .IsRequired(false);
+            e.Property(x => x.OutputContentType)
+                .HasColumnName("output_content_type")
+                .HasColumnType("varchar(255)")
+                .IsRequired(false);
+
+            e.HasIndex(x => new { x.Status, x.CreatedAt });
+            e.HasIndex(x => new { x.JobType, x.Status, x.CreatedAt });
         });
 
         // ── canonical_field_definition ─────────────────────────────────────
