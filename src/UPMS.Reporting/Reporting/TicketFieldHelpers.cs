@@ -2,6 +2,7 @@ namespace UPMS.Reporting;
 
 using System.Globalization;
 using UPMS.Data;
+using UPMS.Ingestion;
 
 public static class TicketFieldHelpers
 {

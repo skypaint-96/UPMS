@@ -422,3 +422,7 @@ src/UPMS.Web/App_Data/
 # React frontend
 src/UPMS.Frontend/node_modules/
 src/UPMS.Frontend/dist/
+
+# Keep the UPMS source-code Artifacts namespace tracked.
+!src/UPMS.Data/Artifacts/
+!src/UPMS.Data/Artifacts/**

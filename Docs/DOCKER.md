@@ -56,3 +56,7 @@ The override file switches the API to `Auth:Mode=None` and keeps the database pa
 
 - `node:20-alpine` already ships a `yarn` executable path. The frontend Dockerfile therefore uses `npm install -g yarn@1.22.19 --force` so the required Yarn version replaces the pre-existing shim instead of failing with `EEXIST`.
 - If Compose reports `Network upms_default Resource is still in use`, clean up orphaned containers first with `docker compose down --remove-orphans -v`. If needed, inspect remaining attachments with `docker ps -a --filter network=upms_default`.
+
+### Frontend build note
+
+The CGI EDS tarball includes `dist/style.css`, but the package `exports` map does not expose that subpath for bundlers such as Vite. To keep Docker builds reproducible without patching the upstream tarball, the UPMS frontend imports a local vendored stylesheet copy from `src/UPMS.Frontend/src/styles/eds-react-app.css`.

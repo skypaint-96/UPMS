@@ -23,7 +23,7 @@ import { SourcesPage } from './pages/SourcesPage';
 import { TicketDetailPage } from './pages/TicketDetailPage';
 import { TicketsPage } from './pages/TicketsPage';
 import { UploadPage } from './pages/UploadPage';
-import 'eds-react-app/dist/style.css';
+import './styles/eds-react-app.css';
 
 function AppShell() {
   const navigate = useNavigate();

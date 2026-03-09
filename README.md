@@ -110,3 +110,12 @@ The container environment used to prepare this package did not include the `.NET
 
 - The frontend Dockerfile now installs `yarn@1.22.19` with `--force` because the `node:20-alpine` base image already contains a `yarn` shim, which otherwise causes `EEXIST` during image build.
 - If `docker compose down -v` reports that `upms_default` is still in use, re-run with `--remove-orphans` and remove any stale containers still attached to that network before retrying.
+
+## Known packaging fixes applied
+
+This package includes two important fixes on top of the original modernization scaffold:
+
+1. **`UPMS.Data/Artifacts` is explicitly un-ignored in `.gitignore`** so the source folder is preserved on Windows case-insensitive working trees.
+2. **`eds-react-app` stylesheet vendoring for Vite builds**. The CGI EDS tarball contains `dist/style.css`, but its package `exports` map does not expose that subpath. The frontend now imports a local vendored copy at `src/styles/eds-react-app.css` so `vite build` succeeds without modifying the upstream package tarball.
+
+The more permanent upstream library fix would be to add `./dist/style.css` to the `exports` section of the CGI EDS package.
