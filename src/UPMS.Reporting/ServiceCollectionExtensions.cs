@@ -3,10 +3,6 @@ namespace UPMS.Reporting;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using UPMS.Reporting.Plugins;
-using UPMS.Reporting.Plugins.Documents;
-using UPMS.Reporting.Plugins.Email;
-using UPMS.Reporting.Plugins.Examples;
-using UPMS.Reporting.Plugins.PowerPoint;
 using UPMS.Reporting.Plugins.Templates;
 using UPMS.Reporting.Templates;
 
@@ -17,7 +13,9 @@ public static class ServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(configuration);
 
-        services.AddSingleton<IReportTemplateStore>(_ =>
+        services.AddSingleton<IReportTemplateTypeProvider, DefaultReportTemplateTypeProvider>();
+        services.AddSingleton<ReportTemplateTypeRegistry>();
+        services.AddSingleton<IReportTemplateStore>(sp =>
         {
             var rootPath = configuration["Artifacts:RootPath"]
                 ?? Environment.GetEnvironmentVariable("UPMS_ARTIFACTS_ROOT")
@@ -26,17 +24,11 @@ public static class ServiceCollectionExtensions
             var storagePath = configuration["ReportTemplates:StoragePath"]
                 ?? Path.Combine(rootPath, "report-templates");
 
-            return new FileSystemReportTemplateStore(storagePath);
+            var typeRegistry = sp.GetRequiredService<ReportTemplateTypeRegistry>();
+            return new FileSystemReportTemplateStore(storagePath, typeRegistry);
         });
+        services.AddSingleton<IReportTemplateBootstrapper, ReportTemplateBootstrapper>();
 
-        services.AddScoped<IReportPlugin, StubReportPlugin>();
-        services.AddScoped<IReportPlugin, PowerPointReportPlugin>();
-        services.AddScoped<IReportPlugin, EmailNotificationPlugin>();
-        services.AddScoped<IReportPlugin, StatusBreakdownReportPlugin>();
-        services.AddScoped<IReportPlugin, TicketCsvExportReportPlugin>();
-        services.AddScoped<IReportPlugin, FieldDeltaReportPlugin>();
-        services.AddScoped<IReportPlugin, MonthEndLifecycleReportPlugin>();
-        services.AddScoped<IReportPlugin, TicketDocumentExportPlugin>();
         services.AddScoped<IReportPlugin, TokenisedTemplateReportPlugin>();
         services.AddScoped<PluginRegistry>();
         services.AddScoped<IReportExecutionService, ReportExecutionService>();

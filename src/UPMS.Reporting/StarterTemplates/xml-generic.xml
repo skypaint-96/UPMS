@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<upmsReport company="{{meta.company}}" itsmSource="{{meta.itsm_source}}" asOf="{{meta.as_of_date}}">
+  <summary ticketCount="{{kpi.ticket_count}}" backlog="{{kpi.month_end.backlog_current}}" highPriorityBacklog="{{kpi.month_end.high_priority_backlog_current}}" />
+  <tickets>
+    {{start per ticket State!=Closed}}
+    <ticket number="{{ticket.Number}}" state="{{ticket.State}}" priority="{{ticket.Priority}}">
+      <shortDescription>{{ticket.Short_Description}}</shortDescription>
+      <assignedTo>{{ticket.Assigned_To}}</assignedTo>
+      <assignmentGroup>{{ticket.Assignment_Group}}</assignmentGroup>
+    </ticket>
+    {{end per ticket}}
+  </tickets>
+</upmsReport>

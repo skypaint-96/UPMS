@@ -1,49 +1,90 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
-import { Box, Button, Grid, Link as MuiLink, TextField, Typography } from '@mui/material';
+import { Alert, Box, Button, Chip, Grid, Link as MuiLink, Paper, Stack, TextField, Typography } from '@mui/material';
 import { Link, useNavigate } from 'react-router-dom';
 import { upmsApi } from '../api/client';
-import { ReportPlugin } from '../api/types';
+import { ItsmSourceSummary, ReportParameter, ReportPlugin, ReportTemplate } from '../api/types';
 import { ErrorAlert } from '../components/ErrorAlert';
 import { LoadingPanel } from '../components/LoadingPanel';
 import { PageSection } from '../components/PageSection';
 
+const kindOrder = ['Document', 'Spreadsheet', 'Presentation', 'Email', 'Generic'] as const;
+
+function compareTemplates(left: ReportTemplate, right: ReportTemplate) {
+  return new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime();
+}
+
 export function ReportsPage() {
   const navigate = useNavigate();
-  const [plugins, setPlugins] = useState<ReportPlugin[]>([]);
-  const [selectedPluginId, setSelectedPluginId] = useState('');
+  const [runner, setRunner] = useState<ReportPlugin | null>(null);
+  const [templates, setTemplates] = useState<ReportTemplate[]>([]);
+  const [sources, setSources] = useState<ItsmSourceSummary[]>([]);
+  const [selectedTemplateId, setSelectedTemplateId] = useState('');
   const [parameters, setParameters] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>();
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    upmsApi
-      .getReportPlugins()
-      .then((loaded) => {
-        setPlugins(loaded);
-        if (loaded.length > 0) {
-          setSelectedPluginId(loaded[0].pluginId);
+    Promise.all([upmsApi.getReportPlugins(), upmsApi.getReportTemplates(), upmsApi.getItsmSources()])
+      .then(([loadedPlugins, loadedTemplates, loadedSources]) => {
+        const selectedRunner = loadedPlugins.find((plugin) => plugin.pluginId === 'tokenised-template-report') ?? loadedPlugins[0] ?? null;
+        const sortedTemplates = loadedTemplates.slice().sort(compareTemplates);
+        setRunner(selectedRunner);
+        setTemplates(sortedTemplates);
+        setSources(loadedSources);
+        if (sortedTemplates.length > 0) {
+          setSelectedTemplateId(sortedTemplates[0].id);
+        }
+        if (loadedSources.length === 1) {
+          setParameters((current) => ({ ...current, itsm_source: current.itsm_source ?? loadedSources[0].name }));
         }
       })
-      .catch((err) => setError(err.message ?? 'Failed to load report plugins.'))
+      .catch((err: any) => setError(err.message ?? 'Failed to load report templates.'))
       .finally(() => setLoading(false));
   }, []);
 
-  const selectedPlugin = useMemo(
-    () => plugins.find((plugin) => plugin.pluginId === selectedPluginId) ?? null,
-    [plugins, selectedPluginId],
+  const selectedTemplate = useMemo(
+    () => templates.find((template) => template.id === selectedTemplateId) ?? null,
+    [templates, selectedTemplateId],
   );
+
+  const starterCount = useMemo(() => templates.filter((template) => template.isStarterTemplate).length, [templates]);
+
+  const runnerParameters = useMemo(
+    () => (runner?.parameters ?? []).filter((parameter) => parameter.key !== 'template_id'),
+    [runner],
+  );
+
+  useEffect(() => {
+    if (!selectedTemplate) {
+      return;
+    }
+
+    setParameters((current) => {
+      const next = { ...current, template_id: selectedTemplate.id };
+      if (!next.output_mode) {
+        next.output_mode = selectedTemplate.kind === 'Email' ? 'Auto' : selectedTemplate.extension === '.html' ? 'Preview HTML' : 'Auto';
+      }
+      return next;
+    });
+  }, [selectedTemplate]);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (!selectedPluginId) {
+    if (!runner || !selectedTemplate) {
       return;
     }
 
     setSubmitting(true);
     setError(undefined);
     try {
-      const job = await upmsApi.queueReport({ pluginId: selectedPluginId, parameters });
+      const job = await upmsApi.queueReport({
+        pluginId: runner.pluginId,
+        parameters: {
+          ...parameters,
+          template_id: selectedTemplate.id,
+        },
+      });
       navigate(`/jobs?jobId=${encodeURIComponent(job.id)}`);
     } catch (err: any) {
       setError(err.message ?? 'Failed to queue report job.');
@@ -52,77 +93,214 @@ export function ReportsPage() {
     }
   };
 
-  if (loading) return <LoadingPanel label="Loading report plugins" />;
+  const renderParameterField = (parameter: ReportParameter) => {
+    if (parameter.type === 'ItsmSource') {
+      return (
+        <TextField
+          select
+          SelectProps={{ native: true }}
+          InputLabelProps={{ shrink: true }}
+          label={parameter.displayName}
+          value={parameters[parameter.key] ?? ''}
+          onChange={(event) => setParameters((current) => ({ ...current, [parameter.key]: event.target.value }))}
+          required={parameter.isRequired}
+          fullWidth
+          helperText={parameter.description ?? 'Choose the ITSM source to query.'}
+        >
+          <option value="">Select a source</option>
+          {sources.map((source) => (
+            <option key={source.name} value={source.name}>
+              {source.displayLabel}
+            </option>
+          ))}
+        </TextField>
+      );
+    }
+
+    if (parameter.type === 'MultiSelect') {
+      return (
+        <TextField
+          label={parameter.displayName}
+          value={parameters[parameter.key] ?? ''}
+          onChange={(event) => setParameters((current) => ({ ...current, [parameter.key]: event.target.value }))}
+          placeholder="Comma separate values"
+          required={parameter.isRequired}
+          fullWidth
+          multiline
+          minRows={3}
+          helperText={parameter.description ?? `Suggested values: ${parameter.options.join(', ')}`}
+        />
+      );
+    }
+
+    if (parameter.options && parameter.options.length > 0) {
+      return (
+        <TextField
+          select
+          SelectProps={{ native: true }}
+          InputLabelProps={{ shrink: true }}
+          label={parameter.displayName}
+          value={parameters[parameter.key] ?? ''}
+          onChange={(event) => setParameters((current) => ({ ...current, [parameter.key]: event.target.value }))}
+          required={parameter.isRequired}
+          fullWidth
+          helperText={parameter.description ?? parameter.type}
+        >
+          <option value="">Select an option</option>
+          {parameter.options.map((option) => (
+            <option key={option} value={option}>
+              {option}
+            </option>
+          ))}
+        </TextField>
+      );
+    }
+
+    if (parameter.type === 'TextArea') {
+      return (
+        <TextField
+          label={parameter.displayName}
+          value={parameters[parameter.key] ?? ''}
+          onChange={(event) => setParameters((current) => ({ ...current, [parameter.key]: event.target.value }))}
+          placeholder={parameter.placeholder ?? undefined}
+          required={parameter.isRequired}
+          fullWidth
+          multiline
+          minRows={4}
+          helperText={parameter.description ?? parameter.type}
+        />
+      );
+    }
+
+    if (parameter.type === 'Date') {
+      return (
+        <TextField
+          label={parameter.displayName}
+          type="date"
+          InputLabelProps={{ shrink: true }}
+          value={parameters[parameter.key] ?? ''}
+          onChange={(event) => setParameters((current) => ({ ...current, [parameter.key]: event.target.value }))}
+          required={parameter.isRequired}
+          fullWidth
+          helperText={parameter.description ?? parameter.type}
+        />
+      );
+    }
+
+    return (
+      <TextField
+        label={parameter.displayName}
+        value={parameters[parameter.key] ?? ''}
+        onChange={(event) => setParameters((current) => ({ ...current, [parameter.key]: event.target.value }))}
+        placeholder={parameter.placeholder ?? undefined}
+        required={parameter.isRequired}
+        fullWidth
+        helperText={parameter.description ?? parameter.type}
+      />
+    );
+  };
+
+  if (loading) return <LoadingPanel label="Loading report templates" />;
 
   return (
     <>
       <ErrorAlert message={error} onClose={() => setError(undefined)} />
-      <PageSection title="Reports" description="Run user-facing reports through the worker and collect the output from the jobs page.">
-        <Typography color="text.secondary" sx={{ mb: 2 }}>
-          Reusable template upload is available from the power user menu in the top-right settings drawer.
-          {' '}
+      <PageSection title="Reports" description="Generate reports from reusable templates. The worker fills the selected template with live ticket data and stores the output on the jobs page.">
+        <Alert severity="info" sx={{ mb: 3 }}>
+          Fresh installs include starter templates for every supported type. Create and curate the library from the{' '}
           <MuiLink component={Link} to="/report-templates" underline="hover">
-            Open report templates.
+            report templates workspace
           </MuiLink>
-        </Typography>
-        <Box component="form" onSubmit={submit}>
-          <TextField
-            select
-            SelectProps={{ native: true }}
-            InputLabelProps={{ shrink: true }}
-            label="Report plugin"
-            value={selectedPluginId}
-            onChange={(e) => setSelectedPluginId(e.target.value)}
-            fullWidth
-            sx={{ mb: 2 }}
-          >
-            {plugins.map((plugin) => (
-              <option key={plugin.pluginId} value={plugin.pluginId}>
-                {plugin.displayName}
-              </option>
-            ))}
-          </TextField>
-          <Typography sx={{ mb: 2 }}>{selectedPlugin?.description}</Typography>
-          <Grid container spacing={2} sx={{ mb: 2 }}>
-            {selectedPlugin?.parameters.map((parameter) => (
-              <Grid item xs={12} md={6} key={parameter.key}>
-                {parameter.options && parameter.options.length > 0 ? (
-                  <TextField
-                    select
-                    SelectProps={{ native: true }}
-                    InputLabelProps={{ shrink: true }}
-                    label={parameter.displayName}
-                    value={parameters[parameter.key] ?? ''}
-                    onChange={(event) => setParameters((current) => ({ ...current, [parameter.key]: event.target.value }))}
-                    required={parameter.isRequired}
-                    fullWidth
-                    helperText={parameter.description ?? parameter.type}
-                  >
-                    <option value="">Select an option</option>
-                    {parameter.options.map((option) => (
-                      <option key={option} value={option}>
-                        {option}
-                      </option>
-                    ))}
-                  </TextField>
-                ) : (
-                  <TextField
-                    label={parameter.displayName}
-                    value={parameters[parameter.key] ?? ''}
-                    onChange={(event) => setParameters((current) => ({ ...current, [parameter.key]: event.target.value }))}
-                    placeholder={parameter.placeholder ?? undefined}
-                    required={parameter.isRequired}
-                    fullWidth
-                    helperText={parameter.description ?? parameter.type}
-                  />
-                )}
-              </Grid>
-            ))}
+          .
+        </Alert>
+
+        {!runner ? (
+          <Alert severity="error">The template report runner is not registered.</Alert>
+        ) : templates.length === 0 ? (
+          <Alert severity="warning">
+            No templates are available yet. Open the report templates workspace to upload one or review the seeded starter pack.
+          </Alert>
+        ) : (
+          <Grid container spacing={3}>
+            <Grid item xs={12} lg={5}>
+              <TextField
+                select
+                SelectProps={{ native: true }}
+                InputLabelProps={{ shrink: true }}
+                label="Report template"
+                value={selectedTemplateId}
+                onChange={(event) => setSelectedTemplateId(event.target.value)}
+                fullWidth
+                sx={{ mb: 2 }}
+              >
+                <option value="">Select a template</option>
+                {kindOrder.map((kind) => {
+                  const rows = templates.filter((template) => template.kind === kind);
+                  if (rows.length === 0) {
+                    return null;
+                  }
+
+                  return (
+                    <optgroup key={kind} label={kind}>
+                      {rows.map((template) => (
+                        <option key={template.id} value={template.id}>
+                          {template.displayName}
+                          {template.isStarterTemplate ? ' — starter' : ''}
+                        </option>
+                      ))}
+                    </optgroup>
+                  );
+                })}
+              </TextField>
+
+              {selectedTemplate ? (
+                <Paper variant="outlined" sx={{ p: 2 }}>
+                  <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" sx={{ mb: 2 }}>
+                    <Chip label={selectedTemplate.kind} size="small" />
+                    <Chip label={selectedTemplate.typeDisplayName ?? selectedTemplate.extension} size="small" />
+                    <Chip label={selectedTemplate.extension} size="small" variant="outlined" />
+                    {selectedTemplate.isStarterTemplate ? <Chip label="Starter" size="small" color="success" /> : null}
+                  </Stack>
+                  <Typography variant="h6" sx={{ mb: 1 }}>
+                    {selectedTemplate.displayName}
+                  </Typography>
+                  <Typography color="text.secondary" sx={{ mb: 2 }}>
+                    {selectedTemplate.description ?? 'No description has been provided for this template yet.'}
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    Updated {new Date(selectedTemplate.updatedAt).toLocaleString()} by {selectedTemplate.updatedBy ?? selectedTemplate.uploadedBy}
+                  </Typography>
+                </Paper>
+              ) : null}
+
+              <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" sx={{ mt: 2 }}>
+                <Chip label={`${templates.length} templates`} variant="outlined" />
+                <Chip label={`${starterCount} starters`} variant="outlined" />
+              </Stack>
+            </Grid>
+
+            <Grid item xs={12} lg={7}>
+              <Box component="form" onSubmit={submit}>
+                <Typography variant="h6" sx={{ mb: 1 }}>
+                  Generation inputs
+                </Typography>
+                <Typography color="text.secondary" sx={{ mb: 2 }}>
+                  {runner.description}
+                </Typography>
+                <Grid container spacing={2} sx={{ mb: 2 }}>
+                  {runnerParameters.map((parameter) => (
+                    <Grid item xs={12} md={parameter.type === 'TextArea' || parameter.type === 'MultiSelect' ? 12 : 6} key={parameter.key}>
+                      {renderParameterField(parameter)}
+                    </Grid>
+                  ))}
+                </Grid>
+                <Button type="submit" variant="contained" disabled={submitting || !selectedTemplateId}>
+                  Queue report job
+                </Button>
+              </Box>
+            </Grid>
           </Grid>
-          <Button type="submit" variant="contained" disabled={submitting || !selectedPluginId}>
-            Queue report job
-          </Button>
-        </Box>
+        )}
       </PageSection>
     </>
   );

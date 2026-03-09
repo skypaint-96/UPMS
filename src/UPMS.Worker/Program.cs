@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using UPMS.Data;
 using UPMS.Ingestion;
 using UPMS.Reporting;
+using UPMS.Reporting.Templates;
 using UPMS.Worker;
 
 var builder = Host.CreateApplicationBuilder(args);
@@ -23,6 +24,8 @@ using (var scope = host.Services.CreateScope())
     }
     var schemaBootstrapper = scope.ServiceProvider.GetRequiredService<UpmsSchemaBootstrapper>();
     await schemaBootstrapper.EnsureAsync();
+    var templateBootstrapper = scope.ServiceProvider.GetRequiredService<IReportTemplateBootstrapper>();
+    await templateBootstrapper.EnsureSeededAsync();
 }
 
 await host.RunAsync();

@@ -74,6 +74,23 @@ export type ReportPlugin = {
 
 export type ReportTemplateKind = 'Email' | 'Document' | 'Spreadsheet' | 'Presentation' | 'Generic';
 
+export type ReportTemplateType = {
+  typeId: string;
+  displayName: string;
+  kind: ReportTemplateKind;
+  primaryExtension: string;
+  extensions: string[];
+  contentType: string;
+  supportsInlineEdit: boolean;
+  isTextLike: boolean;
+  isOoxmlPackage: boolean;
+  description?: string | null;
+  authoringGuidance?: string | null;
+  starterTemplateDisplayName?: string | null;
+  starterTemplateDescription?: string | null;
+  defaultSubjectTemplate?: string | null;
+};
+
 export type ReportTemplate = {
   id: string;
   displayName: string;
@@ -85,6 +102,17 @@ export type ReportTemplate = {
   contentType: string;
   uploadedAt: string;
   uploadedBy: string;
+  updatedAt: string;
+  updatedBy?: string | null;
+  templateTypeId?: string | null;
+  typeDisplayName?: string | null;
+  supportsInlineEdit: boolean;
+  isStarterTemplate: boolean;
+};
+
+export type ReportTemplateDetail = ReportTemplate & {
+  authoringGuidance?: string | null;
+  editableTextContent?: string | null;
 };
 
 export type BackgroundJob = {

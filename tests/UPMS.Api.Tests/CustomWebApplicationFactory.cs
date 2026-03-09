@@ -10,6 +10,8 @@ using UPMS.Data;
 
 public sealed class CustomWebApplicationFactory : WebApplicationFactory<Program>
 {
+    private readonly string _artifactsRoot = Path.Combine(Path.GetTempPath(), $"upms-api-tests-artifacts-{Guid.NewGuid():N}");
+
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment("Development");
@@ -19,7 +21,7 @@ public sealed class CustomWebApplicationFactory : WebApplicationFactory<Program>
             {
                 ["Auth:Mode"] = "None",
                 ["ConnectionStrings:DefaultConnection"] = "Host=localhost;Database=ignored;Username=ignored;Password=ignored",
-                ["Artifacts:RootPath"] = Path.Combine(Path.GetTempPath(), "upms-api-tests-artifacts")
+                ["Artifacts:RootPath"] = _artifactsRoot
             };
 
             config.AddInMemoryCollection(settings);
@@ -36,6 +38,23 @@ public sealed class CustomWebApplicationFactory : WebApplicationFactory<Program>
             db.Database.EnsureCreated();
             SeedAsync(db).GetAwaiter().GetResult();
         });
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        base.Dispose(disposing);
+
+        if (disposing && Directory.Exists(_artifactsRoot))
+        {
+            try
+            {
+                Directory.Delete(_artifactsRoot, recursive: true);
+            }
+            catch
+            {
+                // Best-effort cleanup for temporary API test artifacts.
+            }
+        }
     }
 
     private static async Task SeedAsync(UpmsDbContext db)

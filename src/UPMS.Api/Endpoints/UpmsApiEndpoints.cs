@@ -1,6 +1,7 @@
 namespace UPMS.Api.Endpoints;
 
 using System.Security.Claims;
+using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -143,54 +144,241 @@ public static class UpmsApiEndpoints
         .WithTags("ITSM Sources")
         .WithName("DeleteItsmSource");
 
-        app.MapGet("/report-templates", (IReportTemplateStore templateStore) =>
+        app.MapGet("/report-template-types", (ReportTemplateTypeRegistry typeRegistry) =>
+        {
+            var rows = typeRegistry.GetAll();
+            return Results.Ok(rows.Select(MapTemplateType));
+        })
+        .WithTags("Report Templates")
+        .WithName("GetReportTemplateTypes");
+
+        app.MapGet("/report-templates", (IReportTemplateStore templateStore, ReportTemplateTypeRegistry typeRegistry) =>
         {
             var rows = templateStore.GetAllTemplates();
             return Results.Ok(rows
-                .OrderByDescending(template => template.UploadedAt)
-                .Select(MapTemplate));
+                .OrderByDescending(template => template.UpdatedAt ?? template.UploadedAt)
+                .ThenBy(template => template.DisplayName, StringComparer.OrdinalIgnoreCase)
+                .Select(template => MapTemplate(template, typeRegistry)));
         })
         .WithTags("Report Templates")
         .WithName("GetReportTemplates");
 
+        app.MapGet("/report-templates/{templateId}", async (
+            string templateId,
+            IReportTemplateStore templateStore,
+            ReportTemplateTypeRegistry typeRegistry,
+            CancellationToken ct) =>
+        {
+            var template = await templateStore.GetTemplateContentAsync(templateId, ct);
+            return template is null
+                ? Results.NotFound()
+                : Results.Ok(MapTemplateDetail(template, typeRegistry));
+        })
+        .WithTags("Report Templates")
+        .WithName("GetReportTemplateById");
+
+        app.MapGet("/report-templates/{templateId}/download", async (
+            string templateId,
+            IReportTemplateStore templateStore,
+            CancellationToken ct) =>
+        {
+            var template = await templateStore.GetTemplateContentAsync(templateId, ct);
+            return template is null
+                ? Results.NotFound()
+                : Results.File(template.FileContent, template.Metadata.ContentType, template.Metadata.FileName);
+        })
+        .WithTags("Report Templates")
+        .WithName("DownloadReportTemplate");
+
         app.MapPost("/report-templates", async (
             HttpRequest request,
             IReportTemplateStore templateStore,
+            ReportTemplateTypeRegistry typeRegistry,
             ClaimsPrincipal user,
             CancellationToken ct) =>
         {
             var form = await request.ReadFormAsync(ct);
             var file = form.Files.GetFile("file");
             var displayName = form["displayName"].ToString();
+            var templateTypeId = form["templateTypeId"].ToString();
             var kindRaw = form["kind"].ToString();
             var description = form["description"].ToString();
             var subjectTemplate = form["subjectTemplate"].ToString();
-
-            if (file is null || file.Length == 0)
-                return Results.BadRequest(new { error = "A template file is required." });
+            var textContent = form["textContent"].ToString();
 
             if (string.IsNullOrWhiteSpace(displayName))
                 return Results.BadRequest(new { error = "displayName is required." });
 
-            if (!Enum.TryParse<ReportTemplateKind>(kindRaw, true, out var kind))
-                return Results.BadRequest(new { error = $"kind must be one of: {string.Join(", ", Enum.GetNames<ReportTemplateKind>())}." });
+            var selectedType = string.IsNullOrWhiteSpace(templateTypeId)
+                ? null
+                : typeRegistry.GetByTypeId(templateTypeId.Trim());
 
-            await using var stream = file.OpenReadStream();
-            var metadata = await templateStore.SaveAsync(new ReportTemplateUploadRequest
+            if (!string.IsNullOrWhiteSpace(templateTypeId) && selectedType is null)
+                return Results.BadRequest(new { error = $"Unknown templateTypeId '{templateTypeId}'." });
+
+            ReportTemplateKind kind;
+            if (selectedType is not null)
             {
-                DisplayName = displayName.Trim(),
-                Kind = kind,
-                Description = string.IsNullOrWhiteSpace(description) ? null : description.Trim(),
-                SubjectTemplate = string.IsNullOrWhiteSpace(subjectTemplate) ? null : subjectTemplate.Trim(),
-                OriginalFileName = file.FileName,
-                UploadedBy = ResolveRequestedBy(user) ?? "anonymous"
-            }, stream, ct);
+                kind = selectedType.Kind;
+            }
+            else if (!Enum.TryParse<ReportTemplateKind>(kindRaw, true, out kind))
+            {
+                return Results.BadRequest(new { error = $"kind must be one of: {string.Join(", ", Enum.GetNames<ReportTemplateKind>())}, or provide templateTypeId." });
+            }
 
-            return Results.Created($"/api/v1/report-templates/{metadata.Id}", MapTemplate(metadata));
+            Stream? contentStream = null;
+            string? originalFileName = null;
+
+            try
+            {
+                if (file is not null && file.Length > 0)
+                {
+                    contentStream = file.OpenReadStream();
+                    originalFileName = file.FileName;
+                }
+                else if (!string.IsNullOrWhiteSpace(textContent))
+                {
+                    if (selectedType is null)
+                        return Results.BadRequest(new { error = "templateTypeId is required when creating a template from inline text content." });
+
+                    contentStream = new MemoryStream(Encoding.UTF8.GetBytes(textContent));
+                    originalFileName = $"template{selectedType.PrimaryExtension}";
+                }
+                else
+                {
+                    return Results.BadRequest(new { error = "Either a template file or textContent is required." });
+                }
+
+                try
+                {
+                    var metadata = await templateStore.SaveAsync(new ReportTemplateUploadRequest
+                    {
+                        TemplateTypeId = selectedType?.TypeId,
+                        DisplayName = displayName.Trim(),
+                        Kind = kind,
+                        Description = string.IsNullOrWhiteSpace(description) ? null : description.Trim(),
+                        SubjectTemplate = string.IsNullOrWhiteSpace(subjectTemplate) ? null : subjectTemplate.Trim(),
+                        OriginalFileName = originalFileName!,
+                        UploadedBy = ResolveRequestedBy(user) ?? "anonymous"
+                    }, contentStream, ct);
+
+                    return Results.Created($"/api/v1/report-templates/{metadata.Id}", MapTemplate(metadata, typeRegistry));
+                }
+                catch (InvalidOperationException ex)
+                {
+                    return Results.BadRequest(new { error = ex.Message });
+                }
+            }
+            finally
+            {
+                if (contentStream is not null)
+                    await contentStream.DisposeAsync();
+            }
         })
         .DisableAntiforgery()
         .WithTags("Report Templates")
         .WithName("UploadReportTemplate");
+
+        app.MapPut("/report-templates/{templateId}", async (
+            string templateId,
+            HttpRequest request,
+            IReportTemplateStore templateStore,
+            ReportTemplateTypeRegistry typeRegistry,
+            ClaimsPrincipal user,
+            CancellationToken ct) =>
+        {
+            var existingTemplate = await templateStore.GetTemplateContentAsync(templateId, ct);
+            if (existingTemplate is null)
+                return Results.NotFound();
+
+            var form = await request.ReadFormAsync(ct);
+            var file = form.Files.GetFile("file");
+            var displayName = form.ContainsKey("displayName") ? form["displayName"].ToString() : existingTemplate.Metadata.DisplayName;
+            var templateTypeId = form.ContainsKey("templateTypeId") ? form["templateTypeId"].ToString() : existingTemplate.Metadata.TemplateTypeId;
+            var kindRaw = form.ContainsKey("kind") ? form["kind"].ToString() : existingTemplate.Metadata.Kind.ToString();
+            var description = form.ContainsKey("description") ? form["description"].ToString() : existingTemplate.Metadata.Description;
+            var subjectTemplate = form.ContainsKey("subjectTemplate") ? form["subjectTemplate"].ToString() : existingTemplate.Metadata.SubjectTemplate;
+            var hasInlineText = form.ContainsKey("textContent");
+            var textContent = hasInlineText ? form["textContent"].ToString() : null;
+
+            var selectedType = string.IsNullOrWhiteSpace(templateTypeId)
+                ? ResolveTemplateDefinition(existingTemplate.Metadata, typeRegistry)
+                : typeRegistry.GetByTypeId(templateTypeId.Trim());
+
+            if (!string.IsNullOrWhiteSpace(templateTypeId) && selectedType is null)
+                return Results.BadRequest(new { error = $"Unknown templateTypeId '{templateTypeId}'." });
+
+            ReportTemplateKind kind;
+            if (selectedType is not null)
+            {
+                kind = selectedType.Kind;
+            }
+            else if (!Enum.TryParse<ReportTemplateKind>(kindRaw, true, out kind))
+            {
+                return Results.BadRequest(new { error = $"kind must be one of: {string.Join(", ", Enum.GetNames<ReportTemplateKind>())}, or provide templateTypeId." });
+            }
+
+            Stream? contentStream = null;
+            var originalFileName = existingTemplate.Metadata.FileName;
+
+            try
+            {
+                if (file is not null && file.Length > 0)
+                {
+                    contentStream = file.OpenReadStream();
+                    originalFileName = file.FileName;
+                }
+                else if (hasInlineText)
+                {
+                    if (selectedType is not null && !selectedType.SupportsInlineEdit)
+                        return Results.BadRequest(new { error = "The selected template type does not support inline editing. Upload a replacement file instead." });
+
+                    var inlineExtension = selectedType?.PrimaryExtension ?? existingTemplate.Metadata.Extension;
+                    contentStream = new MemoryStream(Encoding.UTF8.GetBytes(textContent ?? string.Empty));
+                    originalFileName = $"template{inlineExtension}";
+                }
+
+                try
+                {
+                    var metadata = await templateStore.UpdateAsync(templateId, new ReportTemplateUploadRequest
+                    {
+                        TemplateTypeId = selectedType?.TypeId,
+                        DisplayName = string.IsNullOrWhiteSpace(displayName) ? existingTemplate.Metadata.DisplayName : displayName.Trim(),
+                        Kind = kind,
+                        Description = string.IsNullOrWhiteSpace(description) ? null : description.Trim(),
+                        SubjectTemplate = string.IsNullOrWhiteSpace(subjectTemplate) ? null : subjectTemplate.Trim(),
+                        OriginalFileName = originalFileName,
+                        UploadedBy = ResolveRequestedBy(user) ?? "anonymous",
+                        IsStarterTemplate = existingTemplate.Metadata.IsStarterTemplate
+                    }, contentStream, ct);
+
+                    return Results.Ok(MapTemplate(metadata, typeRegistry));
+                }
+                catch (InvalidOperationException ex)
+                {
+                    return Results.BadRequest(new { error = ex.Message });
+                }
+            }
+            finally
+            {
+                if (contentStream is not null)
+                    await contentStream.DisposeAsync();
+            }
+        })
+        .DisableAntiforgery()
+        .WithTags("Report Templates")
+        .WithName("UpdateReportTemplate");
+
+        app.MapDelete("/report-templates/{templateId}", async (
+            string templateId,
+            IReportTemplateStore templateStore,
+            CancellationToken ct) =>
+        {
+            var deleted = await templateStore.DeleteAsync(templateId, ct);
+            return deleted ? Results.NoContent() : Results.NotFound();
+        })
+        .WithTags("Report Templates")
+        .WithName("DeleteReportTemplate");
 
         app.MapGet("/snapshots", async (string? itsmSource, string? company, TicketDataServiceInstance data) =>
         {
@@ -561,8 +749,20 @@ public static class UpmsApiEndpoints
             result.Warnings.ToArray());
     }
 
-    private static ReportTemplateResponse MapTemplate(ReportTemplateMetadata template)
+    private static ReportTemplateTypeDefinition? ResolveTemplateDefinition(ReportTemplateMetadata template, ReportTemplateTypeRegistry typeRegistry)
     {
+        ArgumentNullException.ThrowIfNull(template);
+        ArgumentNullException.ThrowIfNull(typeRegistry);
+
+        return typeRegistry.Resolve(template.TemplateTypeId, template.Extension, template.Kind);
+    }
+
+    private static ReportTemplateResponse MapTemplate(ReportTemplateMetadata template, ReportTemplateTypeRegistry typeRegistry)
+    {
+        var typeDefinition = ResolveTemplateDefinition(template, typeRegistry);
+        var updatedAt = template.UpdatedAt ?? template.UploadedAt;
+        var updatedBy = string.IsNullOrWhiteSpace(template.UpdatedBy) ? template.UploadedBy : template.UpdatedBy;
+
         return new ReportTemplateResponse(
             template.Id,
             template.DisplayName,
@@ -573,7 +773,63 @@ public static class UpmsApiEndpoints
             template.Extension,
             template.ContentType,
             template.UploadedAt,
-            template.UploadedBy);
+            template.UploadedBy,
+            updatedAt,
+            updatedBy,
+            typeDefinition?.TypeId ?? template.TemplateTypeId,
+            typeDefinition?.DisplayName,
+            typeDefinition?.SupportsInlineEdit ?? ReportTemplateContentTypeMapper.IsTextLike(template.Extension),
+            template.IsStarterTemplate);
+    }
+
+    private static ReportTemplateDetailResponse MapTemplateDetail(StoredReportTemplate template, ReportTemplateTypeRegistry typeRegistry)
+    {
+        var typeDefinition = ResolveTemplateDefinition(template.Metadata, typeRegistry);
+        var updatedAt = template.Metadata.UpdatedAt ?? template.Metadata.UploadedAt;
+        var updatedBy = string.IsNullOrWhiteSpace(template.Metadata.UpdatedBy) ? template.Metadata.UploadedBy : template.Metadata.UpdatedBy;
+        var supportsInlineEdit = typeDefinition?.SupportsInlineEdit ?? ReportTemplateContentTypeMapper.IsTextLike(template.Metadata.Extension);
+        var editableTextContent = supportsInlineEdit && ReportTemplateContentTypeMapper.IsTextLike(template.Metadata.Extension)
+            ? Encoding.UTF8.GetString(template.FileContent)
+            : null;
+
+        return new ReportTemplateDetailResponse(
+            template.Metadata.Id,
+            template.Metadata.DisplayName,
+            template.Metadata.Kind.ToString(),
+            template.Metadata.Description,
+            template.Metadata.SubjectTemplate,
+            template.Metadata.FileName,
+            template.Metadata.Extension,
+            template.Metadata.ContentType,
+            template.Metadata.UploadedAt,
+            template.Metadata.UploadedBy,
+            updatedAt,
+            updatedBy,
+            typeDefinition?.TypeId ?? template.Metadata.TemplateTypeId,
+            typeDefinition?.DisplayName,
+            supportsInlineEdit,
+            template.Metadata.IsStarterTemplate,
+            typeDefinition?.AuthoringGuidance,
+            editableTextContent);
+    }
+
+    private static ReportTemplateTypeResponse MapTemplateType(ReportTemplateTypeDefinition typeDefinition)
+    {
+        return new ReportTemplateTypeResponse(
+            typeDefinition.TypeId,
+            typeDefinition.DisplayName,
+            typeDefinition.Kind.ToString(),
+            typeDefinition.PrimaryExtension,
+            typeDefinition.Extensions.ToArray(),
+            typeDefinition.ContentType,
+            typeDefinition.SupportsInlineEdit,
+            typeDefinition.IsTextLike,
+            typeDefinition.IsOoxmlPackage,
+            typeDefinition.Description,
+            typeDefinition.AuthoringGuidance,
+            typeDefinition.StarterTemplateDisplayName,
+            typeDefinition.StarterTemplateDescription,
+            typeDefinition.DefaultSubjectTemplate);
     }
 
     private static BackgroundJobResponse MapJob(BackgroundJob job)
@@ -668,6 +924,22 @@ public sealed record ReportExecutionResponse(
     string? HtmlContent,
     string? ErrorMessage);
 
+public sealed record ReportTemplateTypeResponse(
+    string TypeId,
+    string DisplayName,
+    string Kind,
+    string PrimaryExtension,
+    IReadOnlyList<string> Extensions,
+    string ContentType,
+    bool SupportsInlineEdit,
+    bool IsTextLike,
+    bool IsOoxmlPackage,
+    string? Description,
+    string? AuthoringGuidance,
+    string? StarterTemplateDisplayName,
+    string? StarterTemplateDescription,
+    string? DefaultSubjectTemplate);
+
 public sealed record ReportTemplateResponse(
     string Id,
     string DisplayName,
@@ -678,7 +950,33 @@ public sealed record ReportTemplateResponse(
     string Extension,
     string ContentType,
     DateTimeOffset UploadedAt,
-    string UploadedBy);
+    string UploadedBy,
+    DateTimeOffset UpdatedAt,
+    string? UpdatedBy,
+    string? TemplateTypeId,
+    string? TypeDisplayName,
+    bool SupportsInlineEdit,
+    bool IsStarterTemplate);
+
+public sealed record ReportTemplateDetailResponse(
+    string Id,
+    string DisplayName,
+    string Kind,
+    string? Description,
+    string? SubjectTemplate,
+    string FileName,
+    string Extension,
+    string ContentType,
+    DateTimeOffset UploadedAt,
+    string UploadedBy,
+    DateTimeOffset UpdatedAt,
+    string? UpdatedBy,
+    string? TemplateTypeId,
+    string? TypeDisplayName,
+    bool SupportsInlineEdit,
+    bool IsStarterTemplate,
+    string? AuthoringGuidance,
+    string? EditableTextContent);
 
 public sealed record BackgroundJobResponse(
     Guid Id,

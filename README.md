@@ -1,6 +1,6 @@
 # UPMS — Unified Problem Management System
 
-UPMS is a historical problem-management platform for teams working across multiple ITSM sources. It ingests exported ticket snapshots, stores field-level change history in PostgreSQL, reconstructs ticket state at any chosen time, and generates reporting outputs from a reusable plugin model.
+UPMS is a historical problem-management platform for teams working across multiple ITSM sources. It ingests exported ticket snapshots, stores field-level change history in PostgreSQL, reconstructs ticket state at any chosen time, and generates reporting outputs from a reusable template-first reporting system.
 
 This repository now contains both:
 
@@ -25,8 +25,19 @@ This repository now contains both:
 - stores append-only ticket field history
 - reconstructs point-in-time ticket state
 - normalises source fields to canonical fields
-- exposes reporting and document-generation plugins
+- stores a shared report-template library for generated documents, emails, spreadsheets, payloads, and slide decks
+- seeds example starter templates for each supported template type on fresh state
+- supports extensible template type registration for new upload/rendering formats
 - now supports API-first access and worker-backed jobs
+
+## Template-first reporting
+
+The modern API/worker reporting path is now centered on the tokenised template runner rather than a catalogue of hard-coded report definitions.
+
+- Supported template types are registered via `IReportTemplateTypeProvider`, so new formats can be added in code without redesigning the template library UX.
+- Fresh installs seed starter examples from `src/UPMS.Reporting/StarterTemplates/` into the configured report-template storage on API and worker startup.
+- The React **Report Templates** workspace supports upload, inline editing for text-like formats, metadata updates, export/download, and deletion from one shared library.
+- The React **Reports** page generates directly from that template library, so day-to-day report execution revolves around choosing a template and supplying parameters.
 
 ## Runtime defaults
 
@@ -61,8 +72,8 @@ Default ports:
 
 The React UI now separates regular and power-user workflows:
 
-- **Sidebar**: dashboard, tickets, and report execution for day-to-day users
-- **Top-right settings/cog**: ITSM source administration, snapshot upload/browsing, jobs, and report template management
+- **Sidebar**: dashboard, tickets, and template-driven report generation for day-to-day users
+- **Top-right settings/cog**: ITSM source administration, snapshot upload/browsing, jobs, and the shared report-template library
 
 ## Frontend package constraints
 
@@ -129,6 +140,9 @@ The more permanent upstream library fix would be to add `./dist/style.css` to th
 
 ## Notes from the latest patch
 
+- Reporting in the API/worker architecture is now template-first: the concrete example report registrations were removed in favour of the shared `tokenised-template-report` runner.
+- Supported template types are now managed through an extensible registry, with fresh-state starter templates seeded automatically for HTML, EML, TXT, CSV, XML, DOCX, XLSX, and PPTX.
+- The React template workspace now supports type-aware upload, inline editing for text-like templates, export/download, deletion, and direct guidance for starter examples and token syntax.
 - The worker container now starts via the published application host (`./UPMS.Worker`) rather than invoking `dotnet` directly at container entrypoint time.
 - Frontend data tables now explicitly disable the EDS `displaySelected` mode so rows are visible by default.
 - ITSM source import now accepts a broader set of legacy JSON and CSV field names, and canonical aliases such as `ticket_key`, `company`, `title`, and `status` are normalized to the current registered canonical fields.

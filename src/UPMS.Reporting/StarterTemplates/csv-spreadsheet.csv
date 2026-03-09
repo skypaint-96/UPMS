@@ -1,0 +1,12 @@
+Metric,Value
+Company,{{meta.company}}
+Source,{{meta.itsm_source}}
+As Of,{{meta.as_of_date}}
+Ticket Count,{{kpi.ticket_count}}
+Month End Backlog,{{kpi.month_end.backlog_current}}
+High Priority Backlog,{{kpi.month_end.high_priority_backlog_current}}
+
+Number,Short Description,State,Priority,Assigned To
+{{start per ticket State!=Closed}}
+{{ticket.Number}},{{ticket.Short_Description}},{{ticket.State}},{{ticket.Priority}},{{ticket.Assigned_To}}
+{{end per ticket}}

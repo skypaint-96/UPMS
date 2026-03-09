@@ -7,14 +7,22 @@ import {
   ItsmSourceSummary,
   ReportPlugin,
   ReportTemplate,
+  ReportTemplateDetail,
+  ReportTemplateType,
   Snapshot,
   Ticket,
   IngestResult,
 } from './types';
 
+const apiBaseUrl = import.meta.env.VITE_UPMS_API_BASE_URL ?? '/api/v1';
+
 const api = axios.create({
-  baseURL: import.meta.env.VITE_UPMS_API_BASE_URL ?? '/api/v1',
+  baseURL: apiBaseUrl,
 });
+
+function buildApiUrl(path: string) {
+  return `${apiBaseUrl.replace(/\/$/, '')}${path.startsWith('/') ? path : `/${path}`}`;
+}
 
 export const upmsApi = {
   async getCanonicalFields() {
@@ -68,8 +76,16 @@ export const upmsApi = {
     const { data } = await api.get<ReportPlugin[]>('/reports/plugins');
     return data;
   },
+  async getReportTemplateTypes() {
+    const { data } = await api.get<ReportTemplateType[]>('/report-template-types');
+    return data;
+  },
   async getReportTemplates() {
     const { data } = await api.get<ReportTemplate[]>('/report-templates');
+    return data;
+  },
+  async getReportTemplate(id: string) {
+    const { data } = await api.get<ReportTemplateDetail>(`/report-templates/${encodeURIComponent(id)}`);
     return data;
   },
   async uploadReportTemplate(formData: FormData) {
@@ -77,6 +93,18 @@ export const upmsApi = {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
     return data;
+  },
+  async updateReportTemplate(id: string, formData: FormData) {
+    const { data } = await api.put<ReportTemplate>(`/report-templates/${encodeURIComponent(id)}`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return data;
+  },
+  async deleteReportTemplate(id: string) {
+    await api.delete(`/report-templates/${encodeURIComponent(id)}`);
+  },
+  getReportTemplateDownloadUrl(id: string) {
+    return buildApiUrl(`/report-templates/${encodeURIComponent(id)}/download`);
   },
   async queueReport(payload: { pluginId: string; parameters: Record<string, string> }) {
     const { data } = await api.post<BackgroundJob>('/jobs/report-execution', payload);

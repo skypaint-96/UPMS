@@ -1,0 +1,17 @@
+Subject: UPMS {{meta.company}} executive update - {{meta.as_of_date}}
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html>
+  <body style="font-family: Arial, sans-serif; color: #1d2e40;">
+    <h1>Executive update — {{meta.company}}</h1>
+    <p>Source: {{meta.itsm_source}} | As of: {{meta.as_of_date}}</p>
+    <p>Total tickets: {{kpi.ticket_count}} | High priority backlog: {{kpi.month_end.high_priority_backlog_current}}</p>
+    <h2>Open tickets requiring attention</h2>
+    <ul>
+      {{start per ticket State!=Closed}}
+      <li>{{ticket.Number}} — {{ticket.Short_Description}} ({{ticket.Priority}} / {{ticket.State}})</li>
+      {{end per ticket}}
+    </ul>
+  </body>
+</html>

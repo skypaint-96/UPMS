@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>UPMS Operations Brief</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 32px; color: #10243e; }
+    .hero { margin-bottom: 24px; }
+    .meta { color: #4a637d; margin-bottom: 20px; }
+    .kpi-grid { display: flex; gap: 12px; flex-wrap: wrap; margin: 24px 0; }
+    .kpi { border: 1px solid #d3dce8; border-radius: 12px; padding: 16px; min-width: 180px; }
+    .ticket { border-top: 1px solid #d3dce8; padding: 16px 0; }
+    .label { color: #5b6f87; font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; }
+  </style>
+</head>
+<body>
+  <section class="hero">
+    <h1>Operations Brief — {{meta.company}}</h1>
+    <p class="meta">Source: {{meta.itsm_source}} | As of: {{meta.as_of_date}} | Generated: {{meta.generated_at_utc}}</p>
+  </section>
+
+  <section class="kpi-grid">
+    <article class="kpi">
+      <div class="label">Ticket Count</div>
+      <strong>{{kpi.ticket_count}}</strong>
+    </article>
+    <article class="kpi">
+      <div class="label">Month End Backlog</div>
+      <strong>{{kpi.month_end.backlog_current}}</strong>
+    </article>
+    <article class="kpi">
+      <div class="label">High Priority Backlog</div>
+      <strong>{{kpi.month_end.high_priority_backlog_current}}</strong>
+    </article>
+  </section>
+
+  <h2>Key metrics</h2>
+  {{table.kpis.html}}
+
+  <h2>Active tickets</h2>
+  {{start per ticket State!=Closed}}
+  <article class="ticket">
+    <h3>{{ticket.Number}} — {{ticket.Short_Description}}</h3>
+    <p><strong>State:</strong> {{ticket.State}} | <strong>Priority:</strong> {{ticket.Priority}} | <strong>Assigned To:</strong> {{ticket.Assigned_To}}</p>
+    <p>{{ticket.Description}}</p>
+  </article>
+  {{end per ticket}}
+</body>
+</html>
