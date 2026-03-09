@@ -145,6 +145,83 @@ namespace UPMS.Data.Migrations
                     b.ToTable("itsm_source", (string)null);
                 });
 
+            modelBuilder.Entity("UPMS.Data.Jobs.BackgroundJob", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedNever()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTime?>("CompletedAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("completed_at");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("ErrorMessage")
+                        .HasColumnType("text")
+                        .HasColumnName("error_message");
+
+                    b.Property<string>("JobType")
+                        .IsRequired()
+                        .HasColumnType("varchar(100)")
+                        .HasColumnName("job_type");
+
+                    b.Property<DateTime?>("LeaseExpiresAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("lease_expires_at");
+
+                    b.Property<string>("LeaseOwner")
+                        .HasColumnType("varchar(255)")
+                        .HasColumnName("lease_owner");
+
+                    b.Property<string>("OutputContentType")
+                        .HasColumnType("varchar(255)")
+                        .HasColumnName("output_content_type");
+
+                    b.Property<string>("OutputFileName")
+                        .HasColumnType("varchar(512)")
+                        .HasColumnName("output_file_name");
+
+                    b.Property<string>("OutputFilePath")
+                        .HasColumnType("text")
+                        .HasColumnName("output_file_path");
+
+                    b.Property<string>("PayloadJson")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("payload_json");
+
+                    b.Property<string>("RequestedBy")
+                        .HasColumnType("varchar(255)")
+                        .HasColumnName("requested_by");
+
+                    b.Property<string>("ResultJson")
+                        .HasColumnType("text")
+                        .HasColumnName("result_json");
+
+                    b.Property<DateTime?>("StartedAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("started_at");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("varchar(50)")
+                        .HasColumnName("status");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("JobType", "Status", "CreatedAt")
+                        .HasDatabaseName("ix_background_job_job_type_status_created_at");
+
+                    b.HasIndex("Status", "CreatedAt")
+                        .HasDatabaseName("ix_background_job_status_created_at");
+
+                    b.ToTable("background_job", (string)null);
+                });
+
             modelBuilder.Entity("UPMS.Data.ReadModels.ReconstructedFieldDto", b =>
                 {
                     b.Property<string>("FieldName")

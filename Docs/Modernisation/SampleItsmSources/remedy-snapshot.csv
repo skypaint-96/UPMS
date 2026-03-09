@@ -1,0 +1,3 @@
+ticket_id,customer,headline,details,severity,state,owner,support_group,category,created_date,last_updated
+RMD-5001,Umbrella Corp,Server disk alert,Disk usage exceeded threshold on production host,High,Assigned,Elliot Page,Infrastructure,Monitoring,2026-03-05 07:20:00,2026-03-09 08:05:00
+RMD-5002,Wayne Enterprises,Password reset failure,Automated reset mails are not being delivered,Low,Open,Fiona Clarke,Identity,Access,2026-03-06 14:40:00,2026-03-09 09:15:00
