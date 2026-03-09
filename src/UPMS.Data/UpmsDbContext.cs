@@ -263,8 +263,10 @@ public class UpmsDbContext : DbContext
                 .HasColumnType("varchar(255)")
                 .IsRequired(false);
 
-            e.HasIndex(x => new { x.Status, x.CreatedAt });
-            e.HasIndex(x => new { x.JobType, x.Status, x.CreatedAt });
+            e.HasIndex(x => new { x.Status, x.CreatedAt })
+                .HasDatabaseName("ix_background_job_status_created_at");
+            e.HasIndex(x => new { x.JobType, x.Status, x.CreatedAt })
+                .HasDatabaseName("ix_background_job_job_type_status_created_at");
         });
 
         // ── canonical_field_definition ─────────────────────────────────────
