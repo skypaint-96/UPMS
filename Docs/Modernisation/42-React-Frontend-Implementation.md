@@ -10,7 +10,8 @@
 The React app uses CGI EDS for:
 
 - top navigation
-- left navigation
+- a custom MUI sidebar for regular user journeys
+- a CGI EDS settings/cog trigger for power-user admin navigation
 - data-table surfaces
 - alert styling
 - theme integration
@@ -24,8 +25,10 @@ A small `axios` client wraps the `/api/v1` routes for:
 - tickets
 - ticket history
 - report plugins
+- report templates
 - background jobs
 - ingest/report job submission
+- ITSM source CRUD/mapping management
 
 ### Page coverage included
 The implementation includes pages for:
@@ -37,6 +40,7 @@ The implementation includes pages for:
 - ITSM sources
 - upload
 - reports
+- report templates
 - jobs
 
 ### Deployment assumptions

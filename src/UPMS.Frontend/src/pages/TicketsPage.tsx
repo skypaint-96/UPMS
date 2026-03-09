@@ -51,7 +51,15 @@ export function TicketsPage() {
         <Box component="form" onSubmit={submit} sx={{ mb: 3 }}>
           <Grid container spacing={2}>
             <Grid item xs={12} md={4}>
-              <TextField select SelectProps={{ native: true }} label="ITSM Source" value={itsmSource} onChange={(e) => setItsmSource(e.target.value)} fullWidth>
+              <TextField
+                select
+                SelectProps={{ native: true }}
+                InputLabelProps={{ shrink: true }}
+                label="ITSM Source"
+                value={itsmSource}
+                onChange={(e) => setItsmSource(e.target.value)}
+                fullWidth
+              >
                 <option value="">Select a source</option>
                 {sources.map((source) => (
                   <option key={source.name} value={source.name}>

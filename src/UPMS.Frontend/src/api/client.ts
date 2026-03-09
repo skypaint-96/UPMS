@@ -6,6 +6,7 @@ import {
   ItsmSourceDefinition,
   ItsmSourceSummary,
   ReportPlugin,
+  ReportTemplate,
   Snapshot,
   Ticket,
   IngestResult,
@@ -27,6 +28,19 @@ export const upmsApi = {
   async getItsmSource(name: string) {
     const { data } = await api.get<ItsmSourceDefinition>(`/itsm-sources/${encodeURIComponent(name)}`);
     return data;
+  },
+  async createItsmSource(payload: { name: string; displayLabel: string }) {
+    const { data } = await api.post<ItsmSourceSummary>('/itsm-sources', payload);
+    return data;
+  },
+  async deleteItsmSource(name: string) {
+    await api.delete(`/itsm-sources/${encodeURIComponent(name)}`);
+  },
+  async upsertItsmMapping(sourceName: string, sourceFieldName: string, payload: { canonicalFieldName: string; isRequired: boolean }) {
+    await api.put(`/itsm-sources/${encodeURIComponent(sourceName)}/mappings/${encodeURIComponent(sourceFieldName)}`, payload);
+  },
+  async deleteItsmMapping(sourceName: string, sourceFieldName: string) {
+    await api.delete(`/itsm-sources/${encodeURIComponent(sourceName)}/mappings/${encodeURIComponent(sourceFieldName)}`);
   },
   async getSnapshots(params?: { itsmSource?: string; company?: string }) {
     const { data } = await api.get<Snapshot[]>('/snapshots', { params });
@@ -52,6 +66,16 @@ export const upmsApi = {
   },
   async getReportPlugins() {
     const { data } = await api.get<ReportPlugin[]>('/reports/plugins');
+    return data;
+  },
+  async getReportTemplates() {
+    const { data } = await api.get<ReportTemplate[]>('/report-templates');
+    return data;
+  },
+  async uploadReportTemplate(formData: FormData) {
+    const { data } = await api.post<ReportTemplate>('/report-templates', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
     return data;
   },
   async queueReport(payload: { pluginId: string; parameters: Record<string, string> }) {

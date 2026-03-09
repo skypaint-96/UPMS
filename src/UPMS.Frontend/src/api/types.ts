@@ -72,6 +72,21 @@ export type ReportPlugin = {
   parameters: ReportParameter[];
 };
 
+export type ReportTemplateKind = 'Email' | 'Document' | 'Spreadsheet' | 'Presentation' | 'Generic';
+
+export type ReportTemplate = {
+  id: string;
+  displayName: string;
+  kind: ReportTemplateKind;
+  description?: string | null;
+  subjectTemplate?: string | null;
+  fileName: string;
+  extension: string;
+  contentType: string;
+  uploadedAt: string;
+  uploadedBy: string;
+};
+
 export type BackgroundJob = {
   id: string;
   jobType: string;

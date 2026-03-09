@@ -57,6 +57,13 @@ Default ports:
 - API: `http://localhost:8081`
 - PostgreSQL: `localhost:5432`
 
+## Frontend navigation model
+
+The React UI now separates regular and power-user workflows:
+
+- **Sidebar**: dashboard, tickets, and report execution for day-to-day users
+- **Top-right settings/cog**: ITSM source administration, snapshot upload/browsing, jobs, and report template management
+
 ## Frontend package constraints
 
 The React frontend is aligned to the supplied CGI EDS package constraints:

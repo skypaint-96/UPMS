@@ -11,6 +11,7 @@ using UPMS.Data.Jobs;
 using UPMS.Ingestion;
 using UPMS.Reporting;
 using UPMS.Reporting.Plugins;
+using UPMS.Reporting.Templates;
 
 public static class UpmsApiEndpoints
 {
@@ -132,6 +133,64 @@ public static class UpmsApiEndpoints
         })
         .WithTags("ITSM Sources")
         .WithName("DeleteItsmFieldMapping");
+
+
+        app.MapDelete("/itsm-sources/{name}", async (string name, IItsmSourceService sources) =>
+        {
+            await sources.DeleteSourceAsync(name);
+            return Results.NoContent();
+        })
+        .WithTags("ITSM Sources")
+        .WithName("DeleteItsmSource");
+
+        app.MapGet("/report-templates", (IReportTemplateStore templateStore) =>
+        {
+            var rows = templateStore.GetAllTemplates();
+            return Results.Ok(rows
+                .OrderByDescending(template => template.UploadedAt)
+                .Select(MapTemplate));
+        })
+        .WithTags("Report Templates")
+        .WithName("GetReportTemplates");
+
+        app.MapPost("/report-templates", async (
+            HttpRequest request,
+            IReportTemplateStore templateStore,
+            ClaimsPrincipal user,
+            CancellationToken ct) =>
+        {
+            var form = await request.ReadFormAsync(ct);
+            var file = form.Files.GetFile("file");
+            var displayName = form["displayName"].ToString();
+            var kindRaw = form["kind"].ToString();
+            var description = form["description"].ToString();
+            var subjectTemplate = form["subjectTemplate"].ToString();
+
+            if (file is null || file.Length == 0)
+                return Results.BadRequest(new { error = "A template file is required." });
+
+            if (string.IsNullOrWhiteSpace(displayName))
+                return Results.BadRequest(new { error = "displayName is required." });
+
+            if (!Enum.TryParse<ReportTemplateKind>(kindRaw, true, out var kind))
+                return Results.BadRequest(new { error = $"kind must be one of: {string.Join(", ", Enum.GetNames<ReportTemplateKind>())}." });
+
+            await using var stream = file.OpenReadStream();
+            var metadata = await templateStore.SaveAsync(new ReportTemplateUploadRequest
+            {
+                DisplayName = displayName.Trim(),
+                Kind = kind,
+                Description = string.IsNullOrWhiteSpace(description) ? null : description.Trim(),
+                SubjectTemplate = string.IsNullOrWhiteSpace(subjectTemplate) ? null : subjectTemplate.Trim(),
+                OriginalFileName = file.FileName,
+                UploadedBy = ResolveRequestedBy(user) ?? "anonymous"
+            }, stream, ct);
+
+            return Results.Created($"/api/v1/report-templates/{metadata.Id}", MapTemplate(metadata));
+        })
+        .DisableAntiforgery()
+        .WithTags("Report Templates")
+        .WithName("UploadReportTemplate");
 
         app.MapGet("/snapshots", async (string? itsmSource, string? company, TicketDataServiceInstance data) =>
         {
@@ -502,6 +561,21 @@ public static class UpmsApiEndpoints
             result.Warnings.ToArray());
     }
 
+    private static ReportTemplateResponse MapTemplate(ReportTemplateMetadata template)
+    {
+        return new ReportTemplateResponse(
+            template.Id,
+            template.DisplayName,
+            template.Kind.ToString(),
+            template.Description,
+            template.SubjectTemplate,
+            template.FileName,
+            template.Extension,
+            template.ContentType,
+            template.UploadedAt,
+            template.UploadedBy);
+    }
+
     private static BackgroundJobResponse MapJob(BackgroundJob job)
     {
         var downloadUrl = string.IsNullOrWhiteSpace(job.OutputFilePath)
@@ -593,6 +667,18 @@ public sealed record ReportExecutionResponse(
     string? ContentType,
     string? HtmlContent,
     string? ErrorMessage);
+
+public sealed record ReportTemplateResponse(
+    string Id,
+    string DisplayName,
+    string Kind,
+    string? Description,
+    string? SubjectTemplate,
+    string FileName,
+    string Extension,
+    string ContentType,
+    DateTimeOffset UploadedAt,
+    string UploadedBy);
 
 public sealed record BackgroundJobResponse(
     Guid Id,
