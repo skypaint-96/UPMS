@@ -27,6 +27,14 @@ It stores:
 docker compose up --build -d
 ```
 
+For a full reset on a development machine:
+
+```bash
+docker compose down --remove-orphans -v
+docker compose build --no-cache
+docker compose up -d
+```
+
 ## Useful URLs
 
 - Frontend: `http://localhost:8080`
@@ -42,3 +50,9 @@ The override file switches the API to `Auth:Mode=None` and keeps the database pa
 - The frontend proxies `/api/*` to `UPMS_api` internally.
 - External tools such as Excel Power Query can also call the API directly on `8081`.
 - API/worker both rely on the shared PostgreSQL connection string and artifact volume.
+
+
+## Troubleshooting
+
+- `node:20-alpine` already ships a `yarn` executable path. The frontend Dockerfile therefore uses `npm install -g yarn@1.22.19 --force` so the required Yarn version replaces the pre-existing shim instead of failing with `EEXIST`.
+- If Compose reports `Network upms_default Resource is still in use`, clean up orphaned containers first with `docker compose down --remove-orphans -v`. If needed, inspect remaining attachments with `docker ps -a --filter network=upms_default`.

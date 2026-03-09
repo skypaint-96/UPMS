@@ -1,6 +1,8 @@
 FROM node:20-alpine AS build
 WORKDIR /app
-RUN npm install -g yarn@1.22.19
+# Node 20 images already provide a yarn shim at /usr/local/bin/yarn.
+# Force the exact Yarn 1.22.19 version required by the CGI EDS package.
+RUN npm install -g yarn@1.22.19 --force
 
 COPY vendor/eds-react-app-v17.0.0.tgz /app/vendor/eds-react-app-v17.0.0.tgz
 COPY src/UPMS.Frontend/package.json /app/src/UPMS.Frontend/package.json

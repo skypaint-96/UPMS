@@ -43,6 +43,14 @@ The default container runtime is now:
 docker compose up --build -d
 ```
 
+For a clean rebuild on a machine that already has UPMS containers or networks:
+
+```bash
+docker compose down --remove-orphans -v
+docker compose build --no-cache
+docker compose up -d
+```
+
 Default ports:
 
 - Frontend: `http://localhost:8080`
@@ -96,3 +104,9 @@ Docs/
 ## Notes
 
 The container environment used to prepare this package did not include the `.NET SDK`, so the new `.NET 10` projects and tests were added as source and project files without a local compile/run pass in this environment. The frontend package and Docker assets were also prepared as source-level deliverables.
+
+
+## Troubleshooting
+
+- The frontend Dockerfile now installs `yarn@1.22.19` with `--force` because the `node:20-alpine` base image already contains a `yarn` shim, which otherwise causes `EEXIST` during image build.
+- If `docker compose down -v` reports that `upms_default` is still in use, re-run with `--remove-orphans` and remove any stale containers still attached to that network before retrying.
