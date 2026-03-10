@@ -63,9 +63,9 @@ jobs:
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
-      - name: Restore .NET (solution)
+      - name: Restore .NET project
         if: matrix.kind == 'dotnet'
-        run: dotnet restore upms.slnx
+        run: dotnet restore ${{ matrix.project }}
 
       - name: Build .NET project
         if: matrix.kind == 'dotnet'
