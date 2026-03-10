@@ -1,6 +1,6 @@
 services:
   UPMS_frontend:
-    image: ghcr.io/skypaint-96/upms-frontend:latest
+    image: ghcr.io/skypaint-96/upms-frontend
     build:
       context: .
       dockerfile: src/UPMS.Frontend/Dockerfile
@@ -11,7 +11,7 @@ services:
         condition: service_started
 
   UPMS_api:
-    image: ghcr.io/skypaint-96/upms-api:latest
+    image: ghcr.io/skypaint-96/upms-api
     build:
       context: .
       dockerfile: src/UPMS.Api/Dockerfile
@@ -35,7 +35,7 @@ services:
         condition: service_healthy
 
   UPMS_worker:
-    image: ghcr.io/skypaint-96/upms-worker:latest
+    image: ghcr.io/skypaint-96/upms-worker
     build:
       context: .
       dockerfile: src/UPMS.Worker/Dockerfile
