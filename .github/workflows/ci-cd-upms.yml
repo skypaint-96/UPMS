@@ -137,7 +137,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push image to GHCR
+      - name: Build and push image to GHCR with SHA tag
         if: steps.check_docker.outputs.exists == 'true'
         uses: docker/build-push-action@v4
         with:
@@ -145,3 +145,12 @@ jobs:
           file: ${{ matrix.project }}/Dockerfile
           push: true
           tags: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:${{ github.sha }}
+      
+      - name: Build and push image to GHCR as latest
+        if: steps.check_docker.outputs.exists == 'true'
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          file: ${{ matrix.project }}/Dockerfile
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:latest
