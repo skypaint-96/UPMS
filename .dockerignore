@@ -31,3 +31,10 @@ README.md
 !.git/refs/heads/**
 
 data/
+
+# Allow solution file and source folders into Docker build context
+!UPMS.slnx
+!src/
+!src/**
+# Ensure Dockerfiles under src/ are included in context
+!src/**/Dockerfile
