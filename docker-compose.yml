@@ -45,8 +45,8 @@ services:
     volumes:
       - upms_artifacts:/var/lib/upms
     depends_on:
-      UPMS_db:
-        condition: service_healthy
+      UPMS_api:
+        condition: service_started
 
   UPMS_db:
     image: postgres:16-alpine
