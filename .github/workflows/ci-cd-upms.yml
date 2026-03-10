@@ -65,7 +65,7 @@ jobs:
 
       - name: Restore .NET (solution)
         if: matrix.kind == 'dotnet'
-        run: dotnet restore
+        run: dotnet restore upms.slnx
 
       - name: Build .NET project
         if: matrix.kind == 'dotnet'
