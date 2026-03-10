@@ -7,9 +7,8 @@ on:
       - Development
 
 env:
-  IMAGE_NAME: upms
-  PROJECT_PATH: src/UPMS.Web         # <- adjust to your repo if different
-  DOTNET_VERSION: '10.0'             # .NET 10 / adjust if needed
+  DOTNET_VERSION: '10.0'
+  NODE_VERSION: '20'
 
 permissions:
   contents: read
@@ -17,49 +16,126 @@ permissions:
 
 jobs:
   test:
-    name: Test
+    name: Test - ${{ matrix.name }}
     runs-on: ubuntu-latest
-    outputs:
-      tests_passed: ${{ steps.tests.outcome }}
+    strategy:
+      matrix:
+        include:
+          - name: UPMS.Api
+            kind: dotnet
+            project: src/UPMS.Api
+            has_tests: true
+            test_path: tests/UPMS.Api.Tests
+          - name: UPMS.Data
+            kind: dotnet
+            project: src/UPMS.Data
+            has_tests: true
+            test_path: tests/UPMS.Data.Tests
+          - name: UPMS.Ingestion
+            kind: dotnet
+            project: src/UPMS.Ingestion
+            has_tests: false
+          - name: UPMS.Reporting
+            kind: dotnet
+            project: src/UPMS.Reporting
+            has_tests: false
+          - name: UPMS.Worker
+            kind: dotnet
+            project: src/UPMS.Worker
+            has_tests: false
+          - name: UPMS.Frontend
+            kind: node
+            project: src/UPMS.Frontend
+            has_tests: true
     steps:
       - uses: actions/checkout@v4
 
+      - name: Setup cache for dotnet
+        if: matrix.kind == 'dotnet'
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-$(hashFiles('**/*.csproj'))
+
       - name: Setup .NET
+        if: matrix.kind == 'dotnet'
         uses: actions/setup-dotnet@v3
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
-      - name: Restore
-        working-directory: ${{ env.PROJECT_PATH }}
+      - name: Restore .NET (solution)
+        if: matrix.kind == 'dotnet'
         run: dotnet restore
 
-      - name: Run tests
-        id: tests
-        working-directory: ${{ env.PROJECT_PATH }}
-        run: |
-          set -e
-          dotnet test --no-build --verbosity normal
-        continue-on-error: false
+      - name: Build .NET project
+        if: matrix.kind == 'dotnet'
+        run: dotnet build ${{ matrix.project }} --no-restore --configuration Release
+
+      - name: Run .NET tests
+        if: matrix.kind == 'dotnet' && matrix.has_tests == true
+        run: dotnet test ${{ matrix.test_path }} --no-build --verbosity normal
+
+      - name: Setup Node.js
+        if: matrix.kind == 'node'
+        uses: actions/setup-node@v3
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install yarn (for legacy Yarn v1 projects)
+        if: matrix.kind == 'node'
+        run: npm install -g yarn
+
+      - name: Install frontend deps
+        if: matrix.kind == 'node'
+        working-directory: ${{ matrix.project }}
+        run: yarn install --frozen-lockfile
+
+      - name: Run frontend tests
+        if: matrix.kind == 'node' && matrix.has_tests == true
+        working-directory: ${{ matrix.project }}
+        run: yarn test
 
   deploy:
-    name: Build image, push to ACR & Deploy (production only)
+    name: Deploy (Build & Push Images)
     runs-on: ubuntu-latest
     needs: test
-    if: github.ref == 'refs/heads/Production'      # only run on production branch
+    if: github.ref == 'refs/heads/Production'
+    strategy:
+      matrix:
+        include:
+          - name: UPMS.Api
+            project: src/UPMS.Api
+          - name: UPMS.Data
+            project: src/UPMS.Data
+          - name: UPMS.Ingestion
+            project: src/UPMS.Ingestion
+          - name: UPMS.Reporting
+            project: src/UPMS.Reporting
+          - name: UPMS.Worker
+            project: src/UPMS.Worker
+          - name: UPMS.Frontend
+            project: src/UPMS.Frontend
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check for Dockerfile
+        id: check_docker
+        run: |
+          if [ -f "${{ matrix.project }}/Dockerfile" ]; then echo "exists=true" >> $GITHUB_OUTPUT; else echo "exists=false" >> $GITHUB_OUTPUT; fi
+
       - name: Log in to GitHub Container Registry
+        if: steps.check_docker.outputs.exists == 'true'
         uses: docker/login-action@v2
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push image to GitHub Container Registry
+      - name: Build and push image to GHCR
+        if: steps.check_docker.outputs.exists == 'true'
         uses: docker/build-push-action@v4
         with:
-          context: .
-          file: ./src/UPMS.Web/Dockerfile   # <- adjust if Dockerfile is elsewhere
+          context: ${{ matrix.project }}
+          file: ${{ matrix.project }}/Dockerfile
           push: true
-          tags: ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          tags: ghcr.io/${{ github.repository_owner }}/${{ matrix.name }}:${{ github.sha }}
