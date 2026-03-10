@@ -1,104 +1,149 @@
 # UPMS — Unified Problem Management System
 
-A web-based system for problem managers who work across multiple ITSM sources. UPMS ingests snapshot exports from tools such as ServiceNow and Jira, stores ticket data as an append-only field-level change log, and provides point-in-time ticket reconstruction and a plugin-based report store.
+UPMS is a historical problem-management platform for teams working across multiple ITSM sources. It ingests exported ticket snapshots, stores field-level change history in PostgreSQL, reconstructs ticket state at any chosen time, and generates reporting outputs from a reusable template-first reporting system.
 
----
+This repository now contains both:
 
-## What It Does
+- the **legacy Blazor Server application** (`src/UPMS.Web`) retained as a transition/reference implementation
+- the **new split architecture** built around a `.NET 10` API, `.NET 10` worker, and **React 19 + CGI EDS** frontend
 
-- **Ingests snapshot exports** from one or more ITSM sources (CSV/JSON files uploaded via the web portal).
-- **Stores ticket history** as field-level amendment records — one row per field value observed per ticket per snapshot. This allows any ticket to be reconstructed exactly as it appeared at any point in time.
-- **Normalises field names** across ITSM sources using a canonical field mapping table. The current canonical set uses human-friendly names such as `Number`, `Company`, `State`, `Assigned To`, `Assignment Group`, `Opened At`, `Updated On`, and `Resolved At` (legacy aliases like `ticket_number` and `status` are still recognised for compatibility).
-- **Provides a web portal** (Blazor Server) for browsing snapshots, viewing tickets, uploading data, and running reports.
-- **Hosts a reporting plugin system** — report generators are pluggable and can return HTML previews or downloadable files (PPTX/CSV/etc.).
+## New target architecture
 
----
+| Component | Technology | Purpose |
+|----------|------------|---------|
+| `UPMS.Api` | ASP.NET Core Minimal API (`.NET 10`) | primary application boundary for frontend, worker, and external consumers |
+| `UPMS.Worker` | Background worker (`.NET 10`) | queued snapshot ingest and report execution |
+| `UPMS.Frontend` | React 19 + CGI EDS + MUI 5 | primary browser UI |
+| `UPMS.Data` | `.NET 10` class library | shared persistence, reconstruction logic, job queue, artifact storage |
+| `UPMS.Ingestion` | `.NET 10` class library | reusable CSV/JSON ingest orchestration |
+| `UPMS.Reporting` | `.NET 10` class library | reusable report plugins and template/report services |
+| `UPMS.Web` | Blazor Server (`.NET 10`) | legacy/reference application retained during transition |
 
-## Tech Stack
+## What UPMS does
 
-| Component | Technology |
-|-----------|-----------|
-| Web application | Blazor Server (.NET 10) |
-| Data access library | C# class library (.NET 10), EF Core + Npgsql |
-| Database | PostgreSQL 16 |
-| Containerisation | Docker + Docker Compose |
+- ingests CSV/JSON snapshot exports from multiple ITSM sources
+- stores append-only ticket field history
+- reconstructs point-in-time ticket state
+- normalises source fields to canonical fields
+- stores a shared report-template library for generated documents, emails, spreadsheets, payloads, and slide decks
+- seeds example starter templates for each supported template type on fresh state
+- supports extensible template type registration for new upload/rendering formats
+- now supports API-first access and worker-backed jobs
 
-There is no separate frontend SPA, no separate REST API, and no worker service. Blazor Server is the single deployable web component.
+## Template-first reporting
 
----
+The modern API/worker reporting path is now centered on the tokenised template runner rather than a catalogue of hard-coded report definitions.
 
-## Quick Start
+- Supported template types are registered via `IReportTemplateTypeProvider`, so new formats can be added in code without redesigning the template library UX.
+- Fresh installs seed starter examples from `src/UPMS.Reporting/StarterTemplates/` into the configured report-template storage on API and worker startup.
+- The React **Report Templates** workspace supports upload, inline editing for text-like formats, metadata updates, export/download, and deletion from one shared library.
+- The React **Reports** page generates directly from that template library, so day-to-day report execution revolves around choosing a template and supplying parameters.
 
-**Prerequisites:** Docker Desktop (or Docker Engine with Compose v2+)
+## Runtime defaults
+
+The default container runtime is now:
+
+- `UPMS_db` — PostgreSQL 16
+- `UPMS_api` — `.NET 10` API
+- `UPMS_worker` — `.NET 10` worker
+- `UPMS_frontend` — React/CGI EDS frontend served by Nginx
+
+## Quick start (containers)
 
 ```bash
-# Clone the repository
-git clone <repository-url>
-cd UPMS
+docker compose up --build -d
+```
 
-# Start all services
+For a clean rebuild on a machine that already has UPMS containers or networks:
+
+```bash
+docker compose down --remove-orphans -v
+docker compose build --no-cache
 docker compose up -d
 ```
 
-The application will be available at **http://localhost:8081**.
+Default ports:
 
-Optional: a DB admin UI (e.g., Adminer) is not included by default in the compose file, but you can add it under a `tools` profile. See [`Docs/DOCKER.md`](Docs/DOCKER.md).
+- Frontend: `http://localhost:8080`
+- API: `http://localhost:8081`
+- PostgreSQL: `localhost:5432`
 
----
+## Frontend navigation model
 
-## Project Structure
+The React UI now separates regular and power-user workflows:
 
+- **Sidebar**: dashboard, tickets, and template-driven report generation for day-to-day users
+- **Top-right settings/cog**: ITSM source administration, snapshot upload/browsing, jobs, and the shared report-template library
+
+## Frontend package constraints
+
+The React frontend is aligned to the supplied CGI EDS package constraints:
+
+- React `19.0.0`
+- MUI `5.15.14`
+- Node `20.x`
+- Yarn `1.22.19`
+
+## Repository layout
+
+```text
+src/
+  UPMS.Api/
+  UPMS.Worker/
+  UPMS.Frontend/
+  UPMS.Data/
+  UPMS.Ingestion/
+  UPMS.Reporting/
+  UPMS.Web/
+
+tests/
+  UPMS.Api.Tests/
+  UPMS.Data.Tests/
+  UPMS.Web.Tests/
+
+Docs/
+  Modernisation/
 ```
-UPMS/
-├── src/
-│   ├── UPMS.Data/          # Data access library — snapshots, field changes, point-in-time queries
-│   └── UPMS.Web/           # Blazor Server web application — portal, upload, report store
-│
-├── tests/
-│   ├── UPMS.Data.Tests/    # NUnit integration tests for the data layer
-│   └── UPMS.Web.Tests/     # NUnit + Playwright end-to-end UI tests
-│
-├── sql/
-│   └── stored-procedures/  # Reference SQL for point-in-time reconstruction (also deployed via EF migrations)
-│
-├── docker-compose.yml
-├── docker-compose.override.yml
-└── Docs/                   # Project documentation (see below)
-```
 
----
+## Key documentation
 
-## Reporting Plugins
+- `Docs/Modernisation/00-Current-Solution-Review.md`
+- `Docs/Modernisation/10-Architecture-Blueprint.md`
+- `Docs/Modernisation/20-API-Core-Requirements.md`
+- `Docs/Modernisation/21-API-Core-Tests.md`
+- `Docs/Modernisation/22-API-Core-Implementation.md`
+- `Docs/Modernisation/30-Worker-Requirements.md`
+- `Docs/Modernisation/32-Worker-Implementation.md`
+- `Docs/Modernisation/40-React-Frontend-Requirements.md`
+- `Docs/Modernisation/42-React-Frontend-Implementation.md`
+- `Docs/Modernisation/50-Container-Hosting.md`
+- `Docs/Modernisation/Examples/PowerQuerySample.m`
 
-The report store in `UPMS.Web` is built around an `IReportPlugin` interface. Plugins are discovered at startup via dependency injection. Each plugin declares its own parameter schema and generation logic, and can produce any output format (HTML previews, PPTX/CSV downloads, etc.).
+## Notes
 
-Included plugins:
-- **PowerPoint Report Pack** — downloads a simple PPTX summarising ticket data.
-- **Email Notification** — renders an HTML email preview or downloads a ready-to-send `.eml` draft.
-- **Month End Lifecycle Report (Example)** — HTML month-end report with last-12-month lifecycle graphs and configurable detail fields.
-- **Ticket Document Export** — exports a single ticket or a selected ticket set as DOCX or PDF.
-- **Tokenised Template Fill** — fills uploaded email/document/spreadsheet templates with `{{token}}` placeholders.
-- **Status Breakdown (Example)** — HTML breakdown of ticket counts by State (or another field).
-- **Ticket CSV Export (Example)** — downloads tickets as a CSV file.
-- **Field Delta (Example)** — compares ticket field values between two dates (new/removed/changed).
+The container environment used to prepare this package did not include the `.NET SDK`, so the new `.NET 10` projects and tests were added as source and project files without a local compile/run pass in this environment. The frontend package and Docker assets were also prepared as source-level deliverables.
 
-Template uploads are available under `/report-templates`. Developer notes / contract documentation: see [`Docs/Reporting Plugins.md`](Docs/Reporting%20Plugins.md).
 
----
+## Troubleshooting
 
-## Documentation
+- The frontend Dockerfile now installs `yarn@1.22.19` with `--force` because the `node:20-alpine` base image already contains a `yarn` shim, which otherwise causes `EEXIST` during image build.
+- If `docker compose down -v` reports that `upms_default` is still in use, re-run with `--remove-orphans` and remove any stale containers still attached to that network before retrying.
 
-| Document | Description |
-|----------|-------------|
-| [`Docs/Project Overview.md`](Docs/Project%20Overview.md) | What UPMS is, core concepts, intended users |
-| [`Docs/Technical Architecture.md`](Docs/Technical%20Architecture.md) | Project structure, database schema, data flow, plugin design |
-| [`Docs/Build Stages.md`](Docs/Build%20Stages.md) | Implementation stages — what is complete and what is not yet started |
-| [`Docs/Envionment.md`](Docs/Envionment.md) | Development environment specification |
-| [`Docs/DOCKER.md`](Docs/DOCKER.md) | Docker Compose and Dockerfile details |
-| [`Docs/UPMS_DATA_CONSUMER_GUIDE.md`](Docs/UPMS_DATA_CONSUMER_GUIDE.md) | Guide to using the `UPMS.Data` library |
+## Known packaging fixes applied
 
----
+This package includes two important fixes on top of the original modernization scaffold:
 
-## License
+1. **`UPMS.Data/Artifacts` is explicitly un-ignored in `.gitignore`** so the source folder is preserved on Windows case-insensitive working trees.
+2. **`eds-react-app` stylesheet vendoring for Vite builds**. The CGI EDS tarball contains `dist/style.css`, but its package `exports` map does not expose that subpath. The frontend now imports a local vendored copy at `src/styles/eds-react-app.css` so `vite build` succeeds without modifying the upstream package tarball.
 
-See [LICENSE](LICENSE) for details.
+The more permanent upstream library fix would be to add `./dist/style.css` to the `exports` section of the CGI EDS package.
+
+## Notes from the latest patch
+
+- Reporting in the API/worker architecture is now template-first: the concrete example report registrations were removed in favour of the shared `tokenised-template-report` runner.
+- Supported template types are now managed through an extensible registry, with fresh-state starter templates seeded automatically for HTML, EML, TXT, CSV, XML, DOCX, XLSX, and PPTX.
+- The React template workspace now supports type-aware upload, inline editing for text-like templates, export/download, deletion, and direct guidance for starter examples and token syntax.
+- The worker container now starts via the published application host (`./UPMS.Worker`) rather than invoking `dotnet` directly at container entrypoint time.
+- Frontend data tables now explicitly disable the EDS `displaySelected` mode so rows are visible by default.
+- ITSM source import now accepts a broader set of legacy JSON and CSV field names, and canonical aliases such as `ticket_key`, `company`, `title`, and `status` are normalized to the current registered canonical fields.
+- Sample ITSM source definitions and matching snapshot CSV files are available under `Docs/Modernisation/SampleItsmSources/`.

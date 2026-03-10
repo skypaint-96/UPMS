@@ -1,0 +1,17 @@
+{
+  "sourceName": "remedy-managed-service",
+  "displayName": "Remedy Managed Service",
+  "mappings": [
+    { "sourceColumn": "ticket_id", "displayFieldName": "Number", "mandatory": true },
+    { "sourceColumn": "customer", "displayFieldName": "Company", "mandatory": true },
+    { "sourceColumn": "headline", "displayFieldName": "Short Description", "mandatory": false },
+    { "sourceColumn": "details", "displayFieldName": "Description", "mandatory": false },
+    { "sourceColumn": "severity", "displayFieldName": "Priority", "mandatory": false },
+    { "sourceColumn": "state", "displayFieldName": "State", "mandatory": false },
+    { "sourceColumn": "owner", "displayFieldName": "Assigned To", "mandatory": false },
+    { "sourceColumn": "support_group", "displayFieldName": "Assignment Group", "mandatory": false },
+    { "sourceColumn": "category", "displayFieldName": "Category", "mandatory": false },
+    { "sourceColumn": "created_date", "displayFieldName": "Opened At", "mandatory": false },
+    { "sourceColumn": "last_updated", "displayFieldName": "Updated On", "mandatory": false }
+  ]
+}

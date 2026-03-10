@@ -3,6 +3,8 @@ namespace UPMS.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using UPMS.Data.Artifacts;
+using UPMS.Data.Jobs;
 
 /// <summary>
 /// Extension methods for registering UPMS data-layer services with the DI container.
@@ -25,6 +27,17 @@ public static class DataServiceExtensions
         services.AddDbContext<UpmsDbContext>(options =>
             options.UseNpgsql(connectionString));
 
+        services.Configure<ArtifactStorageOptions>(configuration.GetSection("Artifacts"));
+        services.PostConfigure<ArtifactStorageOptions>(options =>
+        {
+            if (string.IsNullOrWhiteSpace(options.RootPath))
+            {
+                options.RootPath = configuration["Artifacts:RootPath"]
+                    ?? Environment.GetEnvironmentVariable("UPMS_ARTIFACTS_ROOT")
+                    ?? "/var/lib/upms";
+            }
+        });
+
         services.AddScoped<ICommandRepository, EfCommandRepository>();
         services.AddScoped<IReadModelService, EfReadModelService>();
         services.AddScoped<IItsmSourceService, ItsmSourceService>();
@@ -32,6 +45,9 @@ public static class DataServiceExtensions
         services.AddScoped<ICanonicalFieldService, CanonicalFieldService>();
         services.AddScoped<UpmsSchemaBootstrapper>();
         services.AddScoped<TicketDataService>();
+        services.AddScoped<TicketDataServiceInstance>();
+        services.AddScoped<IBackgroundJobService, BackgroundJobService>();
+        services.AddSingleton<IArtifactStorage, FileSystemArtifactStorage>();
 
         return services;
     }

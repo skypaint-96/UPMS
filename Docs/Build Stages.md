@@ -126,3 +126,19 @@ Ideas:
 - Saved report configurations
 - Permissions / multi-tenant access control
 - Performance optimisation for very large snapshots
+
+---
+
+## Stage 9 — Split architecture modernization
+
+🟡 In progress
+
+Deliverables added in this implementation:
+
+- `UPMS.Api` (`.NET 10`) for API-first access
+- `UPMS.Worker` (`.NET 10`) for queued ingest/report execution
+- `UPMS.Frontend` (React 19 + CGI EDS) as the primary new UI
+- `UPMS.Ingestion` extracted from the legacy web app
+- `UPMS.Reporting` extracted from the legacy web app
+- database-backed background job queue + shared artifact storage
+- new modernization documentation under `Docs/Modernisation/`

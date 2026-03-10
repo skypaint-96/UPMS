@@ -1,0 +1,20 @@
+UPMS OPERATIONS SUMMARY
+=======================
+Company: {{meta.company}}
+Source : {{meta.itsm_source}}
+As Of  : {{meta.as_of_date}}
+Generated UTC: {{meta.generated_at_utc}}
+
+Ticket Count           : {{kpi.ticket_count}}
+Month End Backlog      : {{kpi.month_end.backlog_current}}
+High Priority Backlog  : {{kpi.month_end.high_priority_backlog_current}}
+
+{{start per ticket State!=Closed scope=page}}
+Ticket: {{ticket.Number}}
+Summary: {{ticket.Short_Description}}
+State: {{ticket.State}}
+Priority: {{ticket.Priority}}
+Assigned To: {{ticket.Assigned_To}}
+Assignment Group: {{ticket.Assignment_Group}}
+Description: {{ticket.Description}}
+{{end per ticket}}

@@ -98,33 +98,43 @@ public class ItsmSourceService : IItsmSourceService
         ArgumentException.ThrowIfNullOrWhiteSpace(sourceFieldName);
         ArgumentException.ThrowIfNullOrWhiteSpace(canonicalName);
 
-        string normalizedCanonicalName = canonicalName.Trim();
-        string normalizedLookup = normalizedCanonicalName.ToLowerInvariant();
+        string normalizedSourceName = sourceName.Trim();
+        string normalizedSourceFieldName = sourceFieldName.Trim();
+        string requestedCanonicalName = canonicalName.Trim();
 
-        var definition = await _context.CanonicalFieldDefinitions
+        var definitions = await _context.CanonicalFieldDefinitions
             .AsNoTracking()
-            .FirstOrDefaultAsync(d => d.Name.ToLower() == normalizedLookup)
-            ?? throw new InvalidOperationException($"Canonical field '{normalizedCanonicalName}' is not registered. Add it on the Canonical Fields page first.");
+            .ToListAsync();
 
-        normalizedCanonicalName = definition.Name;
+        var resolvedCanonicalName = CanonicalFieldAliasRegistry.ResolveRegisteredName(
+            definitions.Select(d => d.Name),
+            requestedCanonicalName);
+
+        var definition = resolvedCanonicalName is null
+            ? null
+            : definitions.FirstOrDefault(d => string.Equals(d.Name, resolvedCanonicalName, StringComparison.OrdinalIgnoreCase));
+
+        if (definition is null)
+            throw new InvalidOperationException($"Canonical field '{requestedCanonicalName}' is not registered. Add it on the Canonical Fields page first.");
+
         bool effectiveRequired = isRequired || definition.IsSystemRequired;
 
         var existing = await _context.ItsmFieldMappings
-            .FirstOrDefaultAsync(m => m.ItsmSource == sourceName && m.SourceFieldName == sourceFieldName);
+            .FirstOrDefaultAsync(m => m.ItsmSource == normalizedSourceName && m.SourceFieldName == normalizedSourceFieldName);
 
         if (existing is null)
         {
             _context.ItsmFieldMappings.Add(new ItsmFieldMapping
             {
-                ItsmSource = sourceName,
-                SourceFieldName = sourceFieldName,
-                CanonicalFieldName = normalizedCanonicalName,
+                ItsmSource = normalizedSourceName,
+                SourceFieldName = normalizedSourceFieldName,
+                CanonicalFieldName = definition.Name,
                 IsRequired = effectiveRequired
             });
         }
         else
         {
-            existing.CanonicalFieldName = normalizedCanonicalName;
+            existing.CanonicalFieldName = definition.Name;
             existing.IsRequired = effectiveRequired;
         }
 

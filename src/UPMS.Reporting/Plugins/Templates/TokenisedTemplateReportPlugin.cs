@@ -1,0 +1,307 @@
+namespace UPMS.Reporting.Plugins.Templates;
+
+using System.Text;
+using UPMS.Data;
+using UPMS.Reporting;
+using UPMS.Reporting.Plugins.Email;
+using UPMS.Reporting.Templates;
+
+/// <summary>
+/// Template-first report runner. Every generated report is driven by an uploaded tokenised template,
+/// with the selected template deciding the output format and authoring experience.
+/// </summary>
+public sealed class TokenisedTemplateReportPlugin : IReportPlugin
+{
+    public const string OutputModeAuto = "Auto";
+    public const string OutputModePreviewHtml = "Preview HTML";
+    public const string OutputModeDownloadFile = "Download Filled File";
+    public const string OutputModeDownloadEml = "Download EML Draft";
+
+    private static readonly IReadOnlyList<string> SupportedDetailFields =
+    [
+        "Number",
+        "State",
+        "Priority",
+        "Assigned To",
+        "Assignment Group",
+        "Short Description",
+        "Description",
+        "Category",
+        "Subcategory",
+        "Business Service",
+        "Service Offering",
+        "Opened At",
+        "Created On",
+        "Updated On",
+        "Resolved At",
+        "Closed At",
+        "Resolution Code",
+        "Root Cause Code",
+        "Root Cause Date",
+        "Workaround"
+    ];
+
+    private readonly TicketDataServiceInstance _dataService;
+    private readonly IReportTemplateStore _templateStore;
+    private readonly ReportTemplateTypeRegistry _typeRegistry;
+
+    public TokenisedTemplateReportPlugin(
+        TicketDataServiceInstance dataService,
+        IReportTemplateStore templateStore,
+        ReportTemplateTypeRegistry typeRegistry)
+    {
+        _dataService = dataService ?? throw new ArgumentNullException(nameof(dataService));
+        _templateStore = templateStore ?? throw new ArgumentNullException(nameof(templateStore));
+        _typeRegistry = typeRegistry ?? throw new ArgumentNullException(nameof(typeRegistry));
+    }
+
+    public string PluginId => "tokenised-template-report";
+    public string DisplayName => "Template-Driven Report Generation";
+    public string Description => "Generates user-facing reports from uploaded tokenised templates, including starter examples for each supported template type.";
+
+    public IReadOnlyList<ReportParameterDefinition> Parameters
+    {
+        get
+        {
+            var templateOptions = _templateStore.GetAllTemplates()
+                .OrderBy(template => template.Kind)
+                .ThenByDescending(template => template.IsStarterTemplate)
+                .ThenBy(template => template.DisplayName, StringComparer.OrdinalIgnoreCase)
+                .Select(template =>
+                {
+                    var typeDefinition = _typeRegistry.Resolve(template);
+                    var typeLabel = typeDefinition?.DisplayName ?? $"{template.Kind} {template.Extension}";
+                    var starterLabel = template.IsStarterTemplate ? " starter" : string.Empty;
+                    return $"{template.Id} | {template.DisplayName} ({typeLabel}{starterLabel})";
+                })
+                .ToList();
+
+            return
+            [
+                new ReportParameterDefinition
+                {
+                    Key = "template_id",
+                    DisplayName = "Template",
+                    Type = ReportParameterType.Select,
+                    IsRequired = true,
+                    Description = "Choose a starter or uploaded template from the report library.",
+                    Options = templateOptions
+                },
+                new ReportParameterDefinition
+                {
+                    Key = "output_mode",
+                    DisplayName = "Output Mode",
+                    Type = ReportParameterType.Select,
+                    IsRequired = false,
+                    Description = "Auto chooses the most natural output based on the selected template type.",
+                    Options = [OutputModeAuto, OutputModePreviewHtml, OutputModeDownloadFile, OutputModeDownloadEml]
+                },
+                new ReportParameterDefinition
+                {
+                    Key = "itsm_source",
+                    DisplayName = "ITSM Source",
+                    Type = ReportParameterType.ItsmSource,
+                    IsRequired = true
+                },
+                new ReportParameterDefinition
+                {
+                    Key = "company",
+                    DisplayName = "Company",
+                    Type = ReportParameterType.Text,
+                    IsRequired = true,
+                    Placeholder = "Start typing a company name",
+                    CanonicalFieldName = "Company"
+                },
+                new ReportParameterDefinition
+                {
+                    Key = "as_of_date",
+                    DisplayName = "As Of Date",
+                    Type = ReportParameterType.Date,
+                    IsRequired = true
+                },
+                new ReportParameterDefinition
+                {
+                    Key = "ticket_keys",
+                    DisplayName = "Ticket Keys / Numbers",
+                    Type = ReportParameterType.TextArea,
+                    IsRequired = false,
+                    Description = "Optional. Limit token generation to the selected ticket set."
+                },
+                new ReportParameterDefinition
+                {
+                    Key = "detail_fields",
+                    DisplayName = "Ticket Detail Fields",
+                    Type = ReportParameterType.MultiSelect,
+                    IsRequired = false,
+                    Description = "Controls the ticket table/list tokens that are generated.",
+                    Options = SupportedDetailFields
+                }
+            ];
+        }
+    }
+
+    public async Task<ReportResult> GenerateAsync(ReportRequest request, CancellationToken ct = default)
+    {
+        if (!request.Parameters.TryGetValue("template_id", out var templateOption) || string.IsNullOrWhiteSpace(templateOption))
+            return ReportResult.Failure("Required parameter 'template_id' is missing.");
+
+        if (!request.Parameters.TryGetValue("itsm_source", out var itsmSource) || string.IsNullOrWhiteSpace(itsmSource))
+            return ReportResult.Failure("Required parameter 'itsm_source' is missing.");
+
+        if (!request.Parameters.TryGetValue("company", out var company) || string.IsNullOrWhiteSpace(company))
+            return ReportResult.Failure("Required parameter 'company' is missing.");
+
+        if (!request.Parameters.TryGetValue("as_of_date", out var asOfDateRaw) || !DateTime.TryParse(asOfDateRaw, out var asOfDate))
+            return ReportResult.Failure("Required parameter 'as_of_date' is missing or invalid.");
+
+        var templateId = ParseTemplateId(templateOption);
+        var template = await _templateStore.GetTemplateContentAsync(templateId, ct);
+        if (template is null)
+            return ReportResult.Failure("The selected template could not be loaded.");
+
+        request.Parameters.TryGetValue("output_mode", out var outputMode);
+        outputMode = string.IsNullOrWhiteSpace(outputMode) ? OutputModeAuto : outputMode.Trim();
+
+        request.Parameters.TryGetValue("ticket_keys", out var ticketKeysRaw);
+        request.Parameters.TryGetValue("detail_fields", out var detailFieldsRaw);
+        var detailFields = ParseMulti(detailFieldsRaw, SupportedDetailFields);
+
+        try
+        {
+            var allTickets = (await _dataService.GetTicketsAsync(itsmSource, company, asOfDate)).ToList();
+            var requestedTicketIds = ParseTicketIds(ticketKeysRaw);
+            var selectedTickets = requestedTicketIds.Count == 0
+                ? allTickets.OrderBy(ticket => ticket.TicketKey, StringComparer.OrdinalIgnoreCase).ToList()
+                : allTickets
+                    .Where(ticket => requestedTicketIds.Contains(ticket.TicketKey)
+                        || requestedTicketIds.Contains(TicketFieldHelpers.GetFieldValue(ticket, "Number", fallback: ticket.TicketKey)))
+                    .OrderBy(ticket => ticket.TicketKey, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+            var renderContext = TemplateReportTokenBuilder.BuildContext(itsmSource, company, asOfDate, selectedTickets, detailFields, request.RequestedBy);
+            var renderedBytes = TemplateTokenRenderer.RenderBytes(template.FileContent, template.Metadata.Extension, renderContext);
+            var renderedText = ReportTemplateContentTypeMapper.IsTextLike(template.Metadata.Extension)
+                ? Encoding.UTF8.GetString(renderedBytes)
+                : null;
+
+            return BuildResult(template.Metadata, renderedBytes, renderedText, renderContext.GlobalTokens, outputMode, company, asOfDate);
+        }
+        catch (Exception ex)
+        {
+            return ReportResult.Failure($"Failed to fill template: {ex.Message}");
+        }
+    }
+
+    private static ReportResult BuildResult(
+        ReportTemplateMetadata metadata,
+        byte[] renderedBytes,
+        string? renderedText,
+        IReadOnlyDictionary<string, string?> tokens,
+        string? outputMode,
+        string company,
+        DateTime asOfDate)
+    {
+        var extension = metadata.Extension;
+        var normalizedOutputMode = string.IsNullOrWhiteSpace(outputMode) ? OutputModeAuto : outputMode;
+
+        if (string.Equals(normalizedOutputMode, OutputModeDownloadEml, StringComparison.OrdinalIgnoreCase)
+            || (string.Equals(normalizedOutputMode, OutputModeAuto, StringComparison.OrdinalIgnoreCase)
+                && metadata.Kind == ReportTemplateKind.Email
+                && (extension.Equals(".html", StringComparison.OrdinalIgnoreCase) || extension.Equals(".htm", StringComparison.OrdinalIgnoreCase))))
+        {
+            var body = renderedText ?? string.Empty;
+            var subjectTemplate = string.IsNullOrWhiteSpace(metadata.SubjectTemplate)
+                ? "UPMS " + metadata.DisplayName + " - {{company}} - {{as_of_date}}"
+                : metadata.SubjectTemplate!;
+            var subject = TemplateTokenRenderer.RenderText(subjectTemplate, tokens);
+            var emlBytes = EmailDraftBuilder.BuildEml(subject, body);
+
+            return new ReportResult
+            {
+                Success = true,
+                OutputType = ReportOutputType.FileDownload,
+                FileName = $"{SanitizeFilePart(metadata.DisplayName)}_{SanitizeFilePart(company)}_{asOfDate:yyyy-MM-dd}.eml",
+                ContentType = "message/rfc822",
+                FileContent = emlBytes
+            };
+        }
+
+        if ((extension.Equals(".html", StringComparison.OrdinalIgnoreCase) || extension.Equals(".htm", StringComparison.OrdinalIgnoreCase))
+            && !string.Equals(normalizedOutputMode, OutputModeDownloadFile, StringComparison.OrdinalIgnoreCase))
+        {
+            return new ReportResult
+            {
+                Success = true,
+                OutputType = ReportOutputType.HtmlContent,
+                HtmlContent = renderedText
+            };
+        }
+
+        if (extension.Equals(".txt", StringComparison.OrdinalIgnoreCase)
+            && string.Equals(normalizedOutputMode, OutputModePreviewHtml, StringComparison.OrdinalIgnoreCase) == false
+            && string.Equals(normalizedOutputMode, OutputModeDownloadFile, StringComparison.OrdinalIgnoreCase) == false
+            && string.Equals(normalizedOutputMode, OutputModeDownloadEml, StringComparison.OrdinalIgnoreCase) == false)
+        {
+            return new ReportResult
+            {
+                Success = true,
+                OutputType = ReportOutputType.PlainText,
+                HtmlContent = renderedText
+            };
+        }
+
+        return new ReportResult
+        {
+            Success = true,
+            OutputType = ReportOutputType.FileDownload,
+            FileName = $"{SanitizeFilePart(metadata.DisplayName)}_{asOfDate:yyyy-MM-dd}{metadata.Extension}",
+            ContentType = metadata.ContentType,
+            FileContent = renderedBytes
+        };
+    }
+
+    private static string ParseTemplateId(string selectedOption)
+    {
+        var separatorIndex = selectedOption.IndexOf('|');
+        return separatorIndex >= 0
+            ? selectedOption[..separatorIndex].Trim()
+            : selectedOption.Trim();
+    }
+
+    private static List<string> ParseMulti(string? raw, IReadOnlyList<string> supported)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+            return [];
+
+        var supportedSet = new HashSet<string>(supported, StringComparer.OrdinalIgnoreCase);
+        return raw
+            .Split([',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(supportedSet.Contains)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static HashSet<string> ParseTicketIds(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+            return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        return new HashSet<string>(
+            raw.Split([',', ';', '\r', '\n', '\t'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
+            StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static string SanitizeFilePart(string value)
+    {
+        StringBuilder sb = new(value.Length);
+        foreach (var ch in value)
+        {
+            if (char.IsLetterOrDigit(ch) || ch is '_' or '-')
+                sb.Append(ch);
+            else if (char.IsWhiteSpace(ch))
+                sb.Append('_');
+        }
+
+        return sb.Length == 0 ? "template" : sb.ToString();
+    }
+}

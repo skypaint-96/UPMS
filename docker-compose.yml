@@ -1,28 +1,49 @@
-# docker-compose for UPMS
-# NOTE: Do NOT commit secret values or .env files to version control.
 services:
-  UPMS_web:
-    image: ${DOCKER_REGISTRY-}upmsweb
+  UPMS_frontend:
+    image: ${DOCKER_REGISTRY-}upmsfrontend
     build:
       context: .
-      dockerfile: src/UPMS.Web/Dockerfile
+      dockerfile: src/UPMS.Frontend/Dockerfile
+    ports:
+      - "8080:80"
+    depends_on:
+      UPMS_api:
+        condition: service_started
+
+  UPMS_api:
+    image: ${DOCKER_REGISTRY-}upmsapi
+    build:
+      context: .
+      dockerfile: src/UPMS.Api/Dockerfile
     ports:
       - "8081:8080"
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
       - ASPNETCORE_URLS=http://+:8080
-      - AUTH_MODE=Entra
-      # Prefer supplying the DB connection string via a docker secret file.
-      - UPMS_CONNECTION_STRING_FILE=/run/secrets/upms_connection_string
-      # Azure AD settings: ClientId / TenantId may be provided as env vars; ClientSecret should be provided as a docker secret.
-      - AzureAd__ClientId=${AZUREAD__CLIENTID:-}
-      - AzureAd__TenantId=${AZUREAD__TENANTID:-}
-      - AzureAd__ClientSecret_FILE=/run/secrets/upms_azure_client_secret
-    # Removed `secrets:` here because docker compose (non-swarm) does not support external secrets.
-    # In Swarm/Kubernetes you can mount secrets to /run/secrets and keep the `secrets:` mapping.
-    # The app reads secret files from /run/secrets when available (see *_FILE env vars above).
+      - UPMS_CONNECTION_STRING=Host=UPMS_db;Port=5432;Database=upms;Username=upms;Password=upms
+      - UPMS_ARTIFACTS_ROOT=/var/lib/upms
+      - Auth__Mode=ApiKey
+      - Auth__ApiKey__HeaderName=X-UPMS-API-Key
+      - Auth__ApiKey__Keys__0__Name=external
+      - Auth__ApiKey__Keys__0__Value=change-me
+      - Auth__ApiKey__Keys__0__Roles__0=upms-reader
+      - Auth__ApiKey__Keys__0__Roles__1=upms-writer
     volumes:
-      - upms_keys:/app/keys
+      - upms_artifacts:/var/lib/upms
+    depends_on:
+      UPMS_db:
+        condition: service_healthy
+
+  UPMS_worker:
+    image: ${DOCKER_REGISTRY-}upmsworker
+    build:
+      context: .
+      dockerfile: src/UPMS.Worker/Dockerfile
+    environment:
+      - UPMS_CONNECTION_STRING=Host=UPMS_db;Port=5432;Database=upms;Username=upms;Password=upms
+      - UPMS_ARTIFACTS_ROOT=/var/lib/upms
+    volumes:
+      - upms_artifacts:/var/lib/upms
     depends_on:
       UPMS_db:
         condition: service_healthy
@@ -32,11 +53,9 @@ services:
     ports:
       - "5432:5432"
     environment:
-      # Use POSTGRES_PASSWORD_FILE so password can be supplied via docker secret
       - POSTGRES_USER=upms
+      - POSTGRES_PASSWORD=upms
       - POSTGRES_DB=upms
-    # Removed `secrets:` here because docker compose (non-swarm) does not support external secrets.
-    # For Swarm, provide the DB password as a Docker secret mounted at /run/secrets/upms_db_password.
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -48,22 +67,4 @@ services:
 
 volumes:
   pgdata:
-  upms_keys:
-
-# Swarm-only: example secret definitions (commented out for local compose)
-# To enable secrets in Docker Swarm, uncomment and manage secrets externally:
-# secrets:
-#   upms_connection_string:
-#     external: true
-#   upms_azure_client_secret:
-#     external: true
-#   upms_db_password:
-#     external: true
-#
-# Example commands to create secrets in Swarm:
-# docker secret create upms_connection_string ./secrets/upms_connection_string
-# docker secret create upms_azure_client_secret ./secrets/upms_azure_client_secret
-# docker secret create upms_db_password ./secrets/upms_db_password
-#
-# Local development: provide secrets via environment variables, a .env file, or mount host files to ./secrets/.
-# Warning: do NOT commit .env or files in ./secrets/ to version control.
+  upms_artifacts:

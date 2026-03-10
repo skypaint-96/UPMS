@@ -3,7 +3,12 @@
     <Build />
   </Project>
   <Project Path="src/UPMS.Data/UPMS.Data.csproj" />
+  <Project Path="src/UPMS.Ingestion/UPMS.Ingestion.csproj" Id="1a1c0fa2-e997-4db1-8c6f-2f38dfc51211" />
+  <Project Path="src/UPMS.Reporting/UPMS.Reporting.csproj" Id="3a677d9e-22c8-4f11-bd42-3d3d6a90bd80" />
+  <Project Path="src/UPMS.Api/UPMS.Api.csproj" Id="5cba27fd-73f9-4f12-b10d-6cf5df9afea7" />
+  <Project Path="src/UPMS.Worker/UPMS.Worker.csproj" Id="f7d8dfe5-5fd7-48a8-8d6f-1c89fc78ec62" />
   <Project Path="src/UPMS.Web/UPMS.Web.csproj" Id="01e42bce-319c-41e7-9cbc-100a5338834a" />
   <Project Path="tests/UPMS.Data.Tests/UPMS.Data.Tests.csproj" Id="f646b49d-dff0-431b-b606-52ccbb182723" />
+  <Project Path="tests/UPMS.Api.Tests/UPMS.Api.Tests.csproj" Id="28e2b278-d58f-4c1d-b2da-f3ca4cd339bf" />
   <Project Path="tests/UPMS.Web.Tests/UPMS.Web.Tests.csproj" Id="54c1e2ae-4537-4557-abbb-4903efd5c612" />
 </Solution>

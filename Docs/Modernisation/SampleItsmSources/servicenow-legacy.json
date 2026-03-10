@@ -1,0 +1,19 @@
+{
+  "Source": {
+    "Name": "servicenow-legacy-a",
+    "DisplayLabel": "ServiceNow Legacy - Client A"
+  },
+  "FieldMappings": [
+    { "sourceField": "number", "canonicalField": "ticket_key", "required": true },
+    { "sourceField": "company", "canonicalField": "company", "required": true },
+    { "sourceField": "short_description", "canonicalField": "title", "required": false },
+    { "sourceField": "description", "canonicalField": "description", "required": false },
+    { "sourceField": "priority", "canonicalField": "priority", "required": false },
+    { "sourceField": "incident_state", "canonicalField": "status", "required": false },
+    { "sourceField": "assigned_to", "canonicalField": "assigned_to", "required": false },
+    { "sourceField": "assignment_group", "canonicalField": "assignment_group", "required": false },
+    { "sourceField": "category", "canonicalField": "category", "required": false },
+    { "sourceField": "opened_at", "canonicalField": "opened_at", "required": false },
+    { "sourceField": "updated_on", "canonicalField": "updated_on", "required": false }
+  ]
+}

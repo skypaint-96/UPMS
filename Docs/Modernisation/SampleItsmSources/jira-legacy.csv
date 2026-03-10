@@ -1,0 +1,12 @@
+sourceFieldName,canonicalFieldName,isRequired
+issue_key,ticket_key,true
+customer_name,company,true
+summary,title,false
+description,description,false
+priority_name,priority,false
+status_name,status,false
+assignee_name,assigned_to,false
+team_name,assignment_group,false
+issue_type,category,false
+created_at,opened_at,false
+updated_at,updated_on,false
