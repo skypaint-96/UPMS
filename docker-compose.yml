@@ -1,6 +1,6 @@
 services:
   UPMS_frontend:
-    image: ${DOCKER_REGISTRY-}upmsfrontend
+    image: ghcr.io/skypaint-96/upms-frontend:latest
     build:
       context: .
       dockerfile: src/UPMS.Frontend/Dockerfile
@@ -11,7 +11,7 @@ services:
         condition: service_started
 
   UPMS_api:
-    image: ${DOCKER_REGISTRY-}upmsapi
+    image: ghcr.io/skypaint-96/upms-api:latest
     build:
       context: .
       dockerfile: src/UPMS.Api/Dockerfile
@@ -20,7 +20,7 @@ services:
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
       - ASPNETCORE_URLS=http://+:8080
-      - UPMS_CONNECTION_STRING=Host=UPMS_db;Port=5432;Database=upms;Username=upms;Password=upms
+      - UPMS_CONNECTION_STRING=Host=UPMS_db;Port=5432;Database=upms;Username=upms;Password={{ secrets.UPMS_DB_PASSWORD }}
       - UPMS_ARTIFACTS_ROOT=/var/lib/upms
       - Auth__Mode=ApiKey
       - Auth__ApiKey__HeaderName=X-UPMS-API-Key
@@ -35,12 +35,12 @@ services:
         condition: service_healthy
 
   UPMS_worker:
-    image: ${DOCKER_REGISTRY-}upmsworker
+    image: ghcr.io/skypaint-96/upms-worker:latest
     build:
       context: .
       dockerfile: src/UPMS.Worker/Dockerfile
     environment:
-      - UPMS_CONNECTION_STRING=Host=UPMS_db;Port=5432;Database=upms;Username=upms;Password=upms
+      - UPMS_CONNECTION_STRING=Host=UPMS_db;Port=5432;Database=upms;Username=upms;Password={{ secrets.UPMS_DB_PASSWORD }}
       - UPMS_ARTIFACTS_ROOT=/var/lib/upms
     volumes:
       - upms_artifacts:/var/lib/upms
@@ -54,7 +54,7 @@ services:
       - "5432:5432"
     environment:
       - POSTGRES_USER=upms
-      - POSTGRES_PASSWORD=upms
+      - POSTGRES_PASSWORD={{ secrets.UPMS_DB_PASSWORD }}
       - POSTGRES_DB=upms
     volumes:
       - pgdata:/var/lib/postgresql/data
