@@ -1,5 +1,7 @@
 # UPMS — Unified Problem Management System
 
+[![Prod](https://github.com/skypaint-96/UPMS/actions/workflows/ci-cd-upms.yml/badge.svg?branch=Production)](https://github.com/skypaint-96/UPMS/actions/workflows/ci-cd-upms.yml) [![Dev](https://github.com/skypaint-96/UPMS/actions/workflows/ci-cd-upms.yml/badge.svg?branch=Development)](https://github.com/skypaint-96/UPMS/actions/workflows/ci-cd-upms.yml)
+
 UPMS is a historical problem-management platform for teams working across multiple ITSM sources. It ingests exported ticket snapshots, stores field-level change history in PostgreSQL, reconstructs ticket state at any chosen time, and generates reporting outputs from a reusable template-first reporting system.
 
 This repository now contains both:

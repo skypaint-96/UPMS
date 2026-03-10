@@ -105,16 +105,22 @@ jobs:
         include:
           - name: UPMS.Api
             project: src/UPMS.Api
+            image: upms-api
           - name: UPMS.Data
             project: src/UPMS.Data
+            image: upms-data
           - name: UPMS.Ingestion
             project: src/UPMS.Ingestion
+            image: upms-ingestion
           - name: UPMS.Reporting
             project: src/UPMS.Reporting
+            image: upms-reporting
           - name: UPMS.Worker
             project: src/UPMS.Worker
+            image: upms-worker
           - name: UPMS.Frontend
             project: src/UPMS.Frontend
+            image: upms-frontend
     steps:
       - uses: actions/checkout@v4
 
@@ -138,4 +144,4 @@ jobs:
           context: ${{ matrix.project }}
           file: ${{ matrix.project }}/Dockerfile
           push: true
-          tags: ghcr.io/${{ github.repository_owner }}/${{ matrix.name }}:${{ github.sha }}
+          tags: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:${{ github.sha }}
