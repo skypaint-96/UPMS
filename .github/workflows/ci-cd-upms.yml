@@ -83,7 +83,7 @@ jobs:
 
       - name: Install yarn (for legacy Yarn v1 projects)
         if: matrix.kind == 'node'
-        run: npm install -g yarn
+        run: npm install -g yarn@1.22.19 --force
 
       - name: Install frontend deps
         if: matrix.kind == 'node'
