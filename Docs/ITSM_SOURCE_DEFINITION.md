@@ -42,11 +42,11 @@ A set of rows in the `itsm_field_mapping` table. Each row says:
 
 | `itsm_source` | `source_field_name` | `canonical_field_name` |
 |---------------|---------------------|------------------------|
-| `servicenow-client-a` | `number` | `ticket_key` |
-| `servicenow-client-a` | `company` | `company` |
-| `servicenow-client-a` | `short_description` | `title` |
-| `servicenow-client-a` | `state` | `status` |
-| `servicenow-client-a` | `priority` | `priority` |
+| `servicenow-client-a` | `number` | `Number` |
+| `servicenow-client-a` | `company` | `Company` |
+| `servicenow-client-a` | `short_description` | `Short Description` |
+| `servicenow-client-a` | `state` | `State` |
+| `servicenow-client-a` | `priority` | `Priority` |
 
 Any CSV column for this source that has a mapping row is stored in `field_change` under the canonical name. Any column without a mapping row is stored under its raw source column name (fallback — no data is lost).
 
@@ -60,30 +60,30 @@ If any required column is absent from the CSV header row, the upload is rejected
 
 ## Built-in Canonical Names
 
-The following canonical names are the standard set used throughout UPMS. You are not required to use all of them, and you may also use any custom canonical name by simply typing it into the mapping form. However, queries, reports, and the ticket viewer are built around these standard names.
+The following canonical names are the standard set used throughout UPMS. Current defaults use title-case registry names such as `Number`, `Company`, `Short Description`, and `State`. Legacy aliases such as `ticket_key`, `company`, `title`, and `status` are still accepted during import. You are not required to use all of them, and you may also use any custom canonical name by simply typing it into the mapping form.
 
 | Canonical Name | Typical Meaning |
 |----------------|-----------------|
-| `ticket_key` | The unique identifier for the ticket (e.g. `INC0001234`, `JIRA-5678`) |
-| `company` | The company or customer the ticket belongs to — **must be mapped** for company scoping to work |
-| `title` | Short summary / subject line of the ticket |
-| `description` | Full description or body of the ticket |
-| `priority` | Priority level (e.g. `High`, `Medium`, `Low`) |
-| `status` | Current workflow state (e.g. `New`, `In Progress`, `Resolved`) |
-| `created_date` | When the ticket was originally created in the source system |
-| `updated_date` | When the ticket was last updated in the source system |
-| `assigned_to` | The person or team the ticket is assigned to |
-| `category` | The service category or issue type |
+| `Number` | The source-system ticket number (e.g. `INC0001234`, `JIRA-5678`) used to derive the stored `ticket_key` |
+| `Company` | The company or customer the ticket belongs to — **must be mapped** for company scoping to work |
+| `Short Description` | Short summary / subject line of the ticket |
+| `Description` | Full description or body of the ticket |
+| `Priority` | Priority level (e.g. `High`, `Medium`, `Low`) |
+| `State` | Current workflow state (e.g. `New`, `In Progress`, `Resolved`) |
+| `Created On` | When the ticket was originally created in the source system |
+| `Updated On` | When the ticket was last updated in the source system |
+| `Assigned To` | The person or team the ticket is assigned to |
+| `Category` | The service category or issue type |
 
-> **Important**: The `company` canonical name is special. The ingest pipeline reads the company for each ticket from the column mapped to `company` in the selected ITSM source. If no column is mapped to `company`, the ingest pipeline cannot determine which company each ticket belongs to, and upload will fail.
+> **Important**: The `Company` canonical name is special. The ingest pipeline reads the company for each ticket from the column mapped to `Company` in the selected ITSM source. If no column is mapped to `Company`, the ingest pipeline cannot determine which company each ticket belongs to, and upload will fail.
 
-> **Important**: The `ticket_key` canonical name identifies the ticket's unique identifier. The column mapped to `ticket_key` provides the value stored in `snapshot_ticket.ticket_key` and used for point-in-time reconstruction. If no column is mapped to `ticket_key`, the ingest pipeline cannot create ticket records.
+> **Important**: The `Number` canonical name identifies the source-system ticket number. The column mapped to `Number` provides the value used when deriving `snapshot_ticket.ticket_key` for point-in-time reconstruction. If no column is mapped to `Number`, the ingest pipeline cannot create ticket records.
 
 ---
 
 ## Managing ITSM Sources
 
-ITSM sources are managed through the **ITSM Source Management** page at `/itsm-sources` in the UPMS web portal.
+ITSM sources are managed through the **ITSM Source Management** page at `/itsm-sources` in the UPMS frontend.
 
 ### Adding a New ITSM Source
 
@@ -102,7 +102,7 @@ After creating a source, define field mappings to tell UPMS how your ITSM export
 2. Click **Add Mapping**.
 3. Enter:
    - **Source Column Name**: The exact column header as it appears in your ITSM export CSV (e.g. `short_description`). Case-sensitive.
-   - **Canonical Name**: The canonical name to use when storing this field (e.g. `title`). See the built-in canonical names table above.
+   - **Canonical Name**: The canonical name to use when storing this field (e.g. `Short Description`). See the built-in canonical names table above.
    - **Required**: Check this box if this column must always be present in uploaded CSV files for this source.
 4. Save.
 
@@ -169,25 +169,25 @@ Step 3 — For each data row:
        priority=High, state=In Progress, u_custom_99=BATCH-7
 
   Lookup canonical names via IItsmFieldMappingService.GetCanonicalName:
-    "number"            → "ticket_key"        (mapped)
-    "company"           → "company"            (mapped)
-    "short_description" → "title"              (mapped)
-    "priority"          → "priority"           (mapped)
-    "state"             → "status"             (mapped)
+    "number"            → "Number"            (mapped)
+    "company"           → "Company"           (mapped)
+    "short_description" → "Short Description" (mapped)
+    "priority"          → "Priority"          (mapped)
+    "state"             → "State"             (mapped)
     "u_custom_99"       → "u_custom_99"        (NOT mapped — fallback to raw name)
 
-  Company = row["company"] = "Acme Corp"   ← from the data, not the form
-  TicketKey = row["number"] resolved via ticket_key mapping = "INC0001234"
+  Company = row["company"] = "Acme Corp"   ← captured through the `Company` mapping
+  TicketKey = TicketKeyFactory.Compose("servicenow-client-a", "Acme Corp", "INC0001234")
 
-  Insert snapshot_ticket: (snapshotId, "INC0001234", "Acme Corp")
+  Insert snapshot_ticket: (snapshotId, "servicenow-client-a::Acme Corp::INC0001234", "Acme Corp")
 
   Insert field_change rows:
-    (ticket_key="INC0001234", company="Acme Corp", field_name="ticket_key",  field_value="INC0001234")
-    (ticket_key="INC0001234", company="Acme Corp", field_name="company",     field_value="Acme Corp")
-    (ticket_key="INC0001234", company="Acme Corp", field_name="title",       field_value="Cannot login")
-    (ticket_key="INC0001234", company="Acme Corp", field_name="priority",    field_value="High")
-    (ticket_key="INC0001234", company="Acme Corp", field_name="status",      field_value="In Progress")
-    (ticket_key="INC0001234", company="Acme Corp", field_name="u_custom_99", field_value="BATCH-7")
+    (ticket_key="servicenow-client-a::Acme Corp::INC0001234", company="Acme Corp", field_name="Number",            field_value="INC0001234")
+    (ticket_key="servicenow-client-a::Acme Corp::INC0001234", company="Acme Corp", field_name="Company",           field_value="Acme Corp")
+    (ticket_key="servicenow-client-a::Acme Corp::INC0001234", company="Acme Corp", field_name="Short Description", field_value="Cannot login")
+    (ticket_key="servicenow-client-a::Acme Corp::INC0001234", company="Acme Corp", field_name="Priority",          field_value="High")
+    (ticket_key="servicenow-client-a::Acme Corp::INC0001234", company="Acme Corp", field_name="State",             field_value="In Progress")
+    (ticket_key="servicenow-client-a::Acme Corp::INC0001234", company="Acme Corp", field_name="u_custom_99",       field_value="BATCH-7")
 ```
 
 The result: all mapped columns are normalised to canonical names; the unmapped column `u_custom_99` is preserved as-is. Nothing is discarded.
@@ -225,7 +225,7 @@ public class ItsmFieldMapping
 }
 ```
 
-The concrete implementation [`ItsmFieldMappingService`](../src/UPMS.Data/ItsmFieldMappingService.cs) is database-backed (EF Core + Npgsql) and is registered with DI by `UPMS.Web` when calling `AddUpmsData(...)`.
+The concrete implementation [`ItsmFieldMappingService`](../src/UPMS.Data/ItsmFieldMappingService.cs) is database-backed (EF Core + Npgsql) and is registered with DI by the API and worker when calling `AddUpmsData(...)`.
 
 ---
 
@@ -259,17 +259,17 @@ The concrete implementation [`ItsmFieldMappingService`](../src/UPMS.Data/ItsmFie
 
 ## Cross-Source Normalisation
 
-The primary benefit of canonical names is that ticket data from different ITSM sources can be queried with the same field name. Once mapped, all sources store their "current state" field under `status`, their "short summary" under `title`, and their "assignee" under `assigned_to` — regardless of what the source called those fields.
+The primary benefit of canonical names is that ticket data from different ITSM sources can be queried with the same field name. Once mapped, all sources store their current state under `State`, their short summary under `Short Description`, and their assignee under `Assigned To` — regardless of what the source called those fields.
 
 Example: Two sources, one query.
 
 | Source | Source Column | Canonical Name |
 |--------|---------------|----------------|
-| `servicenow-client-a` | `state` | `status` |
-| `servicenow-internal` | `incident_state` | `status` |
-| `jira-eng` | `status` | `status` |
+| `servicenow-client-a` | `state` | `State` |
+| `servicenow-internal` | `incident_state` | `State` |
+| `jira-eng` | `status` | `State` |
 
-After ingest, all three sources have `field_change` rows with `field_name = "status"`. A report or query filtering on `field_name = "status"` returns consistent results across all sources without needing to know which source each ticket came from.
+After ingest, all three sources have `field_change` rows with `field_name = "State"`. A report or query filtering on `field_name = "State"` returns consistent results across all sources without needing to know which source each ticket came from.
 
 Sources that have not yet been mapped still work — their raw column names are stored as-is. The fallback ensures no data is ever discarded during ingest, even before mappings are configured.
 
@@ -277,7 +277,7 @@ Sources that have not yet been mapped still work — their raw column names are 
 
 ## Related Documentation
 
-- [Project Overview](Project%20Overview.md) — high-level description of ITSM sources as named instances
-- [Technical Architecture](Technical%20Architecture.md) — database schema detail and ingest pipeline
-- [Build Stages](Build%20Stages.md) — Stage 3 (ITSM Source Definition) and Stage 4 (ITSM Source Management UI) implementation plans
+- [README](../README.md) — top-level architecture and runtime overview
+- [Docker Setup](DOCKER.md) — container runtime and local execution notes
 - [UPMS Data Consumer Guide](UPMS_DATA_CONSUMER_GUIDE.md) — how to use `IItsmFieldMappingService` and `TicketDataService` together during ingest
+- [Modernisation Architecture Blueprint](Modernisation/10-Architecture-Blueprint.md) — current split-runtime architecture

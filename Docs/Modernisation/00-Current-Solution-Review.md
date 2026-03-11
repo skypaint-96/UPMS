@@ -2,7 +2,7 @@
 
 ## What the existing UPMS does well
 
-The current UPMS repository is already a solid domain-first system for historical problem-management data. The existing application is a **single deployable Blazor Server web app** backed by PostgreSQL and a shared `.NET 10` data library.
+The current UPMS repository is a domain-first system for historical problem-management data built around a split API, worker, frontend, and shared `.NET 10` libraries.
 
 The current platform purpose is clear:
 
@@ -28,18 +28,15 @@ The current `UPMS.Data` library already supports:
 - ITSM source and field-mapping management
 - EF Core migrations and PostgreSQL schema bootstrapping
 
-### User-facing web experience
+### User-facing application surface
 
-The existing `UPMS.Web` application already provides:
+The active API, worker, and React frontend stack provides:
 
-- dashboard/home page
-- snapshot browsing and detail pages
-- ticket search and ticket detail pages
-- CSV/JSON upload workflow
+- dashboard and ticket browsing pages
+- snapshot browsing and upload workflows
 - ITSM source management UI
-- report store UI
-- report template storage UI
-- document export and download endpoints
+- report generation and template-library workflows
+- background job execution and artifact download endpoints
 
 ### Reporting platform
 
@@ -63,25 +60,18 @@ The existing repo already contains meaningful automated tests for:
 - multi-tenant isolation across companies/sources
 - ingest behaviour
 - report/plugin registration
-- UI routes and page behaviour in the legacy Blazor app
+- API routes, data workflows, and the active application surface
 
-## Current architectural constraint
+## Current architectural posture
 
-The main constraint is not the domain model; it is the deployment shape.
+The main strength of the current repository is that the runtime shape now matches the target delivery model:
 
-Today the application is still primarily a **monolithic web process**:
+- API boundary for frontend and external consumers
+- separate React SPA
+- separate worker process for long-running jobs
+- shared ingestion and reporting libraries reused across runtimes
 
-- no separate API boundary
-- no separate React SPA
-- no separate worker process for long-running jobs
-- reporting and ingest logic are hosted directly inside the web app
-
-That makes the current solution harder to:
-
-- expose safely to external consumers such as Excel Power Query
-- scale independently by workload type
-- move large ingest/report operations off the request thread
-- adopt a modern frontend independently of backend changes
+That keeps the domain model reusable while allowing frontend, API, and job execution concerns to evolve independently.
 
 ## Modernisation approach used in this implementation
 
@@ -99,4 +89,3 @@ The resulting target shape is:
 - `UPMS.Api` as the primary application boundary
 - `UPMS.Worker` for background ingest/report jobs
 - `UPMS.Frontend` as the primary CGI EDS React user interface
-- `UPMS.Web` retained as a legacy reference/transition component

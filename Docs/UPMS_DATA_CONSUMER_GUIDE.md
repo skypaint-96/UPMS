@@ -18,7 +18,7 @@ This guide explains how to use the `UPMS.Data` library to **store snapshots** an
   - `IItsmSourceService`
   - `IItsmFieldMappingService`
 
-In UPMS itself, CSV/JSON parsing and ingest orchestration happens in `UPMS.Web` (`SnapshotIngestService`).
+In UPMS itself, CSV/JSON parsing and ingest orchestration happens in `UPMS.Ingestion` and is hosted by `UPMS.Api` and `UPMS.Worker`.
 
 ---
 
@@ -38,7 +38,7 @@ In UPMS itself, CSV/JSON parsing and ingest orchestration happens in `UPMS.Web` 
   - Core write and point-in-time read logic
 
 - **`TicketDataServiceInstance`** (scoped)
-  - Thin wrapper used by the web app. External consumers can inject either `TicketDataService` or `TicketDataServiceInstance`.
+  - Thin wrapper used by higher-level services. External consumers can inject either `TicketDataService` or `TicketDataServiceInstance`.
 
 - **`ItsmSourceService` / `ItsmFieldMappingService`**
   - Manage sources and mappings used by ingest
@@ -48,7 +48,7 @@ In UPMS itself, CSV/JSON parsing and ingest orchestration happens in `UPMS.Web` 
 - Production DB: PostgreSQL (via EF Core + Npgsql)
 - Tests: use SQLite in-memory (also via EF Core)
 
-Schema is managed via EF Core migrations (`src/UPMS.Data/Migrations`). `UPMS.Web` runs migrations automatically at startup.
+Schema is managed via EF Core migrations (`src/UPMS.Data/Migrations`). `UPMS.Api` and `UPMS.Worker` apply migrations automatically at startup.
 
 ---
 
@@ -120,26 +120,26 @@ A snapshot ingest typically does:
 2. Add the roster of tickets in that snapshot (`snapshot_ticket`)
 3. Record field values observed for each ticket (`field_change`)
 
-In UPMS.Web, `SnapshotIngestService` handles parsing CSV/JSON and uses:
+In `UPMS.Ingestion`, `SnapshotIngestService` handles parsing CSV/JSON and uses:
 
 - `IItsmSourceService` to validate required columns and apply source→canonical mappings
 - `TicketDataService` to write snapshot data
 
-If you are ingesting outside `UPMS.Web`, follow the same pattern.
+If you are ingesting outside the hosted API and worker path, follow the same pattern.
 
 ---
 
-## Snapshot CSV Format (used by UPMS.Web)
+## Snapshot CSV Format (used by UPMS.Ingestion)
 
-UPMS.Web expects a “flat table” CSV:
+The UPMS ingestion services expect a “flat table” CSV:
 
 - One row = one ticket
 - One column = one field
 
 Minimum expectations:
 
-- There must be a mapping for canonical field **`company`**
-- There must be a mapping for canonical field **`ticket_number`** (legacy alias: `ticket_key`)
+- There must be a mapping for canonical field **`Company`**
+- There must be a mapping for canonical field **`Number`** (legacy aliases such as `ticket_number` and `ticket_key` are also accepted)
 
 The ingest service derives `ticket_key` using:
 

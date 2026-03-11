@@ -20,12 +20,12 @@ services:
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
       - ASPNETCORE_URLS=http://+:8080
-      - UPMS_CONNECTION_STRING=Host=UPMS_db;Port=5432;Database=upms;Username=upms;Password={{ secrets.UPMS_DB_PASSWORD }}
+      - UPMS_CONNECTION_STRING=Host=UPMS_db;Port=5432;Database=upms;Username=upms;Password=${UPMS_DB_PASSWORD:-upms}
       - UPMS_ARTIFACTS_ROOT=/var/lib/upms
       - Auth__Mode=ApiKey
       - Auth__ApiKey__HeaderName=X-UPMS-API-Key
       - Auth__ApiKey__Keys__0__Name=external
-      - Auth__ApiKey__Keys__0__Value=change-me
+      - Auth__ApiKey__Keys__0__Value=${UPMS_API_KEY:-change-me}
       - Auth__ApiKey__Keys__0__Roles__0=upms-reader
       - Auth__ApiKey__Keys__0__Roles__1=upms-writer
     volumes:
@@ -40,7 +40,7 @@ services:
       context: .
       dockerfile: src/UPMS.Worker/Dockerfile
     environment:
-      - UPMS_CONNECTION_STRING=Host=UPMS_db;Port=5432;Database=upms;Username=upms;Password={{ secrets.UPMS_DB_PASSWORD }}
+      - UPMS_CONNECTION_STRING=Host=UPMS_db;Port=5432;Database=upms;Username=upms;Password=${UPMS_DB_PASSWORD:-upms}
       - UPMS_ARTIFACTS_ROOT=/var/lib/upms
     volumes:
       - upms_artifacts:/var/lib/upms
@@ -54,7 +54,7 @@ services:
       - "5432:5432"
     environment:
       - POSTGRES_USER=upms
-      - POSTGRES_PASSWORD={{ secrets.UPMS_DB_PASSWORD }}
+      - POSTGRES_PASSWORD=${UPMS_DB_PASSWORD:-upms}
       - POSTGRES_DB=upms
     volumes:
       - pgdata:/var/lib/postgresql/data
