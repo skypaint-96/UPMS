@@ -1,0 +1,108 @@
+<!-- Suggested subject: UPMS {{company}} new problem investigation - {{ticket.Number}} - {{as_of_date}} -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>UPMS new problem investigation</title>
+</head>
+<body style="margin:0;padding:0;background-color:#efeff4;">
+  <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;">New problem investigation notice from UPMS.</div>
+  <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="width:100%;background-color:#efeff4;">
+    <tr>
+      <td align="center" style="padding:24px 12px;">
+        <table role="presentation" cellpadding="0" cellspacing="0" width="760" style="width:760px;max-width:760px;background:#ffffff;border-collapse:collapse;">
+          <tr>
+            <td style="height:10px;background:#5236AB;font-size:0;line-height:0;">&nbsp;</td>
+          </tr>
+          <tr>
+            <td style="padding:34px 48px 16px 48px;font-family:Arial,Helvetica,sans-serif;color:#2E3133;">
+              <p style="margin:0 0 18px 0;font-size:12px;letter-spacing:1.2px;text-transform:uppercase;font-weight:bold;color:#5236AB;">UPMS problem management</p>
+              <h1 style="margin:0;font-size:40px;line-height:1.08;font-weight:400;color:#000000;">Problem investigation opened</h1>
+              <p style="margin:6px 0 0 0;font-size:22px;line-height:1.18;color:#5236AB;">{{ticket.Number}} — {{ticket.Short_Description}}</p>
+            </td>
+          </tr>
+          
+<tr>
+  <td style="padding:0 48px 8px 48px;font-family:Arial,Helvetica,sans-serif;color:#2E3133;">
+    <p style="margin:0 0 18px 0;font-size:16px;line-height:1.65;">A formal problem investigation has been opened for <strong>{{company}}</strong>. Use this template when one primary record is being introduced to stakeholders and the latest ticket snapshot should be shared without rewriting the content manually.</p>
+    <p style="margin:0 0 28px 0;font-size:16px;line-height:1.65;">The current investigation is tracked as <strong>{{ticket.Number}}</strong> in <strong>{{ticket.State}}</strong> state with <strong>{{ticket.Priority}}</strong> priority.</p>
+    <div style="margin:0 0 26px 0;">
+      <a href="#" style="display:inline-block;padding:14px 28px;border:2px solid #5236AB;color:#5236AB;text-decoration:none;font-size:16px;font-weight:bold;">Open problem record</a>
+    </div>
+  </td>
+</tr>
+<tr>
+  <td style="padding:0 48px 22px 48px;">
+    <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="width:100%;border-collapse:separate;border-spacing:0;">
+      <tr>
+        <td valign="top" width="48%" style="width:48%;padding:0 0 16px 0;">
+          <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="width:100%;border:1px solid #D9D5E6;">
+            <tr><td style="padding:16px 18px 8px 18px;font-family:Arial,Helvetica,sans-serif;font-size:22px;line-height:1.2;font-weight:bold;color:#000000;">Investigation scope</td></tr>
+            <tr><td style="padding:0 18px 16px 18px;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.7;color:#2E3133;">Company: <strong>{{company}}</strong><br />Source: <strong>{{itsm_source}}</strong><br />As of: <strong>{{as_of_date}}</strong><br />Requested by: <strong>{{requested_by}}</strong></td></tr>
+          </table>
+        </td>
+        <td width="4%" style="font-size:0;line-height:0;">&nbsp;</td>
+        <td valign="top" width="48%" style="width:48%;padding:0 0 16px 0;">
+          <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="width:100%;border:1px solid #D9D5E6;">
+            <tr><td style="padding:16px 18px 8px 18px;font-family:Arial,Helvetica,sans-serif;font-size:22px;line-height:1.2;font-weight:bold;color:#000000;">Current ownership</td></tr>
+            <tr><td style="padding:0 18px 16px 18px;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.7;color:#2E3133;">Ticket: <strong>{{ticket.Number}}</strong><br />Priority: <strong>{{ticket.Priority}}</strong><br />Assigned to: <strong>{{ticket.Assigned_To}}</strong><br />Assignment group: <strong>{{ticket.Assignment_Group}}</strong></td></tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </td>
+</tr>
+<tr>
+  <td style="padding:0 48px 24px 48px;">
+    <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="width:100%;background:#F2F1F9;border-collapse:collapse;">
+      <tr>
+        <td style="padding:22px 24px 14px 24px;font-family:Arial,Helvetica,sans-serif;font-size:24px;line-height:1.2;font-weight:bold;color:#000000;">Problem summary</td>
+      </tr>
+      <tr>
+        <td style="padding:0 24px 12px 24px;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.75;color:#2E3133;"><strong>Summary</strong><br />{{ticket.Short_Description}}</td>
+      </tr>
+      <tr>
+        <td style="padding:0 24px 12px 24px;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.75;color:#2E3133;"><strong>Description</strong><br />{{ticket.Description}}</td>
+      </tr>
+      <tr>
+        <td style="padding:0 24px 22px 24px;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.75;color:#2E3133;"><strong>Known workaround / mitigation</strong><br />{{ticket.Workaround}}</td>
+      </tr>
+    </table>
+  </td>
+</tr>
+<tr>
+  <td style="padding:0 48px 30px 48px;">
+    <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="width:100%;border-collapse:collapse;">
+      <tr>
+        <td style="padding:0 0 8px 0;font-family:Arial,Helvetica,sans-serif;font-size:28px;line-height:1.2;font-weight:bold;color:#000000;">Portfolio context</td>
+      </tr>
+      <tr>
+        <td style="padding:0;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.75;color:#2E3133;">The current UPMS selection contains <strong>{{ticket_count}}</strong> tickets in scope, <strong>{{month_end_backlog_current}}</strong> month-end backlog items and <strong>{{month_end_high_priority_backlog_current}}</strong> high-priority backlog items.</td>
+      </tr>
+    </table>
+  </td>
+</tr>
+
+          <tr>
+            <td style="padding:24px 48px 10px 48px;font-family:Arial,Helvetica,sans-serif;color:#2E3133;text-align:center;">
+              <p style="margin:0 0 4px 0;font-size:24px;line-height:1.2;font-weight:bold;">Insights you can act on</p>
+              <p style="margin:0;font-size:14px;line-height:1.5;">Unified problem management reporting for operational review cycles.</p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:10px 48px 0 48px;">
+              <div style="height:40px;background:#200A58;">&nbsp;</div>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:20px 48px 32px 48px;font-family:Arial,Helvetica,sans-serif;color:#2E3133;text-align:center;">
+              <p style="margin:0;font-size:12px;line-height:1.5;">UPMS report template &nbsp;|&nbsp; Internal</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

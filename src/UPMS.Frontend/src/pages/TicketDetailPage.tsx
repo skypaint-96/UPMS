@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Box, Grid, Paper, Typography } from '@mui/material';
+import { Grid, Paper, Typography } from '@mui/material';
 import { useLocation, useParams } from 'react-router-dom';
 import { upmsApi } from '../api/client';
 import { FieldChange, Ticket } from '../api/types';
@@ -12,6 +12,7 @@ export function TicketDetailPage() {
   const location = useLocation();
   const query = useMemo(() => new URLSearchParams(location.search), [location.search]);
   const itsmSource = query.get('itsmSource') ?? undefined;
+  const asOf = query.get('asOf') ?? undefined;
   const [ticket, setTicket] = useState<Ticket | null>(null);
   const [history, setHistory] = useState<FieldChange[]>([]);
   const [loading, setLoading] = useState(true);
@@ -22,8 +23,9 @@ export function TicketDetailPage() {
       return;
     }
 
+    setLoading(true);
     Promise.all([
-      upmsApi.getTicket(params.company, params.ticketKey, itsmSource),
+      upmsApi.getTicket(params.company, params.ticketKey, itsmSource, asOf),
       upmsApi.getTicketHistory(params.company, params.ticketKey),
     ])
       .then(([loadedTicket, loadedHistory]) => {
@@ -32,7 +34,7 @@ export function TicketDetailPage() {
       })
       .catch((err) => setError(err.message ?? 'Failed to load ticket.'))
       .finally(() => setLoading(false));
-  }, [itsmSource, params.company, params.ticketKey]);
+  }, [asOf, itsmSource, params.company, params.ticketKey]);
 
   if (loading) return <LoadingPanel label="Loading ticket" />;
   if (!ticket) return <Typography>Ticket not found.</Typography>;
@@ -61,13 +63,14 @@ export function TicketDetailPage() {
             </Typography>
             <UpmsDataTable
               columns={[
-                { key: 'observedAt', label: 'Observed At' },
+                { key: 'observedAt', label: 'Observed At', getSortValue: (row) => String(row.observedAtSortValue ?? '') },
                 { key: 'field', label: 'Field' },
                 { key: 'value', label: 'Value' },
               ]}
               rows={history.map((change) => ({
                 id: change.id,
                 observedAt: new Date(change.observedAt).toLocaleString(),
+                observedAtSortValue: change.observedAt,
                 field: change.displayFieldName,
                 value: change.fieldValue ?? '',
               }))}

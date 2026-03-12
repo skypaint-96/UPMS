@@ -55,14 +55,15 @@ export function JobsPage() {
             columns={[
               { key: 'jobType', label: 'Job Type' },
               { key: 'status', label: 'Status' },
-              { key: 'createdAt', label: 'Created' },
-              { key: 'download', label: 'Output' },
+              { key: 'createdAt', label: 'Created', getSortValue: (row) => String(row.createdAtSortValue ?? '') },
+              { key: 'download', label: 'Output', sortable: false },
             ]}
             rows={jobs.map((job) => ({
               id: job.id,
               jobType: job.jobType,
               status: job.status,
               createdAt: new Date(job.createdAt).toLocaleString(),
+              createdAtSortValue: job.createdAt,
               download: job.downloadUrl ? (
                 <MuiLink href={job.downloadUrl}>Download {job.outputFileName ?? 'artifact'}</MuiLink>
               ) : (
