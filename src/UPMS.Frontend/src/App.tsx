@@ -114,7 +114,7 @@ function AppShell() {
   const adminItems = useMemo<AppMenuItem[]>(
     () => [
       { text: 'ITSM Sources', route: '/itsm-sources', icon: Inventory2Outlined, helper: 'Create and map sources' },
-      { text: 'Upload Snapshot', route: '/upload', icon: UploadFileOutlined, helper: 'Queue snapshot ingest' },
+      { text: 'Upload Snapshots', route: '/upload', icon: UploadFileOutlined, helper: 'Queue single or bulk ingest' },
       { text: 'Snapshots', route: '/snapshots', icon: DatasetOutlined, helper: 'Browse uploaded snapshots' },
       { text: 'Jobs', route: '/jobs', icon: WorkHistoryOutlined, helper: 'Monitor worker jobs' },
       { text: 'Report Templates', route: '/report-templates', icon: ArticleOutlined, helper: 'Curate template library' },

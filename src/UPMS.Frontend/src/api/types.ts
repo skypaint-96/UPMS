@@ -130,6 +130,11 @@ export type BackgroundJob = {
   downloadUrl?: string | null;
 };
 
+export type BulkJobSubmission = {
+  queuedCount: number;
+  jobs: BackgroundJob[];
+};
+
 export type IngestResult = {
   success: boolean;
   snapshotId: string;

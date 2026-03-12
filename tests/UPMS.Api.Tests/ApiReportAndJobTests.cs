@@ -1,6 +1,8 @@
 namespace UPMS.Api.Tests;
 
 using System.Net;
+using System.Net.Http.Headers;
+using System.Text;
 using System.Net.Http.Json;
 
 [TestFixture]
@@ -70,5 +72,35 @@ public sealed class ApiReportAndJobTests
         Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Accepted));
     }
 
+    [Test]
+    public async Task Bulk_snapshot_job_endpoint_accepts_multiple_files_and_returns_jobs()
+    {
+        using var form = new MultipartFormDataContent();
+        form.Add(new StringContent("servicenow-prod"), "itsmSource");
+        form.Add(new StringContent("2026-03-02"), "snapshotDates");
+        form.Add(new StringContent("2026-03-03"), "snapshotDates");
+
+        var firstFile = new ByteArrayContent(Encoding.UTF8.GetBytes("number,company,state\nPRB0002,Contoso,Open\n"));
+        firstFile.Headers.ContentType = MediaTypeHeaderValue.Parse("text/csv");
+        form.Add(firstFile, "files", "snapshot-2026-03-02.csv");
+
+        var secondFile = new ByteArrayContent(Encoding.UTF8.GetBytes("number,company,state\nPRB0003,Contoso,Closed\n"));
+        secondFile.Headers.ContentType = MediaTypeHeaderValue.Parse("text/csv");
+        form.Add(secondFile, "files", "snapshot-2026-03-03.csv");
+
+        var response = await _client.PostAsync("/api/v1/jobs/snapshot-ingest/bulk", form);
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Accepted));
+
+        var payload = await response.Content.ReadFromJsonAsync<BulkQueuedJobsResponse>();
+        Assert.That(payload, Is.Not.Null);
+        Assert.That(payload!.QueuedCount, Is.EqualTo(2));
+        Assert.That(payload.Jobs, Has.Count.EqualTo(2));
+        Assert.That(payload.Jobs.All(job => job.JobType == "snapshot-ingest"), Is.True);
+    }
+
     private sealed record ReportTemplateListRow(string Id, string? TemplateTypeId, bool IsStarterTemplate);
+
+    private sealed record BackgroundJobRow(Guid Id, string JobType, string Status);
+
+    private sealed record BulkQueuedJobsResponse(int QueuedCount, List<BackgroundJobRow> Jobs);
 }
