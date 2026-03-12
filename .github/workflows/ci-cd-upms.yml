@@ -88,7 +88,7 @@ jobs:
       - name: Install frontend deps
         if: matrix.kind == 'node'
         working-directory: ${{ matrix.project }}
-        run: yarn install --frozen-lockfile
+        run: yarn install --non-interactive
 
       - name: Run frontend tests
         if: matrix.kind == 'node' && matrix.has_tests == true
@@ -106,15 +106,6 @@ jobs:
           - name: UPMS.Api
             project: src/UPMS.Api
             image: upms-api
-          - name: UPMS.Data
-            project: src/UPMS.Data
-            image: upms-data
-          - name: UPMS.Ingestion
-            project: src/UPMS.Ingestion
-            image: upms-ingestion
-          - name: UPMS.Reporting
-            project: src/UPMS.Reporting
-            image: upms-reporting
           - name: UPMS.Worker
             project: src/UPMS.Worker
             image: upms-worker

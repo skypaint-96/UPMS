@@ -346,7 +346,7 @@ export function SourcesPage() {
               { key: 'sourceFieldName', label: 'Source Field' },
               { key: 'canonicalFieldName', label: 'Canonical Field' },
               { key: 'required', label: 'Required' },
-              { key: 'actions', label: 'Actions' },
+              { key: 'actions', label: 'Actions', sortable: false },
             ]}
             rows={definition.mappings.map((mapping) => ({
               id: `${mapping.itsmSource}:${mapping.sourceFieldName}`,

@@ -2,7 +2,7 @@
 
 ## Default service layout
 
-The default compose layout now runs four services:
+The default compose layout runs four services:
 
 | Service | Description | Host Port |
 |---------|-------------|-----------|
@@ -41,22 +41,27 @@ docker compose up -d
 - OpenAPI: `http://localhost:8081/openapi/v1.json`
 - API base: `http://localhost:8081/api/v1`
 
-## Development defaults
+## Configuration defaults
 
-The override file switches the API to `Auth:Mode=None` and keeps the database password simple for local work.
+The base compose file is runnable locally without extra setup.
+
+- `UPMS_DB_PASSWORD` defaults to `upms`
+- `UPMS_API_KEY` defaults to `change-me`
+- `docker-compose.override.yml` switches the API to `ASPNETCORE_ENVIRONMENT=Development` and disables auth for local work
+
+You can still override either value from the shell or a local `.env` file when you need something different.
 
 ## Notes
 
 - The frontend proxies `/api/*` to `UPMS_api` internally.
 - External tools such as Excel Power Query can also call the API directly on `8081`.
-- API/worker both rely on the shared PostgreSQL connection string and artifact volume.
-
+- API and worker both rely on the shared PostgreSQL connection string and artifact volume.
+- `node:20-alpine` already ships a `yarn` executable path. The frontend Dockerfile therefore uses `npm install -g yarn@1.22.19 --force` so the required Yarn version replaces the pre-existing shim instead of failing with `EEXIST`.
 
 ## Troubleshooting
 
-- `node:20-alpine` already ships a `yarn` executable path. The frontend Dockerfile therefore uses `npm install -g yarn@1.22.19 --force` so the required Yarn version replaces the pre-existing shim instead of failing with `EEXIST`.
-- If Compose reports `Network upms_default Resource is still in use`, clean up orphaned containers first with `docker compose down --remove-orphans -v`. If needed, inspect remaining attachments with `docker ps -a --filter network=upms_default`.
+If Compose reports that the default network is still in use, remove orphaned containers first:
 
-### Frontend build note
-
-The CGI EDS tarball includes `dist/style.css`, but the package `exports` map does not expose that subpath for bundlers such as Vite. To keep Docker builds reproducible without patching the upstream tarball, the UPMS frontend imports a local vendored stylesheet copy from `src/UPMS.Frontend/src/styles/eds-react-app.css`.
+```bash
+docker compose down --remove-orphans -v
+```

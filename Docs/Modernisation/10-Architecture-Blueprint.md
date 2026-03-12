@@ -76,11 +76,18 @@ This split preserves a single domain model while separating runtime concerns.
 2. Consumer authenticates with API key when enabled.
 3. Consumer reads structured JSON endpoints such as tickets, snapshots, ITSM sources, and job outputs.
 
-## Transition plan
+## Implementation outcome
 
-The repository now supports a phased transition instead of a forced cut-over.
+The repository now implements the split runtime directly.
 
-- `UPMS.Web` stays in the repo as the legacy monolith/reference implementation.
 - New logic is extracted into reusable libraries instead of staying inside the web app.
 - New container defaults point to API + worker + frontend.
-- Legacy web can be kept during migration or switched off later.
+
+The active repository shape is therefore:
+
+- `UPMS.Data` as the shared core data/platform library
+- `UPMS.Ingestion` as reusable ingest orchestration
+- `UPMS.Reporting` as reusable report orchestration and plugins
+- `UPMS.Api` as the primary application boundary
+- `UPMS.Worker` for background ingest and report jobs
+- `UPMS.Frontend` as the primary CGI EDS React user interface
