@@ -10,6 +10,7 @@
 *.userosscache
 *.sln.docstates
 *.env
+.env
 
 # User-specific files (MonoDevelop/Xamarin Studio)
 *.userprefs
@@ -418,7 +419,6 @@ FodyWeavers.xsd
 *.msp
 
 data/
-src/UPMS.Web/App_Data/
 # React frontend
 src/UPMS.Frontend/node_modules/
 src/UPMS.Frontend/dist/
