@@ -615,19 +615,13 @@ public static class UpmsApiEndpoints
             if (!DateOnly.TryParse(snapshotDateRaw, out var snapshotDate))
                 return Results.BadRequest(new { error = "snapshotDate must be a valid date (yyyy-MM-dd)." });
 
-            await using var uploadStream = file.OpenReadStream();
-            var stored = await artifacts.SaveAsync("uploads", file.FileName, uploadStream, file.ContentType, ct);
-            var payload = new SnapshotIngestJobPayload(
+            var job = await QueueSnapshotIngestJobAsync(
+                artifacts,
+                jobs,
+                user,
+                file,
                 itsmSource.Trim(),
                 snapshotDate,
-                stored.RelativePath,
-                file.FileName,
-                file.ContentType ?? "application/octet-stream");
-
-            var job = await jobs.EnqueueAsync(
-                BackgroundJobTypes.SnapshotIngest,
-                JsonSerializer.Serialize(payload, JsonOptions),
-                ResolveRequestedBy(user),
                 ct);
 
             return Results.Accepted($"/api/v1/jobs/{job.Id}", MapJob(job));
@@ -635,6 +629,57 @@ public static class UpmsApiEndpoints
         .DisableAntiforgery()
         .WithTags("Jobs")
         .WithName("QueueSnapshotIngest");
+
+        app.MapPost("/jobs/snapshot-ingest/bulk", async (
+            HttpRequest request,
+            IArtifactStorage artifacts,
+            IBackgroundJobService jobs,
+            ClaimsPrincipal user,
+            CancellationToken ct) =>
+        {
+            var form = await request.ReadFormAsync(ct);
+            var files = form.Files.GetFiles("files");
+            var itsmSource = form["itsmSource"].ToString();
+
+            if (files.Count == 0)
+                return Results.BadRequest(new { error = "At least one snapshot file is required." });
+
+            if (string.IsNullOrWhiteSpace(itsmSource))
+                return Results.BadRequest(new { error = "itsmSource is required." });
+
+            if (!TryResolveSnapshotDates(form, files.Count, out var snapshotDates, out var snapshotDateError))
+                return Results.BadRequest(new { error = snapshotDateError });
+
+            var trimmedSource = itsmSource.Trim();
+            var queuedJobs = new List<BackgroundJob>(files.Count);
+
+            for (var index = 0; index < files.Count; index++)
+            {
+                var file = files[index];
+                if (file.Length == 0)
+                    return Results.BadRequest(new { error = $"File {index + 1} is empty." });
+
+                var job = await QueueSnapshotIngestJobAsync(
+                    artifacts,
+                    jobs,
+                    user,
+                    file,
+                    trimmedSource,
+                    snapshotDates[index],
+                    ct);
+
+                queuedJobs.Add(job);
+            }
+
+            return Results.Accepted(
+                "/api/v1/jobs",
+                new BulkBackgroundJobResponse(
+                    queuedJobs.Count,
+                    queuedJobs.Select(MapJob).ToArray()));
+        })
+        .DisableAntiforgery()
+        .WithTags("Jobs")
+        .WithName("QueueBulkSnapshotIngest");
 
         app.MapPost("/jobs/report-execution", async (ExecuteReportRequest request, IBackgroundJobService jobs, ClaimsPrincipal user, CancellationToken ct) =>
         {
@@ -693,6 +738,80 @@ public static class UpmsApiEndpoints
         .WithName("DownloadJobArtifact");
 
         return app;
+    }
+
+    private static async Task<BackgroundJob> QueueSnapshotIngestJobAsync(
+        IArtifactStorage artifacts,
+        IBackgroundJobService jobs,
+        ClaimsPrincipal user,
+        IFormFile file,
+        string itsmSource,
+        DateOnly snapshotDate,
+        CancellationToken ct)
+    {
+        await using var uploadStream = file.OpenReadStream();
+        var stored = await artifacts.SaveAsync("uploads", file.FileName, uploadStream, file.ContentType, ct);
+        var payload = new SnapshotIngestJobPayload(
+            itsmSource,
+            snapshotDate,
+            stored.RelativePath,
+            file.FileName,
+            file.ContentType ?? "application/octet-stream");
+
+        return await jobs.EnqueueAsync(
+            BackgroundJobTypes.SnapshotIngest,
+            JsonSerializer.Serialize(payload, JsonOptions),
+            ResolveRequestedBy(user),
+            ct);
+    }
+
+    private static bool TryResolveSnapshotDates(
+        IFormCollection form,
+        int expectedCount,
+        out IReadOnlyList<DateOnly> snapshotDates,
+        out string? error)
+    {
+        snapshotDates = Array.Empty<DateOnly>();
+        error = null;
+
+        var explicitDates = form["snapshotDates"]
+            .Select(value => value?.Trim())
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .ToArray();
+
+        if (explicitDates.Length == 0)
+        {
+            var snapshotDateRaw = form["snapshotDate"].ToString();
+            if (!DateOnly.TryParse(snapshotDateRaw, out var snapshotDate))
+            {
+                error = "snapshotDate must be a valid date (yyyy-MM-dd).";
+                return false;
+            }
+
+            snapshotDates = Enumerable.Repeat(snapshotDate, expectedCount).ToArray();
+            return true;
+        }
+
+        if (explicitDates.Length != expectedCount)
+        {
+            error = $"snapshotDates must contain exactly {expectedCount} value(s).";
+            return false;
+        }
+
+        var resolvedDates = new DateOnly[expectedCount];
+        for (var index = 0; index < explicitDates.Length; index++)
+        {
+            if (!DateOnly.TryParse(explicitDates[index], out var parsedDate))
+            {
+                error = $"snapshotDates[{index}] must be a valid date (yyyy-MM-dd).";
+                return false;
+            }
+
+            resolvedDates[index] = parsedDate;
+        }
+
+        snapshotDates = resolvedDates;
+        return true;
     }
 
     private static bool IsJson(IFormFile file)
@@ -991,3 +1110,7 @@ public sealed record BackgroundJobResponse(
     string? OutputFileName,
     string? OutputContentType,
     string? DownloadUrl);
+
+public sealed record BulkBackgroundJobResponse(
+    int QueuedCount,
+    IReadOnlyList<BackgroundJobResponse> Jobs);

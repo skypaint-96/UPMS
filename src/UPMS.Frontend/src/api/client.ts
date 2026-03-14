@@ -1,6 +1,7 @@
 import axios from 'axios';
 import {
   BackgroundJob,
+  BulkJobSubmission,
   CanonicalField,
   FieldChange,
   ItsmSourceDefinition,
@@ -112,6 +113,12 @@ export const upmsApi = {
   },
   async queueSnapshotIngest(formData: FormData) {
     const { data } = await api.post<BackgroundJob>('/jobs/snapshot-ingest', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return data;
+  },
+  async queueBulkSnapshotIngest(formData: FormData) {
+    const { data } = await api.post<BulkJobSubmission>('/jobs/snapshot-ingest/bulk', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
     return data;
