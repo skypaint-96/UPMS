@@ -10,9 +10,13 @@ public sealed record SnapshotIngestJobPayload(
 public sealed record ReportExecutionJobPayload(
     string PluginId,
     IReadOnlyDictionary<string, string> Parameters,
-    string? RequestedBy);
+    string? RequestedBy,
+    IReadOnlyList<Guid>? DistributionListIds);
+
+public sealed record ReportDeliveryJobPayload(Guid DeliveryId);
 
 public sealed record ReportExecutionPreviewResult(
     string OutputType,
     string? HtmlContent,
-    string? ErrorMessage);
+    string? ErrorMessage,
+    IReadOnlyList<Guid>? DeliveryIds);

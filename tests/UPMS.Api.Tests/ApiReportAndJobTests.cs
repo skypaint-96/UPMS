@@ -98,7 +98,127 @@ public sealed class ApiReportAndJobTests
         Assert.That(payload.Jobs.All(job => job.JobType == "snapshot-ingest"), Is.True);
     }
 
+
+    [Test]
+    public async Task Distribution_list_endpoints_support_crud_and_company_lookup()
+    {
+        var createResponse = await _client.PostAsJsonAsync("/api/v1/distribution-lists", new
+        {
+            companyName = "Contoso",
+            name = "Leadership",
+            description = "Primary recipients",
+            isActive = true,
+            recipients = new[]
+            {
+                new
+                {
+                    channel = "email",
+                    endpoint = "leader@example.com",
+                    isActive = true,
+                    sortOrder = 0
+                }
+            }
+        });
+
+        Assert.That(createResponse.StatusCode, Is.EqualTo(HttpStatusCode.Created));
+        var created = await createResponse.Content.ReadFromJsonAsync<DistributionListRow>();
+        Assert.That(created, Is.Not.Null);
+        Assert.That(created!.CompanyName, Is.EqualTo("Contoso"));
+        Assert.That(created.RecipientCount, Is.EqualTo(1));
+
+        var companies = await _client.GetFromJsonAsync<List<CompanyProfileRow>>("/api/v1/company-profiles");
+        Assert.That(companies, Is.Not.Null);
+        Assert.That(companies!.Single().DistributionListCount, Is.EqualTo(1));
+
+        var lists = await _client.GetFromJsonAsync<List<DistributionListRow>>("/api/v1/distribution-lists?company=Contoso");
+        Assert.That(lists, Is.Not.Null);
+        Assert.That(lists!, Has.Count.EqualTo(1));
+
+        var updateResponse = await _client.PutAsJsonAsync($"/api/v1/distribution-lists/{created.Id}", new
+        {
+            companyName = "Contoso",
+            name = "Leadership",
+            description = "Updated recipients",
+            isActive = true,
+            recipients = new[]
+            {
+                new
+                {
+                    channel = "email",
+                    endpoint = "exec@example.com",
+                    isActive = true,
+                    sortOrder = 0
+                },
+                new
+                {
+                    channel = "email",
+                    endpoint = "ops@example.com",
+                    isActive = true,
+                    sortOrder = 1
+                }
+            }
+        });
+
+        Assert.That(updateResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        var updated = await updateResponse.Content.ReadFromJsonAsync<DistributionListRow>();
+        Assert.That(updated, Is.Not.Null);
+        Assert.That(updated!.RecipientCount, Is.EqualTo(2));
+
+        var deleteResponse = await _client.DeleteAsync($"/api/v1/distribution-lists/{created.Id}");
+        Assert.That(deleteResponse.StatusCode, Is.EqualTo(HttpStatusCode.NoContent));
+
+        var afterDelete = await _client.GetFromJsonAsync<List<DistributionListRow>>("/api/v1/distribution-lists?company=Contoso");
+        Assert.That(afterDelete, Is.Not.Null);
+        Assert.That(afterDelete!, Is.Empty);
+    }
+
+    [Test]
+    public async Task Report_job_endpoint_accepts_distribution_list_selection()
+    {
+        var createResponse = await _client.PostAsJsonAsync("/api/v1/distribution-lists", new
+        {
+            companyName = "Contoso",
+            name = "Leadership",
+            isActive = true,
+            recipients = new[]
+            {
+                new
+                {
+                    channel = "email",
+                    endpoint = "leader@example.com",
+                    isActive = true,
+                    sortOrder = 0
+                }
+            }
+        });
+        createResponse.EnsureSuccessStatusCode();
+        var list = await createResponse.Content.ReadFromJsonAsync<DistributionListRow>();
+
+        var templates = await _client.GetFromJsonAsync<List<ReportTemplateListRow>>("/api/v1/report-templates");
+        Assert.That(templates, Is.Not.Null);
+        var starter = templates!.First(template => template.TemplateTypeId == "html-document");
+
+        var response = await _client.PostAsJsonAsync("/api/v1/jobs/report-execution", new
+        {
+            pluginId = "tokenised-template-report",
+            parameters = new Dictionary<string, string>
+            {
+                ["template_id"] = starter.Id,
+                ["itsm_source"] = "servicenow-prod",
+                ["company"] = "Contoso",
+                ["as_of_date"] = "2026-03-02"
+            },
+            distributionListIds = new[] { list!.Id }
+        });
+
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Accepted));
+    }
+
     private sealed record ReportTemplateListRow(string Id, string? TemplateTypeId, bool IsStarterTemplate);
+
+    private sealed record CompanyProfileRow(Guid Id, string CompanyKey, string DisplayName, int DistributionListCount);
+
+    private sealed record DistributionListRow(Guid Id, string CompanyName, string Name, int RecipientCount);
 
     private sealed record BackgroundJobRow(Guid Id, string JobType, string Status);
 

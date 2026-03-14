@@ -9,8 +9,10 @@ using Microsoft.AspNetCore.Routing;
 using UPMS.Data;
 using UPMS.Data.Artifacts;
 using UPMS.Data.Jobs;
+using UPMS.Data.Delivery;
 using UPMS.Ingestion;
 using UPMS.Reporting;
+using UPMS.Reporting.Delivery;
 using UPMS.Reporting.Plugins;
 using UPMS.Reporting.Templates;
 
@@ -533,6 +535,105 @@ public static class UpmsApiEndpoints
         .WithTags("Tickets")
         .WithName("GetTicketHistory");
 
+        app.MapGet("/company-profiles", async (IDistributionListService distributionLists, CancellationToken ct) =>
+        {
+            var rows = await distributionLists.GetCompaniesAsync(ct);
+            return Results.Ok(rows.Select(MapCompanyProfile));
+        })
+        .WithTags("Delivery")
+        .WithName("GetCompanyProfiles");
+
+        app.MapGet("/distribution-lists", async (string? company, IDistributionListService distributionLists, CancellationToken ct) =>
+        {
+            var rows = await distributionLists.GetListsAsync(company, ct);
+            return Results.Ok(rows.Select(MapDistributionList));
+        })
+        .WithTags("Delivery")
+        .WithName("GetDistributionLists");
+
+        app.MapGet("/distribution-lists/{id:guid}", async (Guid id, IDistributionListService distributionLists, CancellationToken ct) =>
+        {
+            var list = await distributionLists.GetByIdAsync(id, ct);
+            return list is null ? Results.NotFound() : Results.Ok(MapDistributionList(list));
+        })
+        .WithTags("Delivery")
+        .WithName("GetDistributionListById");
+
+        app.MapPost("/distribution-lists", async (
+            SaveDistributionListRequest request,
+            IDistributionListService distributionLists,
+            ClaimsPrincipal user,
+            CancellationToken ct) =>
+        {
+            try
+            {
+                var created = await distributionLists.CreateAsync(
+                    ToSaveDistributionListCommand(request),
+                    ResolveRequestedBy(user),
+                    ct);
+
+                return Results.Created($"/api/v1/distribution-lists/{created.Id}", MapDistributionList(created));
+            }
+            catch (ArgumentException ex)
+            {
+                return Results.BadRequest(new { error = ex.Message });
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.BadRequest(new { error = ex.Message });
+            }
+        })
+        .WithTags("Delivery")
+        .WithName("CreateDistributionList");
+
+        app.MapPut("/distribution-lists/{id:guid}", async (
+            Guid id,
+            SaveDistributionListRequest request,
+            IDistributionListService distributionLists,
+            ClaimsPrincipal user,
+            CancellationToken ct) =>
+        {
+            try
+            {
+                var updated = await distributionLists.UpdateAsync(
+                    id,
+                    ToSaveDistributionListCommand(request),
+                    ResolveRequestedBy(user),
+                    ct);
+
+                return Results.Ok(MapDistributionList(updated));
+            }
+            catch (KeyNotFoundException)
+            {
+                return Results.NotFound();
+            }
+            catch (ArgumentException ex)
+            {
+                return Results.BadRequest(new { error = ex.Message });
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.BadRequest(new { error = ex.Message });
+            }
+        })
+        .WithTags("Delivery")
+        .WithName("UpdateDistributionList");
+
+        app.MapDelete("/distribution-lists/{id:guid}", async (Guid id, IDistributionListService distributionLists, CancellationToken ct) =>
+        {
+            try
+            {
+                await distributionLists.DeleteAsync(id, ct);
+                return Results.NoContent();
+            }
+            catch (KeyNotFoundException)
+            {
+                return Results.NotFound();
+            }
+        })
+        .WithTags("Delivery")
+        .WithName("DeleteDistributionList");
+
         app.MapGet("/reports/plugins", (IReportExecutionService reporting) =>
         {
             var rows = reporting.GetPlugins();
@@ -689,7 +790,8 @@ public static class UpmsApiEndpoints
             var payload = new ReportExecutionJobPayload(
                 request.PluginId.Trim(),
                 request.Parameters ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
-                ResolveRequestedBy(user));
+                ResolveRequestedBy(user),
+                request.DistributionListIds);
 
             var job = await jobs.EnqueueAsync(
                 BackgroundJobTypes.ReportExecution,
@@ -736,6 +838,50 @@ public static class UpmsApiEndpoints
         })
         .WithTags("Jobs")
         .WithName("DownloadJobArtifact");
+
+        app.MapGet("/report-deliveries", async (
+            string? company,
+            Guid? reportJobId,
+            int? take,
+            IReportDeliveryWorkflowService deliveries,
+            CancellationToken ct) =>
+        {
+            var rows = await deliveries.GetRecentAsync(company, reportJobId, take ?? 100, ct);
+            return Results.Ok(rows.Select(MapReportDelivery));
+        })
+        .WithTags("Delivery")
+        .WithName("GetReportDeliveries");
+
+        app.MapGet("/report-deliveries/{id:guid}", async (Guid id, IReportDeliveryWorkflowService deliveries, CancellationToken ct) =>
+        {
+            var delivery = await deliveries.GetByIdAsync(id, ct);
+            return delivery is null ? Results.NotFound() : Results.Ok(MapReportDelivery(delivery));
+        })
+        .WithTags("Delivery")
+        .WithName("GetReportDeliveryById");
+
+        app.MapPost("/report-deliveries/{id:guid}/retry", async (
+            Guid id,
+            IReportDeliveryWorkflowService deliveries,
+            ClaimsPrincipal user,
+            CancellationToken ct) =>
+        {
+            try
+            {
+                var delivery = await deliveries.RetryAsync(id, ResolveRequestedBy(user), ct);
+                return Results.Accepted($"/api/v1/report-deliveries/{delivery.Id}", MapReportDelivery(delivery));
+            }
+            catch (KeyNotFoundException)
+            {
+                return Results.NotFound();
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.BadRequest(new { error = ex.Message });
+            }
+        })
+        .WithTags("Delivery")
+        .WithName("RetryReportDelivery");
 
         return app;
     }
@@ -829,6 +975,108 @@ public static class UpmsApiEndpoints
             return user.Identity?.Name ?? user.FindFirstValue(ClaimTypes.NameIdentifier);
 
         return "anonymous";
+    }
+
+
+    private static SaveDistributionListCommand ToSaveDistributionListCommand(SaveDistributionListRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var recipients = request.Recipients?
+            .Where(recipient => recipient is not null)
+            .Select((recipient, index) => new DistributionListRecipientInput(
+                string.IsNullOrWhiteSpace(recipient.Channel) ? ReportDeliveryChannels.Email : recipient.Channel.Trim(),
+                recipient.Endpoint ?? string.Empty,
+                recipient.DisplayName,
+                recipient.MetadataJson,
+                recipient.IsActive ?? true,
+                recipient.SortOrder ?? index))
+            .ToArray()
+            ?? Array.Empty<DistributionListRecipientInput>();
+
+        return new SaveDistributionListCommand(
+            request.CompanyName ?? string.Empty,
+            request.Name ?? string.Empty,
+            request.Description,
+            request.IsActive ?? true,
+            recipients);
+    }
+
+    private static CompanyProfileResponse MapCompanyProfile(CompanyProfileSummary summary)
+    {
+        return new CompanyProfileResponse(
+            summary.Id,
+            summary.CompanyKey,
+            summary.DisplayName,
+            summary.DistributionListCount);
+    }
+
+    private static DistributionListResponse MapDistributionList(DistributionListDetail list)
+    {
+        return new DistributionListResponse(
+            list.Id,
+            list.CompanyProfileId,
+            list.CompanyKey,
+            list.CompanyName,
+            list.Name,
+            list.Description,
+            list.IsActive,
+            list.RecipientCount,
+            list.ActiveRecipientCount,
+            list.Recipients.Select(recipient => new DistributionListRecipientResponse(
+                recipient.Id,
+                recipient.Channel,
+                recipient.Endpoint,
+                recipient.DisplayName,
+                recipient.MetadataJson,
+                recipient.IsActive,
+                recipient.SortOrder)).ToArray(),
+            list.CreatedAt,
+            list.CreatedBy,
+            list.UpdatedAt,
+            list.UpdatedBy);
+    }
+
+    private static ReportDeliveryResponse MapReportDelivery(ReportDelivery delivery)
+    {
+        return new ReportDeliveryResponse(
+            delivery.Id,
+            delivery.ReportJobId,
+            delivery.LastBackgroundJobId,
+            delivery.CompanyKey,
+            delivery.CompanyDisplayName,
+            delivery.DistributionListId,
+            delivery.DistributionListName,
+            delivery.Channel,
+            delivery.Status,
+            delivery.Subject,
+            delivery.ArtifactFileName,
+            delivery.ArtifactContentType,
+            delivery.RecipientCount,
+            delivery.AttemptCount,
+            delivery.RequestedBy,
+            delivery.CreatedAt,
+            delivery.StartedAt,
+            delivery.CompletedAt,
+            delivery.LastAttemptedAt,
+            delivery.LastErrorMessage,
+            DeserializeDeliveryRecipients(delivery.RecipientSnapshotJson));
+    }
+
+    private static IReadOnlyList<ReportDeliveryRecipientResponse> DeserializeDeliveryRecipients(string? recipientSnapshotJson)
+    {
+        if (string.IsNullOrWhiteSpace(recipientSnapshotJson))
+            return Array.Empty<ReportDeliveryRecipientResponse>();
+
+        try
+        {
+            return JsonSerializer.Deserialize<List<ReportDeliveryRecipientResponse>>(recipientSnapshotJson, JsonOptions)
+                ?? Array.Empty<ReportDeliveryRecipientResponse>();
+        }
+        catch
+        {
+            return Array.Empty<ReportDeliveryRecipientResponse>();
+        }
     }
 
     private static bool TryMatchField(IDictionary<string, string?> fields, string fieldName, string fieldValue)
@@ -1017,7 +1265,78 @@ public sealed record IngestResultResponse(
     string? ErrorMessage,
     IReadOnlyList<string> Warnings);
 
-public sealed record ExecuteReportRequest(string PluginId, Dictionary<string, string>? Parameters);
+public sealed record CompanyProfileResponse(Guid Id, string CompanyKey, string DisplayName, int DistributionListCount);
+
+public sealed record DistributionListRecipientRequest(
+    string? Channel,
+    string Endpoint,
+    string? DisplayName,
+    string? MetadataJson,
+    bool? IsActive,
+    int? SortOrder);
+
+public sealed record SaveDistributionListRequest(
+    string CompanyName,
+    string Name,
+    string? Description,
+    bool? IsActive,
+    IReadOnlyList<DistributionListRecipientRequest>? Recipients);
+
+public sealed record DistributionListRecipientResponse(
+    Guid Id,
+    string Channel,
+    string Endpoint,
+    string? DisplayName,
+    string? MetadataJson,
+    bool IsActive,
+    int SortOrder);
+
+public sealed record DistributionListResponse(
+    Guid Id,
+    Guid CompanyProfileId,
+    string CompanyKey,
+    string CompanyName,
+    string Name,
+    string? Description,
+    bool IsActive,
+    int RecipientCount,
+    int ActiveRecipientCount,
+    IReadOnlyList<DistributionListRecipientResponse> Recipients,
+    DateTime CreatedAt,
+    string CreatedBy,
+    DateTime UpdatedAt,
+    string? UpdatedBy);
+
+public sealed record ReportDeliveryRecipientResponse(
+    string Channel,
+    string Endpoint,
+    string? DisplayName,
+    string? MetadataJson);
+
+public sealed record ReportDeliveryResponse(
+    Guid Id,
+    Guid ReportJobId,
+    Guid? LastBackgroundJobId,
+    string CompanyKey,
+    string CompanyName,
+    Guid DistributionListId,
+    string DistributionListName,
+    string Channel,
+    string Status,
+    string Subject,
+    string? ArtifactFileName,
+    string? ArtifactContentType,
+    int RecipientCount,
+    int AttemptCount,
+    string? RequestedBy,
+    DateTime CreatedAt,
+    DateTime? StartedAt,
+    DateTime? CompletedAt,
+    DateTime? LastAttemptedAt,
+    string? LastErrorMessage,
+    IReadOnlyList<ReportDeliveryRecipientResponse> Recipients);
+
+public sealed record ExecuteReportRequest(string PluginId, Dictionary<string, string>? Parameters, IReadOnlyList<Guid>? DistributionListIds);
 
 public sealed record ReportParameterResponse(
     string Key,

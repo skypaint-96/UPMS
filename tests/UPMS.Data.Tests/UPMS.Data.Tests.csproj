@@ -14,6 +14,7 @@
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.3" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.3" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.3" />
     <PackageReference Include="NUnit" Version="4.3.2" />
     <PackageReference Include="NUnit.Analyzers" Version="4.7.0" />
     <PackageReference Include="NUnit3TestAdapter" Version="5.0.0" />
@@ -24,5 +25,6 @@
   </ItemGroup>
     <ItemGroup>
         <ProjectReference Include="..\..\src\UPMS.Data\UPMS.Data.csproj" />
+        <ProjectReference Include="..\..\src\UPMS.Reporting\UPMS.Reporting.csproj" />
     </ItemGroup>
 </Project>

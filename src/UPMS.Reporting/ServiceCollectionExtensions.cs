@@ -4,6 +4,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using UPMS.Reporting.Plugins;
 using UPMS.Reporting.Plugins.Templates;
+using UPMS.Reporting.Delivery;
 using UPMS.Reporting.Templates;
 
 public static class ServiceCollectionExtensions
@@ -28,6 +29,10 @@ public static class ServiceCollectionExtensions
             return new FileSystemReportTemplateStore(storagePath, typeRegistry);
         });
         services.AddSingleton<IReportTemplateBootstrapper, ReportTemplateBootstrapper>();
+
+        services.Configure<EmailDeliveryOptions>(configuration.GetSection("Delivery:Email"));
+        services.AddScoped<IEmailReportDeliverySender, SmtpEmailReportDeliverySender>();
+        services.AddScoped<IReportDeliveryWorkflowService, ReportDeliveryWorkflowService>();
 
         services.AddScoped<IReportPlugin, TokenisedTemplateReportPlugin>();
         services.AddScoped<PluginRegistry>();
