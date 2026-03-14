@@ -6,6 +6,8 @@ import {
   FieldChange,
   ItsmSourceDefinition,
   ItsmSourceSummary,
+  ProblemRequestDetail,
+  ProblemRequestSummary,
   ReportPlugin,
   ReportTemplate,
   ReportTemplateDetail,
@@ -71,6 +73,60 @@ export const upmsApi = {
   },
   async getTicketHistory(company: string, ticketKey: string) {
     const { data } = await api.get<FieldChange[]>(`/tickets/${encodeURIComponent(company)}/${encodeURIComponent(ticketKey)}/history`);
+    return data;
+  },
+  async getProblemRequests(params?: { status?: string; assignee?: string; company?: string; itsmSource?: string }) {
+    const { data } = await api.get<ProblemRequestSummary[]>('/problem-requests', { params });
+    return data;
+  },
+  async getProblemRequest(id: string) {
+    const { data } = await api.get<ProblemRequestDetail>(`/problem-requests/${encodeURIComponent(id)}`);
+    return data;
+  },
+  async createProblemRequest(payload: {
+    requesterName: string;
+    requesterEmail?: string;
+    requesterTeam?: string;
+    companyName?: string;
+    itsmSource?: string;
+    title: string;
+    description: string;
+    justification: string;
+    assignee?: string;
+  }) {
+    const { data } = await api.post<ProblemRequestDetail>('/problem-requests', payload);
+    return data;
+  },
+  async updateProblemRequest(id: string, payload: {
+    requesterName?: string;
+    requesterEmail?: string;
+    requesterTeam?: string;
+    companyName?: string;
+    itsmSource?: string;
+    title?: string;
+    description?: string;
+    justification?: string;
+    status?: string;
+    assignee?: string;
+    decisionReason?: string;
+    comment?: string;
+  }) {
+    const { data } = await api.patch<ProblemRequestDetail>(`/problem-requests/${encodeURIComponent(id)}`, payload);
+    return data;
+  },
+  async addProblemRequestComment(id: string, payload: { commentText: string; authorName?: string }) {
+    const { data } = await api.post<ProblemRequestDetail>(`/problem-requests/${encodeURIComponent(id)}/comments`, payload);
+    return data;
+  },
+  async linkProblemRequest(id: string, payload: {
+    problemReference?: string;
+    problemItsmSource?: string;
+    problemCompanyName?: string;
+    problemTicketKey?: string;
+    comment?: string;
+    linkedBy?: string;
+  }) {
+    const { data } = await api.post<ProblemRequestDetail>(`/problem-requests/${encodeURIComponent(id)}/link`, payload);
     return data;
   },
   async getReportPlugins() {

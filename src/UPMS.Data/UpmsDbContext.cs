@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore.Design;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using UPMS.Data.ReadModels;
 using UPMS.Data.Jobs;
+using UPMS.Data.ProblemRequests;
 
 /// <summary>
 /// EF Core database context for UPMS. Covers all persisted entities plus
@@ -23,6 +24,8 @@ public class UpmsDbContext : DbContext
     public DbSet<ItsmFieldMapping> ItsmFieldMappings => Set<ItsmFieldMapping>();
     public DbSet<CanonicalFieldDefinition> CanonicalFieldDefinitions => Set<CanonicalFieldDefinition>();
     public DbSet<BackgroundJob> BackgroundJobs => Set<BackgroundJob>();
+    public DbSet<ProblemRequest> ProblemRequests => Set<ProblemRequest>();
+    public DbSet<ProblemRequestComment> ProblemRequestComments => Set<ProblemRequestComment>();
 
     // ── Keyless result sets (stored-procedure reads) ───────────────────────
 
@@ -267,6 +270,134 @@ public class UpmsDbContext : DbContext
                 .HasDatabaseName("ix_background_job_status_created_at");
             e.HasIndex(x => new { x.JobType, x.Status, x.CreatedAt })
                 .HasDatabaseName("ix_background_job_job_type_status_created_at");
+        });
+
+        // ── problem_request ────────────────────────────────────────────────
+        modelBuilder.Entity<ProblemRequest>(e =>
+        {
+            e.ToTable("problem_request");
+            e.HasKey(x => x.Id);
+
+            e.Property(x => x.Id)
+                .HasColumnName("id")
+                .HasColumnType("uuid")
+                .ValueGeneratedNever();
+            e.Property(x => x.RequesterName)
+                .HasColumnName("requester_name")
+                .HasColumnType("varchar(255)")
+                .IsRequired();
+            e.Property(x => x.RequesterEmail)
+                .HasColumnName("requester_email")
+                .HasColumnType("varchar(320)")
+                .IsRequired(false);
+            e.Property(x => x.RequesterTeam)
+                .HasColumnName("requester_team")
+                .HasColumnType("varchar(255)")
+                .IsRequired(false);
+            e.Property(x => x.CompanyName)
+                .HasColumnName("company_name")
+                .HasColumnType("varchar(255)")
+                .IsRequired(false);
+            e.Property(x => x.ItsmSource)
+                .HasColumnName("itsm_source")
+                .HasColumnType("varchar(100)")
+                .IsRequired(false);
+            e.Property(x => x.Title)
+                .HasColumnName("title")
+                .HasColumnType("varchar(500)")
+                .IsRequired();
+            e.Property(x => x.Description)
+                .HasColumnName("description")
+                .HasColumnType("text")
+                .IsRequired();
+            e.Property(x => x.Justification)
+                .HasColumnName("justification")
+                .HasColumnType("text")
+                .IsRequired();
+            e.Property(x => x.Status)
+                .HasColumnName("status")
+                .HasColumnType("varchar(50)")
+                .IsRequired();
+            e.Property(x => x.Assignee)
+                .HasColumnName("assignee")
+                .HasColumnType("varchar(255)")
+                .IsRequired(false);
+            e.Property(x => x.DecisionReason)
+                .HasColumnName("decision_reason")
+                .HasColumnType("text")
+                .IsRequired(false);
+            e.Property(x => x.ProblemReference)
+                .HasColumnName("problem_reference")
+                .HasColumnType("varchar(512)")
+                .IsRequired(false);
+            e.Property(x => x.ProblemItsmSource)
+                .HasColumnName("problem_itsm_source")
+                .HasColumnType("varchar(100)")
+                .IsRequired(false);
+            e.Property(x => x.ProblemCompanyName)
+                .HasColumnName("problem_company_name")
+                .HasColumnType("varchar(255)")
+                .IsRequired(false);
+            e.Property(x => x.ProblemTicketKey)
+                .HasColumnName("problem_ticket_key")
+                .HasColumnType("varchar(255)")
+                .IsRequired(false);
+            e.Property(x => x.CreatedAt)
+                .HasColumnName("created_at")
+                .HasColumnType("timestamptz")
+                .IsRequired();
+            e.Property(x => x.UpdatedAt)
+                .HasColumnName("updated_at")
+                .HasColumnType("timestamptz")
+                .IsRequired();
+            e.Property(x => x.LinkedAt)
+                .HasColumnName("linked_at")
+                .HasColumnType("timestamptz")
+                .IsRequired(false);
+
+            e.HasIndex(x => new { x.Status, x.UpdatedAt })
+                .HasDatabaseName("ix_problem_request_status_updated_at");
+            e.HasIndex(x => x.Assignee)
+                .HasDatabaseName("ix_problem_request_assignee");
+            e.HasIndex(x => new { x.CompanyName, x.ItsmSource })
+                .HasDatabaseName("ix_problem_request_company_source");
+        });
+
+        // ── problem_request_comment ────────────────────────────────────────
+        modelBuilder.Entity<ProblemRequestComment>(e =>
+        {
+            e.ToTable("problem_request_comment");
+            e.HasKey(x => x.Id);
+
+            e.Property(x => x.Id)
+                .HasColumnName("id")
+                .HasColumnType("uuid")
+                .ValueGeneratedNever();
+            e.Property(x => x.ProblemRequestId)
+                .HasColumnName("problem_request_id")
+                .HasColumnType("uuid")
+                .IsRequired();
+            e.Property(x => x.AuthorName)
+                .HasColumnName("author_name")
+                .HasColumnType("varchar(255)")
+                .IsRequired(false);
+            e.Property(x => x.CommentText)
+                .HasColumnName("comment_text")
+                .HasColumnType("text")
+                .IsRequired();
+            e.Property(x => x.CreatedAt)
+                .HasColumnName("created_at")
+                .HasColumnType("timestamptz")
+                .IsRequired();
+
+            e.HasIndex(x => new { x.ProblemRequestId, x.CreatedAt })
+                .HasDatabaseName("ix_problem_request_comment_request_created_at");
+
+            e.HasOne(x => x.ProblemRequest)
+                .WithMany(x => x.Comments)
+                .HasForeignKey(x => x.ProblemRequestId)
+                .HasConstraintName("fk_problem_request_comment_request_id")
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
         // ── canonical_field_definition ─────────────────────────────────────

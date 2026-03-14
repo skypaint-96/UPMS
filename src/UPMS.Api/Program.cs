@@ -82,6 +82,7 @@ if (!string.Equals(authMode, "None", StringComparison.OrdinalIgnoreCase))
     api.RequireAuthorization();
 }
 api.MapUpmsApi();
+api.MapProblemRequestApi();
 
 app.Run();
 

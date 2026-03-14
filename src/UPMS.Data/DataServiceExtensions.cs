@@ -5,6 +5,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using UPMS.Data.Artifacts;
 using UPMS.Data.Jobs;
+using UPMS.Data.ProblemRequests;
 
 /// <summary>
 /// Extension methods for registering UPMS data-layer services with the DI container.
@@ -47,6 +48,7 @@ public static class DataServiceExtensions
         services.AddScoped<TicketDataService>();
         services.AddScoped<TicketDataServiceInstance>();
         services.AddScoped<IBackgroundJobService, BackgroundJobService>();
+        services.AddScoped<IProblemRequestService, ProblemRequestService>();
         services.AddSingleton<IArtifactStorage, FileSystemArtifactStorage>();
 
         return services;

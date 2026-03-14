@@ -17,6 +17,7 @@ import { ThemeProvider } from '@mui/material/styles';
 import HomeOutlined from '@mui/icons-material/HomeOutlined';
 import SellOutlined from '@mui/icons-material/SellOutlined';
 import DescriptionOutlined from '@mui/icons-material/DescriptionOutlined';
+import AssignmentOutlined from '@mui/icons-material/AssignmentOutlined';
 import SettingsOutlined from '@mui/icons-material/SettingsOutlined';
 import DatasetOutlined from '@mui/icons-material/DatasetOutlined';
 import Inventory2Outlined from '@mui/icons-material/Inventory2Outlined';
@@ -25,6 +26,7 @@ import WorkHistoryOutlined from '@mui/icons-material/WorkHistoryOutlined';
 import ArticleOutlined from '@mui/icons-material/ArticleOutlined';
 import { DashboardPage } from './pages/DashboardPage';
 import { JobsPage } from './pages/JobsPage';
+import { ProblemRequestsPage } from './pages/ProblemRequestsPage';
 import { ReportsPage } from './pages/ReportsPage';
 import { ReportTemplatesPage } from './pages/ReportTemplatesPage';
 import { SnapshotsPage } from './pages/SnapshotsPage';
@@ -106,6 +108,7 @@ function AppShell() {
     () => [
       { text: 'Dashboard', route: '/', icon: HomeOutlined, helper: 'System overview' },
       { text: 'Tickets', route: '/tickets', icon: SellOutlined, helper: 'Query ticket state' },
+      { text: 'Problem Requests', route: '/problem-requests', icon: AssignmentOutlined, helper: 'Submit and triage intake' },
       { text: 'Reports', route: '/reports', icon: DescriptionOutlined, helper: 'Generate from templates' },
     ],
     [],
@@ -168,6 +171,7 @@ function AppShell() {
             <Route path="/tickets" element={<TicketsPage />} />
             <Route path="/tickets/:company/:ticketKey" element={<TicketDetailPage />} />
             <Route path="/reports" element={<ReportsPage />} />
+            <Route path="/problem-requests" element={<ProblemRequestsPage />} />
             <Route path="/itsm-sources" element={<SourcesPage />} />
             <Route path="/upload" element={<UploadPage />} />
             <Route path="/snapshots" element={<SnapshotsPage />} />

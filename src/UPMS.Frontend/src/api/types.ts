@@ -54,6 +54,41 @@ export type FieldChange = {
   isValueValid?: boolean | null;
 };
 
+export type ProblemRequestStatus = 'New' | 'Under Review' | 'Accepted' | 'Rejected' | 'Converted / Linked';
+
+export type ProblemRequestSummary = {
+  id: string;
+  requesterName: string;
+  requesterEmail?: string | null;
+  requesterTeam?: string | null;
+  companyName?: string | null;
+  itsmSource?: string | null;
+  title: string;
+  status: ProblemRequestStatus | string;
+  assignee?: string | null;
+  problemReference?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  linkedAt?: string | null;
+};
+
+export type ProblemRequestComment = {
+  id: string;
+  authorName?: string | null;
+  commentText: string;
+  createdAt: string;
+};
+
+export type ProblemRequestDetail = ProblemRequestSummary & {
+  description: string;
+  justification: string;
+  decisionReason?: string | null;
+  problemItsmSource?: string | null;
+  problemCompanyName?: string | null;
+  problemTicketKey?: string | null;
+  comments: ProblemRequestComment[];
+};
+
 export type ReportParameter = {
   key: string;
   displayName: string;

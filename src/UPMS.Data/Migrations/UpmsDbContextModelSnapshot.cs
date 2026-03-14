@@ -222,6 +222,136 @@ namespace UPMS.Data.Migrations
                     b.ToTable("background_job", (string)null);
                 });
 
+            modelBuilder.Entity("UPMS.Data.ProblemRequests.ProblemRequest", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedNever()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("Assignee")
+                        .HasColumnType("varchar(255)")
+                        .HasColumnName("assignee");
+
+                    b.Property<string>("CompanyName")
+                        .HasColumnType("varchar(255)")
+                        .HasColumnName("company_name");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("DecisionReason")
+                        .HasColumnType("text")
+                        .HasColumnName("decision_reason");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("description");
+
+                    b.Property<string>("ItsmSource")
+                        .HasColumnType("varchar(100)")
+                        .HasColumnName("itsm_source");
+
+                    b.Property<string>("Justification")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("justification");
+
+                    b.Property<DateTime?>("LinkedAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("linked_at");
+
+                    b.Property<string>("ProblemCompanyName")
+                        .HasColumnType("varchar(255)")
+                        .HasColumnName("problem_company_name");
+
+                    b.Property<string>("ProblemItsmSource")
+                        .HasColumnType("varchar(100)")
+                        .HasColumnName("problem_itsm_source");
+
+                    b.Property<string>("ProblemReference")
+                        .HasColumnType("varchar(512)")
+                        .HasColumnName("problem_reference");
+
+                    b.Property<string>("ProblemTicketKey")
+                        .HasColumnType("varchar(255)")
+                        .HasColumnName("problem_ticket_key");
+
+                    b.Property<string>("RequesterEmail")
+                        .HasColumnType("varchar(320)")
+                        .HasColumnName("requester_email");
+
+                    b.Property<string>("RequesterName")
+                        .IsRequired()
+                        .HasColumnType("varchar(255)")
+                        .HasColumnName("requester_name");
+
+                    b.Property<string>("RequesterTeam")
+                        .HasColumnType("varchar(255)")
+                        .HasColumnName("requester_team");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("varchar(50)")
+                        .HasColumnName("status");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasColumnType("varchar(500)")
+                        .HasColumnName("title");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Assignee")
+                        .HasDatabaseName("ix_problem_request_assignee");
+
+                    b.HasIndex("CompanyName", "ItsmSource")
+                        .HasDatabaseName("ix_problem_request_company_source");
+
+                    b.HasIndex("Status", "UpdatedAt")
+                        .HasDatabaseName("ix_problem_request_status_updated_at");
+
+                    b.ToTable("problem_request", (string)null);
+                });
+
+            modelBuilder.Entity("UPMS.Data.ProblemRequests.ProblemRequestComment", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedNever()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("AuthorName")
+                        .HasColumnType("varchar(255)")
+                        .HasColumnName("author_name");
+
+                    b.Property<string>("CommentText")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("comment_text");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid>("ProblemRequestId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("problem_request_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProblemRequestId", "CreatedAt")
+                        .HasDatabaseName("ix_problem_request_comment_request_created_at");
+
+                    b.ToTable("problem_request_comment", (string)null);
+                });
+
             modelBuilder.Entity("UPMS.Data.ReadModels.ReconstructedFieldDto", b =>
                 {
                     b.Property<string>("FieldName")
@@ -386,6 +516,23 @@ namespace UPMS.Data.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
                         .HasConstraintName("fk_field_change_snapshot_id");
+                });
+
+            modelBuilder.Entity("UPMS.Data.ProblemRequests.ProblemRequestComment", b =>
+                {
+                    b.HasOne("UPMS.Data.ProblemRequests.ProblemRequest", "ProblemRequest")
+                        .WithMany("Comments")
+                        .HasForeignKey("ProblemRequestId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_problem_request_comment_request_id");
+
+                    b.Navigation("ProblemRequest");
+                });
+
+            modelBuilder.Entity("UPMS.Data.ProblemRequests.ProblemRequest", b =>
+                {
+                    b.Navigation("Comments");
                 });
 
             modelBuilder.Entity("UPMS.Data.SnapshotTicket", b =>
