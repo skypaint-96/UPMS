@@ -438,10 +438,13 @@ public static class UpmsApiEndpoints
             if (!DateOnly.TryParse(snapshotDateRaw, out var snapshotDate))
                 return Results.BadRequest(new { error = "snapshotDate must be a valid date (yyyy-MM-dd)." });
 
+            if (!TryBuildSnapshotIngestMetadata(request, form, user, file, SnapshotUploadChannels.ManualSync, automated: false, out var metadata, out var metadataError))
+                return Results.BadRequest(new { error = metadataError });
+
             await using var stream = file.OpenReadStream();
             var result = IsJson(file)
-                ? await ingestService.IngestJsonAsync(stream, itsmSource.Trim(), snapshotDate, ct)
-                : await ingestService.IngestCsvAsync(stream, itsmSource.Trim(), snapshotDate, ct);
+                ? await ingestService.IngestJsonAsync(stream, itsmSource.Trim(), snapshotDate, metadata, ct)
+                : await ingestService.IngestCsvAsync(stream, itsmSource.Trim(), snapshotDate, metadata, ct);
 
             return result.Success
                 ? Results.Ok(MapIngestResult(result))
@@ -615,13 +618,16 @@ public static class UpmsApiEndpoints
             if (!DateOnly.TryParse(snapshotDateRaw, out var snapshotDate))
                 return Results.BadRequest(new { error = "snapshotDate must be a valid date (yyyy-MM-dd)." });
 
+            if (!TryBuildSnapshotIngestMetadata(request, form, user, file, SnapshotUploadChannels.ManualJob, automated: false, out var metadata, out var metadataError))
+                return Results.BadRequest(new { error = metadataError });
+
             var job = await QueueSnapshotIngestJobAsync(
                 artifacts,
                 jobs,
-                user,
                 file,
                 itsmSource.Trim(),
                 snapshotDate,
+                metadata,
                 ct);
 
             return Results.Accepted($"/api/v1/jobs/{job.Id}", MapJob(job));
@@ -629,6 +635,57 @@ public static class UpmsApiEndpoints
         .DisableAntiforgery()
         .WithTags("Jobs")
         .WithName("QueueSnapshotIngest");
+
+        app.MapPost("/jobs/snapshot-ingest/automated", async (
+            HttpRequest request,
+            IArtifactStorage artifacts,
+            IBackgroundJobService jobs,
+            ISnapshotDuplicateDetector duplicateDetector,
+            ClaimsPrincipal user,
+            CancellationToken ct) =>
+        {
+            var form = await request.ReadFormAsync(ct);
+            var file = form.Files.GetFile("file");
+            var itsmSource = form["itsmSource"].ToString();
+            var snapshotDateRaw = form["snapshotDate"].ToString();
+
+            if (file is null || file.Length == 0)
+                return Results.BadRequest(new { error = "A snapshot file is required." });
+
+            if (string.IsNullOrWhiteSpace(itsmSource))
+                return Results.BadRequest(new { error = "itsmSource is required." });
+
+            if (!DateOnly.TryParse(snapshotDateRaw, out var snapshotDate))
+                return Results.BadRequest(new { error = "snapshotDate must be a valid date (yyyy-MM-dd)." });
+
+            if (!TryBuildSnapshotIngestMetadata(request, form, user, file, SnapshotUploadChannels.AutomatedApi, automated: true, out var metadata, out var metadataError))
+                return Results.BadRequest(new { error = metadataError });
+
+            var outcome = await SubmitAutomatedSnapshotIngestAsync(
+                artifacts,
+                jobs,
+                duplicateDetector,
+                file,
+                itsmSource.Trim(),
+                snapshotDate,
+                metadata,
+                ct);
+
+            var response = new AutomatedSnapshotIngestResponse(
+                outcome.Queued,
+                outcome.DuplicateDetected,
+                outcome.ExistingSnapshotId,
+                outcome.DuplicateReason,
+                outcome.ContentSha256,
+                outcome.Job is null ? null : MapJob(outcome.Job));
+
+            return outcome.Queued
+                ? Results.Accepted($"/api/v1/jobs/{outcome.Job!.Id}", response)
+                : Results.Ok(response);
+        })
+        .DisableAntiforgery()
+        .WithTags("Jobs")
+        .WithName("QueueAutomatedSnapshotIngest");
 
         app.MapPost("/jobs/snapshot-ingest/bulk", async (
             HttpRequest request,
@@ -659,13 +716,16 @@ public static class UpmsApiEndpoints
                 if (file.Length == 0)
                     return Results.BadRequest(new { error = $"File {index + 1} is empty." });
 
+                if (!TryBuildSnapshotIngestMetadata(request, form, user, file, SnapshotUploadChannels.ManualBulkJob, automated: false, out var metadata, out var metadataError))
+                    return Results.BadRequest(new { error = metadataError });
+
                 var job = await QueueSnapshotIngestJobAsync(
                     artifacts,
                     jobs,
-                    user,
                     file,
                     trimmedSource,
                     snapshotDates[index],
+                    metadata,
                     ct);
 
                 queuedJobs.Add(job);
@@ -743,26 +803,187 @@ public static class UpmsApiEndpoints
     private static async Task<BackgroundJob> QueueSnapshotIngestJobAsync(
         IArtifactStorage artifacts,
         IBackgroundJobService jobs,
-        ClaimsPrincipal user,
         IFormFile file,
         string itsmSource,
         DateOnly snapshotDate,
+        SnapshotIngestMetadata metadata,
+        CancellationToken ct)
+    {
+        var prepared = await PrepareSnapshotIngestPayloadAsync(
+            artifacts,
+            file,
+            itsmSource,
+            snapshotDate,
+            metadata,
+            ct);
+
+        try
+        {
+            return await jobs.EnqueueAsync(
+                BackgroundJobTypes.SnapshotIngest,
+                JsonSerializer.Serialize(prepared.Payload, JsonOptions),
+                prepared.Metadata.RequestedBy,
+                ct);
+        }
+        catch
+        {
+            artifacts.Delete(prepared.StoredArtifact.RelativePath);
+            throw;
+        }
+    }
+
+    private static async Task<SnapshotIngestQueueOutcome> SubmitAutomatedSnapshotIngestAsync(
+        IArtifactStorage artifacts,
+        IBackgroundJobService jobs,
+        ISnapshotDuplicateDetector duplicateDetector,
+        IFormFile file,
+        string itsmSource,
+        DateOnly snapshotDate,
+        SnapshotIngestMetadata metadata,
+        CancellationToken ct)
+    {
+        var prepared = await PrepareSnapshotIngestPayloadAsync(
+            artifacts,
+            file,
+            itsmSource,
+            snapshotDate,
+            metadata,
+            ct);
+
+        var duplicateJob = await jobs.FindMatchingSnapshotIngestAsync(itsmSource, snapshotDate, prepared.Metadata, ct);
+        if (duplicateJob is not null)
+        {
+            artifacts.Delete(prepared.StoredArtifact.RelativePath);
+            return new SnapshotIngestQueueOutcome(
+                Queued: false,
+                DuplicateDetected: true,
+                Job: duplicateJob,
+                ExistingSnapshotId: null,
+                DuplicateReason: "Matching automated snapshot upload already queued or processed.",
+                ContentSha256: prepared.StoredArtifact.Sha256);
+        }
+
+        var duplicateSnapshot = await duplicateDetector.FindExistingSnapshotAsync(itsmSource, snapshotDate, prepared.Metadata, ct);
+        if (duplicateSnapshot is not null)
+        {
+            artifacts.Delete(prepared.StoredArtifact.RelativePath);
+            return new SnapshotIngestQueueOutcome(
+                Queued: false,
+                DuplicateDetected: true,
+                Job: null,
+                ExistingSnapshotId: duplicateSnapshot.SnapshotId,
+                DuplicateReason: duplicateSnapshot.Reason,
+                ContentSha256: prepared.StoredArtifact.Sha256);
+        }
+
+        try
+        {
+            var job = await jobs.EnqueueAsync(
+                BackgroundJobTypes.SnapshotIngest,
+                JsonSerializer.Serialize(prepared.Payload, JsonOptions),
+                prepared.Metadata.RequestedBy,
+                ct);
+
+            return new SnapshotIngestQueueOutcome(
+                Queued: true,
+                DuplicateDetected: false,
+                Job: job,
+                ExistingSnapshotId: null,
+                DuplicateReason: null,
+                ContentSha256: prepared.StoredArtifact.Sha256);
+        }
+        catch
+        {
+            artifacts.Delete(prepared.StoredArtifact.RelativePath);
+            throw;
+        }
+    }
+
+    private static async Task<PreparedSnapshotIngestPayload> PrepareSnapshotIngestPayloadAsync(
+        IArtifactStorage artifacts,
+        IFormFile file,
+        string itsmSource,
+        DateOnly snapshotDate,
+        SnapshotIngestMetadata metadata,
         CancellationToken ct)
     {
         await using var uploadStream = file.OpenReadStream();
         var stored = await artifacts.SaveAsync("uploads", file.FileName, uploadStream, file.ContentType, ct);
+        var normalizedMetadata = SnapshotIngestMetadataHelper.Normalize(
+            metadata,
+            file.FileName,
+            file.ContentType,
+            metadata.UploadChannel,
+            metadata.IsAutomated,
+            stored.RelativePath,
+            stored.Sha256,
+            metadata.RequestedBy);
+
         var payload = new SnapshotIngestJobPayload(
             itsmSource,
             snapshotDate,
             stored.RelativePath,
             file.FileName,
-            file.ContentType ?? "application/octet-stream");
+            file.ContentType ?? "application/octet-stream",
+            normalizedMetadata);
 
-        return await jobs.EnqueueAsync(
-            BackgroundJobTypes.SnapshotIngest,
-            JsonSerializer.Serialize(payload, JsonOptions),
-            ResolveRequestedBy(user),
-            ct);
+        return new PreparedSnapshotIngestPayload(stored, normalizedMetadata, payload);
+    }
+
+    private static bool TryBuildSnapshotIngestMetadata(
+        HttpRequest request,
+        IFormCollection form,
+        ClaimsPrincipal user,
+        IFormFile file,
+        string defaultUploadChannel,
+        bool automated,
+        out SnapshotIngestMetadata metadata,
+        out string? error)
+    {
+        metadata = default!;
+        error = null;
+
+        var timestampRaw = FirstNonEmpty(form["timestamp"].ToString(), form["sourceTimestampUtc"].ToString(), form["submittedAtUtc"].ToString());
+        DateTime? sourceTimestampUtc = null;
+        if (!string.IsNullOrWhiteSpace(timestampRaw))
+        {
+            if (!DateTimeOffset.TryParse(timestampRaw, out var parsedTimestamp))
+            {
+                error = "timestamp must be a valid ISO-8601 date/time.";
+                return false;
+            }
+
+            sourceTimestampUtc = parsedTimestamp.UtcDateTime;
+        }
+
+        var requestedBy = ResolveRequestedBy(user);
+        metadata = SnapshotIngestMetadataHelper.Normalize(
+            new SnapshotIngestMetadata
+            {
+                UploadChannel = FirstNonEmpty(form["uploadChannel"].ToString(), defaultUploadChannel) ?? defaultUploadChannel,
+                SourceSystem = FirstNonEmpty(form["sourceSystem"].ToString()),
+                Producer = FirstNonEmpty(form["producer"].ToString()),
+                OriginalFileName = file.FileName,
+                CorrelationId = FirstNonEmpty(form["correlationId"].ToString(), form["referenceId"].ToString(), request.Headers["X-Correlation-Id"].ToString()),
+                SubmittedAtUtc = DateTime.UtcNow,
+                SourceTimestampUtc = sourceTimestampUtc,
+                ContentType = file.ContentType,
+                ContentSha256 = null,
+                SourceFileIdentity = FirstNonEmpty(form["sourceFileIdentity"].ToString(), form["sourceFileId"].ToString()),
+                IdempotencyKey = FirstNonEmpty(form["idempotencyKey"].ToString(), request.Headers["Idempotency-Key"].ToString()),
+                ArtifactPath = null,
+                RequestedBy = requestedBy,
+                IsAutomated = automated
+            },
+            file.FileName,
+            file.ContentType,
+            defaultUploadChannel,
+            automated,
+            artifactPath: null,
+            contentSha256: null,
+            requestedBy: requestedBy);
+
+        return true;
     }
 
     private static bool TryResolveSnapshotDates(
@@ -831,6 +1052,30 @@ public static class UpmsApiEndpoints
         return "anonymous";
     }
 
+    private static string? FirstNonEmpty(params string?[] values)
+    {
+        foreach (var value in values)
+        {
+            if (!string.IsNullOrWhiteSpace(value))
+                return value.Trim();
+        }
+
+        return null;
+    }
+
+    private sealed record PreparedSnapshotIngestPayload(
+        StoredArtifact StoredArtifact,
+        SnapshotIngestMetadata Metadata,
+        SnapshotIngestJobPayload Payload);
+
+    private sealed record SnapshotIngestQueueOutcome(
+        bool Queued,
+        bool DuplicateDetected,
+        BackgroundJob? Job,
+        Guid? ExistingSnapshotId,
+        string? DuplicateReason,
+        string? ContentSha256);
+
     private static bool TryMatchField(IDictionary<string, string?> fields, string fieldName, string fieldValue)
     {
         foreach (var entry in fields)
@@ -864,6 +1109,9 @@ public static class UpmsApiEndpoints
             result.SnapshotId,
             result.TicketsIngested,
             result.FieldChangesRecorded,
+            result.DuplicateDetected,
+            result.DuplicateOfSnapshotId,
+            result.DuplicateReason,
             result.ErrorMessage,
             result.Warnings.ToArray());
     }
@@ -1014,8 +1262,19 @@ public sealed record IngestResultResponse(
     Guid SnapshotId,
     int TicketsIngested,
     int FieldChangesRecorded,
+    bool DuplicateDetected,
+    Guid? DuplicateOfSnapshotId,
+    string? DuplicateReason,
     string? ErrorMessage,
     IReadOnlyList<string> Warnings);
+
+public sealed record AutomatedSnapshotIngestResponse(
+    bool Queued,
+    bool DuplicateDetected,
+    Guid? ExistingSnapshotId,
+    string? DuplicateReason,
+    string? ContentSha256,
+    BackgroundJobResponse? Job);
 
 public sealed record ExecuteReportRequest(string PluginId, Dictionary<string, string>? Parameters);
 

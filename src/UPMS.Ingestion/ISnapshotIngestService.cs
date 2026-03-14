@@ -1,5 +1,7 @@
 namespace UPMS.Ingestion;
 
+using UPMS.Data;
+
 /// <summary>
 /// Parses uploaded snapshot files and persists the extracted ticket data.
 /// </summary>
@@ -15,6 +17,7 @@ public interface ISnapshotIngestService
         Stream csvStream,
         string itsmSourceName,
         DateOnly snapshotDate,
+        SnapshotIngestMetadata? metadata = null,
         CancellationToken ct = default);
 
     /// <summary>
@@ -26,5 +29,6 @@ public interface ISnapshotIngestService
         Stream jsonStream,
         string itsmSourceName,
         DateOnly snapshotDate,
+        SnapshotIngestMetadata? metadata = null,
         CancellationToken ct = default);
 }

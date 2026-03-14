@@ -1,9 +1,16 @@
 namespace UPMS.Data.Jobs;
 
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 
 public class BackgroundJobService : IBackgroundJobService
 {
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        PropertyNameCaseInsensitive = true,
+        WriteIndented = false
+    };
+
     private readonly UpmsDbContext _context;
 
     public BackgroundJobService(UpmsDbContext context)
@@ -131,6 +138,65 @@ public class BackgroundJobService : IBackgroundJobService
 
         await _context.SaveChangesAsync(ct);
         return nextJob;
+    }
+
+    public async Task<BackgroundJob?> FindMatchingSnapshotIngestAsync(
+        string itsmSource,
+        DateOnly snapshotDate,
+        SnapshotIngestMetadata metadata,
+        CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(itsmSource);
+        ArgumentNullException.ThrowIfNull(metadata);
+
+        if (!SnapshotIngestMetadataHelper.HasDuplicateKeys(metadata))
+            return null;
+
+        var normalizedSource = itsmSource.Trim();
+        var candidates = await _context.BackgroundJobs
+            .AsNoTracking()
+            .Where(job => job.JobType == BackgroundJobTypes.SnapshotIngest
+                && job.Status != BackgroundJobStatuses.Failed)
+            .OrderByDescending(job => job.CreatedAt)
+            .Take(250)
+            .ToListAsync(ct);
+
+        foreach (var candidate in candidates)
+        {
+            SnapshotIngestJobPayload? payload;
+            try
+            {
+                payload = JsonSerializer.Deserialize<SnapshotIngestJobPayload>(candidate.PayloadJson, JsonOptions);
+            }
+            catch (JsonException)
+            {
+                continue;
+            }
+
+            if (payload is null)
+                continue;
+
+            if (!string.Equals(payload.ItsmSource, normalizedSource, StringComparison.Ordinal))
+                continue;
+
+            if (payload.SnapshotDate != snapshotDate)
+                continue;
+
+            var candidateMetadata = SnapshotIngestMetadataHelper.Normalize(
+                payload.Metadata,
+                payload.OriginalFileName,
+                payload.ContentType,
+                SnapshotUploadChannels.ManualJob,
+                automated: false,
+                payload.ArtifactPath,
+                payload.Metadata?.ContentSha256,
+                candidate.RequestedBy);
+
+            if (SnapshotIngestMetadataHelper.TryGetDuplicateReason(candidateMetadata, metadata, out _))
+                return candidate;
+        }
+
+        return null;
     }
 
     public async Task MarkSucceededAsync(
