@@ -596,8 +596,7 @@ public static class UpmsApiEndpoints
 
         app.MapPost("/jobs/snapshot-ingest", async (
             HttpRequest request,
-            IArtifactStorage artifacts,
-            IBackgroundJobService jobs,
+            ISnapshotIngestJobSubmissionService submissions,
             ClaimsPrincipal user,
             CancellationToken ct) =>
         {
@@ -616,8 +615,7 @@ public static class UpmsApiEndpoints
                 return Results.BadRequest(new { error = "snapshotDate must be a valid date (yyyy-MM-dd)." });
 
             var job = await QueueSnapshotIngestJobAsync(
-                artifacts,
-                jobs,
+                submissions,
                 user,
                 file,
                 itsmSource.Trim(),
@@ -632,8 +630,7 @@ public static class UpmsApiEndpoints
 
         app.MapPost("/jobs/snapshot-ingest/bulk", async (
             HttpRequest request,
-            IArtifactStorage artifacts,
-            IBackgroundJobService jobs,
+            ISnapshotIngestJobSubmissionService submissions,
             ClaimsPrincipal user,
             CancellationToken ct) =>
         {
@@ -660,8 +657,7 @@ public static class UpmsApiEndpoints
                     return Results.BadRequest(new { error = $"File {index + 1} is empty." });
 
                 var job = await QueueSnapshotIngestJobAsync(
-                    artifacts,
-                    jobs,
+                    submissions,
                     user,
                     file,
                     trimmedSource,
@@ -741,8 +737,7 @@ public static class UpmsApiEndpoints
     }
 
     private static async Task<BackgroundJob> QueueSnapshotIngestJobAsync(
-        IArtifactStorage artifacts,
-        IBackgroundJobService jobs,
+        ISnapshotIngestJobSubmissionService submissions,
         ClaimsPrincipal user,
         IFormFile file,
         string itsmSource,
@@ -750,17 +745,12 @@ public static class UpmsApiEndpoints
         CancellationToken ct)
     {
         await using var uploadStream = file.OpenReadStream();
-        var stored = await artifacts.SaveAsync("uploads", file.FileName, uploadStream, file.ContentType, ct);
-        var payload = new SnapshotIngestJobPayload(
+        return await submissions.QueueAsync(
+            uploadStream,
+            file.FileName,
+            file.ContentType,
             itsmSource,
             snapshotDate,
-            stored.RelativePath,
-            file.FileName,
-            file.ContentType ?? "application/octet-stream");
-
-        return await jobs.EnqueueAsync(
-            BackgroundJobTypes.SnapshotIngest,
-            JsonSerializer.Serialize(payload, JsonOptions),
             ResolveRequestedBy(user),
             ct);
     }

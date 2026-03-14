@@ -47,6 +47,7 @@ public static class DataServiceExtensions
         services.AddScoped<TicketDataService>();
         services.AddScoped<TicketDataServiceInstance>();
         services.AddScoped<IBackgroundJobService, BackgroundJobService>();
+        services.AddScoped<ISnapshotIngestJobSubmissionService, SnapshotIngestJobSubmissionService>();
         services.AddSingleton<IArtifactStorage, FileSystemArtifactStorage>();
 
         return services;
