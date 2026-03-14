@@ -1,5 +1,6 @@
 namespace UPMS.Data.Tests;
 
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using UPMS.Data.Delivery;
 
@@ -94,4 +95,108 @@ public sealed class DistributionListServiceTests
         Assert.That(company.DistributionListCount, Is.EqualTo(2));
         Assert.That(lists.Select(list => list.Name).ToArray(), Is.EquivalentTo(new[] { "Leadership", "Operations" }));
     }
+
+
+    [Test]
+    public async Task GetCompaniesAsync_executes_on_relational_provider_and_returns_sorted_counts()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+
+        var options = new DbContextOptionsBuilder<UpmsDbContext>()
+            .UseSqlite(connection)
+            .Options;
+
+        await using var context = new UpmsDbContext(options);
+        await context.Database.ExecuteSqlRawAsync("""
+            CREATE TABLE company_profile (
+                id TEXT NOT NULL PRIMARY KEY,
+                company_key TEXT NOT NULL,
+                display_name TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            """);
+        await context.Database.ExecuteSqlRawAsync("""
+            CREATE TABLE distribution_list (
+                id TEXT NOT NULL PRIMARY KEY,
+                company_profile_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                description TEXT NULL,
+                is_active INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                created_by TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                updated_by TEXT NULL,
+                FOREIGN KEY(company_profile_id) REFERENCES company_profile(id) ON DELETE CASCADE
+            );
+            """);
+
+        var utcNow = DateTime.UtcNow;
+        var alphaId = Guid.NewGuid();
+        var bravoId = Guid.NewGuid();
+
+        context.CompanyProfiles.AddRange(
+            new CompanyProfile
+            {
+                Id = alphaId,
+                CompanyKey = "alpha",
+                DisplayName = "Alpha",
+                CreatedAt = utcNow,
+                UpdatedAt = utcNow
+            },
+            new CompanyProfile
+            {
+                Id = bravoId,
+                CompanyKey = "bravo",
+                DisplayName = "Bravo",
+                CreatedAt = utcNow,
+                UpdatedAt = utcNow
+            });
+
+        context.DistributionLists.AddRange(
+            new DistributionList
+            {
+                Id = Guid.NewGuid(),
+                CompanyProfileId = bravoId,
+                Name = "Leadership",
+                IsActive = true,
+                CreatedAt = utcNow,
+                CreatedBy = "tester",
+                UpdatedAt = utcNow,
+                UpdatedBy = "tester"
+            },
+            new DistributionList
+            {
+                Id = Guid.NewGuid(),
+                CompanyProfileId = alphaId,
+                Name = "Leadership",
+                IsActive = true,
+                CreatedAt = utcNow,
+                CreatedBy = "tester",
+                UpdatedAt = utcNow,
+                UpdatedBy = "tester"
+            },
+            new DistributionList
+            {
+                Id = Guid.NewGuid(),
+                CompanyProfileId = alphaId,
+                Name = "Operations",
+                IsActive = true,
+                CreatedAt = utcNow,
+                CreatedBy = "tester",
+                UpdatedAt = utcNow,
+                UpdatedBy = "tester"
+            });
+
+        await context.SaveChangesAsync();
+
+        var service = new DistributionListService(context);
+        var companies = await service.GetCompaniesAsync();
+
+        Assert.That(companies.Select(company => company.DisplayName).ToArray(), Is.EqualTo(new[] { "Alpha", "Bravo" }));
+        Assert.That(companies.Single(company => company.DisplayName == "Alpha").DistributionListCount, Is.EqualTo(2));
+        Assert.That(companies.Single(company => company.DisplayName == "Bravo").DistributionListCount, Is.EqualTo(1));
+    }
+
 }

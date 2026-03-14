@@ -14,15 +14,25 @@ public class DistributionListService : IDistributionListService
 
     public async Task<IReadOnlyList<CompanyProfileSummary>> GetCompaniesAsync(CancellationToken ct = default)
     {
-        return await _context.CompanyProfiles
+        var rows = await _context.CompanyProfiles
             .AsNoTracking()
+            .OrderBy(company => company.DisplayName)
+            .Select(company => new
+            {
+                company.Id,
+                company.CompanyKey,
+                company.DisplayName,
+                DistributionListCount = _context.DistributionLists.Count(list => list.CompanyProfileId == company.Id)
+            })
+            .ToListAsync(ct);
+
+        return rows
             .Select(company => new CompanyProfileSummary(
                 company.Id,
                 company.CompanyKey,
                 company.DisplayName,
-                company.DistributionLists.Count))
-            .OrderBy(company => company.DisplayName)
-            .ToListAsync(ct);
+                company.DistributionListCount))
+            .ToList();
     }
 
     public async Task<IReadOnlyList<DistributionListDetail>> GetListsAsync(string? company = null, CancellationToken ct = default)
