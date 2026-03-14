@@ -11,6 +11,7 @@ public sealed class ReportTemplateMetadata
     public required string FileName { get; init; }
     public required string Extension { get; init; }
     public required string ContentType { get; init; }
+    public ReportTemplateScope Scope { get; init; } = new();
     public required DateTimeOffset UploadedAt { get; init; }
     public string UploadedBy { get; init; } = "unknown";
     public DateTimeOffset? UpdatedAt { get; init; }
