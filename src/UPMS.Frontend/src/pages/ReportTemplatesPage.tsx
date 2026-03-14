@@ -13,7 +13,7 @@ import {
 } from '@mui/material';
 import { Link } from 'react-router-dom';
 import { upmsApi } from '../api/client';
-import { ReportTemplate, ReportTemplateDetail, ReportTemplateKind, ReportTemplateType } from '../api/types';
+import { ReportTemplate, ReportTemplateDetail, ReportTemplateKind, ReportTemplateScope, ReportTemplateType } from '../api/types';
 import { ErrorAlert } from '../components/ErrorAlert';
 import { LoadingPanel } from '../components/LoadingPanel';
 import { PageSection } from '../components/PageSection';
@@ -59,6 +59,99 @@ function resolveType(templateTypes: ReportTemplateType[], typeId?: string | null
   return templateTypes.find((templateType) => templateType.typeId === typeId) ?? null;
 }
 
+function splitScopeValues(value: string) {
+  const unique = new Set<string>();
+  const normalized: string[] = [];
+
+  value
+    .split(/[\n,;]/)
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .forEach((entry) => {
+      const key = entry.toLowerCase();
+      if (unique.has(key)) {
+        return;
+      }
+
+      unique.add(key);
+      normalized.push(entry);
+    });
+
+  return normalized;
+}
+
+function parseScopePairs(value: string) {
+  const unique = new Set<string>();
+
+  return value
+    .split(/\r?\n/)
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((entry) => {
+      const separatorIndex = entry.indexOf('|');
+      if (separatorIndex < 0) {
+        throw new Error(`Scope pair '${entry}' must use the format source|company.`);
+      }
+
+      const itsmSource = entry.slice(0, separatorIndex).trim();
+      const company = entry.slice(separatorIndex + 1).trim();
+      if (!itsmSource || !company) {
+        throw new Error(`Scope pair '${entry}' must include both a source and a company.`);
+      }
+
+      return { itsmSource, company };
+    })
+    .filter((pair) => {
+      const key = `${pair.itsmSource.toLowerCase()}|${pair.company.toLowerCase()}`;
+      if (unique.has(key)) {
+        return false;
+      }
+
+      unique.add(key);
+      return true;
+    });
+}
+
+function formatScopeValues(values?: string[] | null) {
+  return values?.join('\n') ?? '';
+}
+
+function formatScopePairs(scope?: ReportTemplateScope | null) {
+  return scope?.itsmSourceCompanies?.map((pair) => `${pair.itsmSource}|${pair.company}`).join('\n') ?? '';
+}
+
+function buildScope(itsmSourcesText: string, companiesText: string, scopePairsText: string) {
+  // TODO: switch the company field to stable company identifiers when the backend grows a
+  // normalized company model. The first version intentionally keeps free-text matching pragmatic.
+  return {
+    itsmSources: splitScopeValues(itsmSourcesText),
+    companies: splitScopeValues(companiesText),
+    itsmSourceCompanies: parseScopePairs(scopePairsText),
+  };
+}
+
+function formatScopeSummary(scope?: ReportTemplateScope | null) {
+  if (!scope || scope.isGlobal) {
+    return 'Global: available for every ITSM source and company.';
+  }
+
+  const parts: string[] = [];
+
+  if (scope.itsmSources.length > 0) {
+    parts.push(`Sources: ${scope.itsmSources.join(', ')}`);
+  }
+
+  if (scope.companies.length > 0) {
+    parts.push(`Companies: ${scope.companies.join(', ')}`);
+  }
+
+  if (scope.itsmSourceCompanies.length > 0) {
+    parts.push(`Pairs: ${scope.itsmSourceCompanies.map((pair) => `${pair.itsmSource} + ${pair.company}`).join('; ')}`);
+  }
+
+  return parts.join(' • ');
+}
+
 export function ReportTemplatesPage() {
   const [templateTypes, setTemplateTypes] = useState<ReportTemplateType[]>([]);
   const [templates, setTemplates] = useState<ReportTemplate[]>([]);
@@ -69,6 +162,9 @@ export function ReportTemplatesPage() {
   const [displayName, setDisplayName] = useState('');
   const [description, setDescription] = useState('');
   const [subjectTemplate, setSubjectTemplate] = useState('');
+  const [allowedItsmSourcesText, setAllowedItsmSourcesText] = useState('');
+  const [allowedCompaniesText, setAllowedCompaniesText] = useState('');
+  const [allowedSourceCompanyPairsText, setAllowedSourceCompanyPairsText] = useState('');
   const [textContent, setTextContent] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [editorDetail, setEditorDetail] = useState<ReportTemplateDetail | null>(null);
@@ -105,6 +201,7 @@ export function ReportTemplatesPage() {
         template.extension,
         template.typeDisplayName ?? '',
         template.templateTypeId ?? '',
+        formatScopeSummary(template.scope),
       ]
         .join(' ')
         .toLowerCase();
@@ -155,6 +252,9 @@ export function ReportTemplatesPage() {
     setDisplayName('');
     setDescription('');
     setSubjectTemplate(resolvedType?.defaultSubjectTemplate ?? '');
+    setAllowedItsmSourcesText('');
+    setAllowedCompaniesText('');
+    setAllowedSourceCompanyPairsText('');
     setTextContent('');
     setFile(null);
   };
@@ -177,6 +277,9 @@ export function ReportTemplatesPage() {
       setDisplayName(detail.displayName);
       setDescription(detail.description ?? '');
       setSubjectTemplate(detail.subjectTemplate ?? '');
+      setAllowedItsmSourcesText(formatScopeValues(detail.scope?.itsmSources));
+      setAllowedCompaniesText(formatScopeValues(detail.scope?.companies));
+      setAllowedSourceCompanyPairsText(formatScopePairs(detail.scope));
       setTextContent(detail.editableTextContent ?? '');
       setFile(null);
     } catch (err: any) {
@@ -227,6 +330,14 @@ export function ReportTemplatesPage() {
       return;
     }
 
+    let scope: ReturnType<typeof buildScope>;
+    try {
+      scope = buildScope(allowedItsmSourcesText, allowedCompaniesText, allowedSourceCompanyPairsText);
+    } catch (err: any) {
+      setError(err.message ?? 'Template scope is invalid.');
+      return;
+    }
+
     setSubmitting(true);
     setError(undefined);
     setMessage(undefined);
@@ -234,6 +345,7 @@ export function ReportTemplatesPage() {
     const formData = new FormData();
     formData.append('displayName', displayName.trim());
     formData.append('templateTypeId', selectedType.typeId);
+    formData.append('scope', JSON.stringify(scope));
 
     if (description.trim()) {
       formData.append('description', description.trim());
@@ -430,6 +542,48 @@ export function ReportTemplatesPage() {
                   />
                 </Grid>
 
+                <Grid item xs={12}>
+                  <Alert severity="info">
+                    Leave all scope fields blank to make the template global. Source/company pair rules are ANDed with the source and company lists below.
+                  </Alert>
+                </Grid>
+                <Grid item xs={12} md={6}>
+                  <TextField
+                    label="Allowed ITSM sources"
+                    value={allowedItsmSourcesText}
+                    onChange={(event) => setAllowedItsmSourcesText(event.target.value)}
+                    fullWidth
+                    multiline
+                    minRows={3}
+                    placeholder="servicenow-prod\njira-prod"
+                    helperText="Optional. One source key/name per line or comma separated."
+                  />
+                </Grid>
+                <Grid item xs={12} md={6}>
+                  <TextField
+                    label="Allowed companies"
+                    value={allowedCompaniesText}
+                    onChange={(event) => setAllowedCompaniesText(event.target.value)}
+                    fullWidth
+                    multiline
+                    minRows={3}
+                    placeholder="Contoso\nFabrikam"
+                    helperText="Optional. Pragmatic first version using free-text company names. Matches are case-insensitive."
+                  />
+                </Grid>
+                <Grid item xs={12}>
+                  <TextField
+                    label="Allowed source + company pairs"
+                    value={allowedSourceCompanyPairsText}
+                    onChange={(event) => setAllowedSourceCompanyPairsText(event.target.value)}
+                    fullWidth
+                    multiline
+                    minRows={3}
+                    placeholder="servicenow-prod|Contoso\njira-prod|Fabrikam"
+                    helperText="Optional. One source|company pair per line. Use this to allow exact combinations only."
+                  />
+                </Grid>
+
                 {selectedType?.kind === 'Email' || subjectTemplate ? (
                   <Grid item xs={12}>
                     <TextField
@@ -575,6 +729,11 @@ export function ReportTemplatesPage() {
                       ? `Currently editing ${editorDetail.displayName}. Last updated ${new Date(editorDetail.updatedAt).toLocaleString()} by ${editorDetail.updatedBy ?? editorDetail.uploadedBy}.`
                       : 'Choose a type to create a new template or edit one from the library below.'}
                 </Typography>
+                {!detailLoading && editorDetail ? (
+                  <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                    {formatScopeSummary(editorDetail.scope)}
+                  </Typography>
+                ) : null}
               </Paper>
             </Stack>
           </Grid>
@@ -636,13 +795,22 @@ export function ReportTemplatesPage() {
                     <Chip label={template.kind} size="small" />
                     <Chip label={template.typeDisplayName ?? template.extension} size="small" variant="outlined" />
                     <Chip label={template.extension} size="small" variant="outlined" />
+                    <Chip
+                      label={template.scope?.isGlobal ? 'Global' : 'Scoped'}
+                      size="small"
+                      color={template.scope?.isGlobal ? 'info' : 'warning'}
+                      variant="outlined"
+                    />
                     {template.isStarterTemplate ? <Chip label="Starter" size="small" color="success" /> : <Chip label="Custom" size="small" color="primary" variant="outlined" />}
                   </Stack>
                   <Typography variant="h6" sx={{ mb: 1 }}>
                     {template.displayName}
                   </Typography>
-                  <Typography color="text.secondary" sx={{ mb: 2 }}>
+                  <Typography color="text.secondary" sx={{ mb: 1 }}>
                     {template.description ?? 'No description has been added for this template yet.'}
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                    {formatScopeSummary(template.scope)}
                   </Typography>
                   <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
                     Updated {new Date(template.updatedAt).toLocaleString()} by {template.updatedBy ?? template.uploadedBy}

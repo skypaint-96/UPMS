@@ -21,6 +21,22 @@ const api = axios.create({
   baseURL: apiBaseUrl,
 });
 
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (axios.isAxiosError(error)) {
+      const payload = error.response?.data;
+      const message = typeof payload === 'string'
+        ? payload
+        : payload?.error ?? payload?.title ?? error.message;
+
+      return Promise.reject(new Error(message));
+    }
+
+    return Promise.reject(error);
+  },
+);
+
 function buildApiUrl(path: string) {
   return `${apiBaseUrl.replace(/\/$/, '')}${path.startsWith('/') ? path : `/${path}`}`;
 }
@@ -81,8 +97,8 @@ export const upmsApi = {
     const { data } = await api.get<ReportTemplateType[]>('/report-template-types');
     return data;
   },
-  async getReportTemplates() {
-    const { data } = await api.get<ReportTemplate[]>('/report-templates');
+  async getReportTemplates(params?: { itsmSource?: string; company?: string }) {
+    const { data } = await api.get<ReportTemplate[]>('/report-templates', { params });
     return data;
   },
   async getReportTemplate(id: string) {

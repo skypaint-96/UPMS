@@ -12,6 +12,7 @@ using UPMS.Data.Jobs;
 using UPMS.Ingestion;
 using UPMS.Reporting;
 using UPMS.Reporting.Plugins;
+using UPMS.Reporting.Plugins.Templates;
 using UPMS.Reporting.Templates;
 
 public static class UpmsApiEndpoints
@@ -152,9 +153,16 @@ public static class UpmsApiEndpoints
         .WithTags("Report Templates")
         .WithName("GetReportTemplateTypes");
 
-        app.MapGet("/report-templates", (IReportTemplateStore templateStore, ReportTemplateTypeRegistry typeRegistry) =>
+        app.MapGet("/report-templates", (
+            string? itsmSource,
+            string? company,
+            IReportTemplateApplicabilityService templateApplicability,
+            ReportTemplateTypeRegistry typeRegistry) =>
         {
-            var rows = templateStore.GetAllTemplates();
+            var rows = string.IsNullOrWhiteSpace(itsmSource) && string.IsNullOrWhiteSpace(company)
+                ? templateApplicability.GetApplicableTemplates()
+                : templateApplicability.GetApplicableTemplates(itsmSource, company, allowPartialContext: false);
+
             return Results.Ok(rows
                 .OrderByDescending(template => template.UpdatedAt ?? template.UploadedAt)
                 .ThenBy(template => template.DisplayName, StringComparer.OrdinalIgnoreCase)
@@ -205,9 +213,20 @@ public static class UpmsApiEndpoints
             var description = form["description"].ToString();
             var subjectTemplate = form["subjectTemplate"].ToString();
             var textContent = form["textContent"].ToString();
+            var scopeRaw = form["scope"].ToString();
 
             if (string.IsNullOrWhiteSpace(displayName))
                 return Results.BadRequest(new { error = "displayName is required." });
+
+            ReportTemplateScope scope;
+            try
+            {
+                scope = ParseTemplateScope(scopeRaw);
+            }
+            catch (JsonException ex)
+            {
+                return Results.BadRequest(new { error = $"scope must be valid JSON: {ex.Message}" });
+            }
 
             var selectedType = string.IsNullOrWhiteSpace(templateTypeId)
                 ? null
@@ -258,6 +277,7 @@ public static class UpmsApiEndpoints
                         Kind = kind,
                         Description = string.IsNullOrWhiteSpace(description) ? null : description.Trim(),
                         SubjectTemplate = string.IsNullOrWhiteSpace(subjectTemplate) ? null : subjectTemplate.Trim(),
+                        Scope = scope,
                         OriginalFileName = originalFileName!,
                         UploadedBy = ResolveRequestedBy(user) ?? "anonymous"
                     }, contentStream, ct);
@@ -298,8 +318,21 @@ public static class UpmsApiEndpoints
             var kindRaw = form.ContainsKey("kind") ? form["kind"].ToString() : existingTemplate.Metadata.Kind.ToString();
             var description = form.ContainsKey("description") ? form["description"].ToString() : existingTemplate.Metadata.Description;
             var subjectTemplate = form.ContainsKey("subjectTemplate") ? form["subjectTemplate"].ToString() : existingTemplate.Metadata.SubjectTemplate;
+            var scopeRaw = form.ContainsKey("scope") ? form["scope"].ToString() : null;
             var hasInlineText = form.ContainsKey("textContent");
             var textContent = hasInlineText ? form["textContent"].ToString() : null;
+
+            ReportTemplateScope scope;
+            try
+            {
+                scope = scopeRaw is null
+                    ? existingTemplate.Metadata.Scope
+                    : ParseTemplateScope(scopeRaw);
+            }
+            catch (JsonException ex)
+            {
+                return Results.BadRequest(new { error = $"scope must be valid JSON: {ex.Message}" });
+            }
 
             var selectedType = string.IsNullOrWhiteSpace(templateTypeId)
                 ? ResolveTemplateDefinition(existingTemplate.Metadata, typeRegistry)
@@ -347,6 +380,7 @@ public static class UpmsApiEndpoints
                         Kind = kind,
                         Description = string.IsNullOrWhiteSpace(description) ? null : description.Trim(),
                         SubjectTemplate = string.IsNullOrWhiteSpace(subjectTemplate) ? null : subjectTemplate.Trim(),
+                        Scope = scope,
                         OriginalFileName = originalFileName,
                         UploadedBy = ResolveRequestedBy(user) ?? "anonymous",
                         IsStarterTemplate = existingTemplate.Metadata.IsStarterTemplate
@@ -681,10 +715,27 @@ public static class UpmsApiEndpoints
         .WithTags("Jobs")
         .WithName("QueueBulkSnapshotIngest");
 
-        app.MapPost("/jobs/report-execution", async (ExecuteReportRequest request, IBackgroundJobService jobs, ClaimsPrincipal user, CancellationToken ct) =>
+        app.MapPost("/jobs/report-execution", async (
+            ExecuteReportRequest request,
+            IBackgroundJobService jobs,
+            IReportTemplateApplicabilityService templateApplicability,
+            ClaimsPrincipal user,
+            CancellationToken ct) =>
         {
             if (string.IsNullOrWhiteSpace(request.PluginId))
                 return Results.BadRequest(new { error = "pluginId is required." });
+
+            if (string.Equals(request.PluginId.Trim(), TokenisedTemplateReportPlugin.PluginIdValue, StringComparison.OrdinalIgnoreCase))
+            {
+                var parameters = request.Parameters ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                parameters.TryGetValue("template_id", out var templateId);
+                parameters.TryGetValue("itsm_source", out var itsmSource);
+                parameters.TryGetValue("company", out var company);
+
+                var validation = templateApplicability.ValidateSelection(templateId, itsmSource, company);
+                if (!validation.IsValid)
+                    return Results.BadRequest(new { error = validation.ErrorMessage });
+            }
 
             var payload = new ReportExecutionJobPayload(
                 request.PluginId.Trim(),
@@ -898,7 +949,8 @@ public static class UpmsApiEndpoints
             typeDefinition?.TypeId ?? template.TemplateTypeId,
             typeDefinition?.DisplayName,
             typeDefinition?.SupportsInlineEdit ?? ReportTemplateContentTypeMapper.IsTextLike(template.Extension),
-            template.IsStarterTemplate);
+            template.IsStarterTemplate,
+            MapTemplateScope(template.Scope));
     }
 
     private static ReportTemplateDetailResponse MapTemplateDetail(StoredReportTemplate template, ReportTemplateTypeRegistry typeRegistry)
@@ -928,8 +980,30 @@ public static class UpmsApiEndpoints
             typeDefinition?.DisplayName,
             supportsInlineEdit,
             template.Metadata.IsStarterTemplate,
+            MapTemplateScope(template.Metadata.Scope),
             typeDefinition?.AuthoringGuidance,
             editableTextContent);
+    }
+
+    private static ReportTemplateScopeResponse MapTemplateScope(ReportTemplateScope? scope)
+    {
+        var normalized = ReportTemplateScopeEvaluator.Normalize(scope);
+        return new ReportTemplateScopeResponse(
+            normalized.IsGlobal,
+            normalized.ItsmSources,
+            normalized.Companies,
+            normalized.ItsmSourceCompanies
+                .Select(pair => new ReportTemplateScopeCombinationResponse(pair.ItsmSource, pair.Company))
+                .ToArray());
+    }
+
+    private static ReportTemplateScope ParseTemplateScope(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+            return ReportTemplateScopeEvaluator.Normalize(null);
+
+        var parsed = JsonSerializer.Deserialize<ReportTemplateScope>(raw, JsonOptions);
+        return ReportTemplateScopeEvaluator.Normalize(parsed);
     }
 
     private static ReportTemplateTypeResponse MapTemplateType(ReportTemplateTypeDefinition typeDefinition)
@@ -1059,6 +1133,16 @@ public sealed record ReportTemplateTypeResponse(
     string? StarterTemplateDescription,
     string? DefaultSubjectTemplate);
 
+public sealed record ReportTemplateScopeCombinationResponse(
+    string ItsmSource,
+    string Company);
+
+public sealed record ReportTemplateScopeResponse(
+    bool IsGlobal,
+    IReadOnlyList<string> ItsmSources,
+    IReadOnlyList<string> Companies,
+    IReadOnlyList<ReportTemplateScopeCombinationResponse> ItsmSourceCompanies);
+
 public sealed record ReportTemplateResponse(
     string Id,
     string DisplayName,
@@ -1075,7 +1159,8 @@ public sealed record ReportTemplateResponse(
     string? TemplateTypeId,
     string? TypeDisplayName,
     bool SupportsInlineEdit,
-    bool IsStarterTemplate);
+    bool IsStarterTemplate,
+    ReportTemplateScopeResponse Scope);
 
 public sealed record ReportTemplateDetailResponse(
     string Id,
@@ -1094,6 +1179,7 @@ public sealed record ReportTemplateDetailResponse(
     string? TypeDisplayName,
     bool SupportsInlineEdit,
     bool IsStarterTemplate,
+    ReportTemplateScopeResponse Scope,
     string? AuthoringGuidance,
     string? EditableTextContent);
 
