@@ -6,8 +6,6 @@ using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
 
-[DbContext(typeof(UpmsDbContext))]
-[Migration("20260314000007_FileSharePollingSources")]
 public partial class FileSharePollingSources : Migration
 {
     protected override void Up(MigrationBuilder migrationBuilder)
