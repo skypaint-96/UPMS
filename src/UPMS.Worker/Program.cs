@@ -8,10 +8,13 @@ using UPMS.Worker;
 var builder = Host.CreateApplicationBuilder(args);
 
 builder.Services.Configure<WorkerOptions>(builder.Configuration.GetSection("Worker"));
+builder.Services.Configure<FileSharePollingOptions>(builder.Configuration.GetSection("FileSharePolling"));
 builder.Services.AddUpmsData(builder.Configuration);
 builder.Services.AddUpmsIngestion();
 builder.Services.AddUpmsReporting(builder.Configuration);
+builder.Services.AddScoped<IFileSharePollRunner, FileSharePollRunner>();
 builder.Services.AddHostedService<BackgroundJobWorker>();
+builder.Services.AddHostedService<FileSharePollingSchedulerService>();
 
 var host = builder.Build();
 

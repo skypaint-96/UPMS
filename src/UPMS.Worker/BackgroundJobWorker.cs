@@ -20,15 +20,18 @@ public sealed class BackgroundJobWorker : BackgroundService
     private readonly IServiceProvider _services;
     private readonly ILogger<BackgroundJobWorker> _logger;
     private readonly WorkerOptions _options;
+    private readonly FileSharePollingOptions _fileSharePollingOptions;
 
     public BackgroundJobWorker(
         IServiceProvider services,
         IOptions<WorkerOptions> options,
+        IOptions<FileSharePollingOptions> fileSharePollingOptions,
         ILogger<BackgroundJobWorker> logger)
     {
         _services = services ?? throw new ArgumentNullException(nameof(services));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _options = options?.Value ?? new WorkerOptions();
+        _fileSharePollingOptions = fileSharePollingOptions?.Value ?? new FileSharePollingOptions();
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -36,7 +39,8 @@ public sealed class BackgroundJobWorker : BackgroundService
         var supportedTypes = new[]
         {
             BackgroundJobTypes.SnapshotIngest,
-            BackgroundJobTypes.ReportExecution
+            BackgroundJobTypes.ReportExecution,
+            BackgroundJobTypes.FileSharePoll
         };
 
         while (!stoppingToken.IsCancellationRequested)
@@ -91,6 +95,10 @@ public sealed class BackgroundJobWorker : BackgroundService
                     await ProcessReportExecutionAsync(job, services, jobs, ct);
                     break;
 
+                case BackgroundJobTypes.FileSharePoll:
+                    await ProcessFileSharePollAsync(job, services, jobs, ct);
+                    break;
+
                 default:
                     await jobs.MarkFailedAsync(job.Id, $"Unsupported job type '{job.JobType}'.", ct);
                     break;
@@ -124,6 +132,52 @@ public sealed class BackgroundJobWorker : BackgroundService
         }
 
         await jobs.MarkSucceededAsync(job.Id, resultJson, null, null, null, ct);
+    }
+
+    private async Task ProcessFileSharePollAsync(
+        BackgroundJob job,
+        IServiceProvider services,
+        IBackgroundJobService jobs,
+        CancellationToken ct)
+    {
+        var payload = JsonSerializer.Deserialize<FileSharePollJobPayload>(job.PayloadJson, JsonOptions)
+            ?? throw new InvalidOperationException("File share poll payload was empty or invalid.");
+
+        var sources = services.GetRequiredService<IFileSharePollingSourceService>();
+
+        if (!_fileSharePollingOptions.Enabled)
+        {
+            var disabledResult = FileSharePollingCycleResult.Disabled("File share polling is disabled by configuration.");
+            await jobs.MarkFailedAsync(job.Id, disabledResult.Message ?? "File share polling is disabled by configuration.", ct);
+            await sources.MarkRunCompletedAsync(payload.SourceId, job.Id, false, disabledResult.Message, ct);
+            return;
+        }
+
+        var runner = services.GetRequiredService<IFileSharePollRunner>();
+
+        var source = await sources.GetByIdAsync(payload.SourceId, ct)
+            ?? throw new KeyNotFoundException($"File share polling source '{payload.SourceId}' was not found.");
+
+        await sources.MarkRunStartedAsync(payload.SourceId, job.Id, ct);
+
+        if (!payload.TriggeredManually && !source.Enabled)
+        {
+            var disabledResult = FileSharePollingCycleResult.Disabled("The polling source was disabled before the job started.");
+            await jobs.MarkSucceededAsync(job.Id, JsonSerializer.Serialize(disabledResult, JsonOptions), null, null, null, ct);
+            await sources.MarkRunCompletedAsync(payload.SourceId, job.Id, true, null, ct);
+            return;
+        }
+
+        var result = await runner.PollOnceAsync(source, ct);
+        if (result.IsFailure)
+        {
+            await jobs.MarkFailedAsync(job.Id, result.Message ?? $"File share poll failed for source '{source.Name}'.", ct);
+            await sources.MarkRunCompletedAsync(payload.SourceId, job.Id, false, result.Message, ct);
+            return;
+        }
+
+        await jobs.MarkSucceededAsync(job.Id, JsonSerializer.Serialize(result, JsonOptions), null, null, null, ct);
+        await sources.MarkRunCompletedAsync(payload.SourceId, job.Id, true, null, ct);
     }
 
     private async Task ProcessReportExecutionAsync(

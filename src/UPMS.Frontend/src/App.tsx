@@ -23,10 +23,12 @@ import Inventory2Outlined from '@mui/icons-material/Inventory2Outlined';
 import UploadFileOutlined from '@mui/icons-material/UploadFileOutlined';
 import WorkHistoryOutlined from '@mui/icons-material/WorkHistoryOutlined';
 import ArticleOutlined from '@mui/icons-material/ArticleOutlined';
+import FolderSharedOutlined from '@mui/icons-material/FolderSharedOutlined';
 import { DashboardPage } from './pages/DashboardPage';
 import { JobsPage } from './pages/JobsPage';
 import { ReportsPage } from './pages/ReportsPage';
 import { ReportTemplatesPage } from './pages/ReportTemplatesPage';
+import { FileSharePollingSourcesPage } from './pages/FileSharePollingSourcesPage';
 import { SnapshotsPage } from './pages/SnapshotsPage';
 import { SourcesPage } from './pages/SourcesPage';
 import { TicketDetailPage } from './pages/TicketDetailPage';
@@ -117,6 +119,7 @@ function AppShell() {
       { text: 'Upload Snapshots', route: '/upload', icon: UploadFileOutlined, helper: 'Queue single or bulk ingest' },
       { text: 'Snapshots', route: '/snapshots', icon: DatasetOutlined, helper: 'Browse uploaded snapshots' },
       { text: 'Jobs', route: '/jobs', icon: WorkHistoryOutlined, helper: 'Monitor worker jobs' },
+      { text: 'File Share Polling', route: '/file-share-polling', icon: FolderSharedOutlined, helper: 'Manage watched locations' },
       { text: 'Report Templates', route: '/report-templates', icon: ArticleOutlined, helper: 'Curate template library' },
     ],
     [],
@@ -172,6 +175,7 @@ function AppShell() {
             <Route path="/upload" element={<UploadPage />} />
             <Route path="/snapshots" element={<SnapshotsPage />} />
             <Route path="/jobs" element={<JobsPage />} />
+            <Route path="/file-share-polling" element={<FileSharePollingSourcesPage />} />
             <Route path="/report-templates" element={<ReportTemplatesPage />} />
           </Routes>
         </Box>

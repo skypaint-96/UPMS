@@ -4,6 +4,9 @@ import {
   BulkJobSubmission,
   CanonicalField,
   FieldChange,
+  FileSharePollingRunResponse,
+  FileSharePollingSettings,
+  FileSharePollingSource,
   ItsmSourceDefinition,
   ItsmSourceSummary,
   ReportPlugin,
@@ -66,6 +69,51 @@ export const upmsApi = {
   },
   async deleteItsmMapping(sourceName: string, sourceFieldName: string) {
     await api.delete(`/itsm-sources/${encodeURIComponent(sourceName)}/mappings/${encodeURIComponent(sourceFieldName)}`);
+  },
+  async getFileSharePollingSettings() {
+    const { data } = await api.get<FileSharePollingSettings>('/file-share-polling/settings');
+    return data;
+  },
+  async getFileSharePollingSources() {
+    const { data } = await api.get<FileSharePollingSource[]>('/file-share-polling-sources');
+    return data;
+  },
+  async createFileSharePollingSource(payload: {
+    name: string;
+    enabled: boolean;
+    watchedPath: string;
+    filePatterns: string[];
+    archivePath: string;
+    errorPath: string;
+    itsmSource: string;
+    pollIntervalSeconds?: number | null;
+    maxFilesPerCycle?: number | null;
+    stableFileAgeSeconds?: number | null;
+  }) {
+    const { data } = await api.post<FileSharePollingSource>('/file-share-polling-sources', payload);
+    return data;
+  },
+  async updateFileSharePollingSource(id: string, payload: {
+    name: string;
+    enabled: boolean;
+    watchedPath: string;
+    filePatterns: string[];
+    archivePath: string;
+    errorPath: string;
+    itsmSource: string;
+    pollIntervalSeconds?: number | null;
+    maxFilesPerCycle?: number | null;
+    stableFileAgeSeconds?: number | null;
+  }) {
+    const { data } = await api.put<FileSharePollingSource>(`/file-share-polling-sources/${encodeURIComponent(id)}`, payload);
+    return data;
+  },
+  async deleteFileSharePollingSource(id: string) {
+    await api.delete(`/file-share-polling-sources/${encodeURIComponent(id)}`);
+  },
+  async runFileSharePollingSource(id: string) {
+    const { data } = await api.post<FileSharePollingRunResponse>(`/file-share-polling-sources/${encodeURIComponent(id)}/run`);
+    return data;
   },
   async getSnapshots(params?: { itsmSource?: string; company?: string }) {
     const { data } = await api.get<Snapshot[]>('/snapshots', { params });
