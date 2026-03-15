@@ -767,7 +767,8 @@ public static class UpmsApiEndpoints
 
         app.MapPost("/jobs/snapshot-ingest", async (
             HttpRequest request,
-            ISnapshotIngestJobSubmissionService submissions,
+            IArtifactStorage artifacts,
+            IBackgroundJobService jobs,
             ClaimsPrincipal user,
             CancellationToken ct) =>
         {
@@ -856,7 +857,8 @@ public static class UpmsApiEndpoints
 
         app.MapPost("/jobs/snapshot-ingest/bulk", async (
             HttpRequest request,
-            ISnapshotIngestJobSubmissionService submissions,
+            IArtifactStorage artifacts,
+            IBackgroundJobService jobs,
             ClaimsPrincipal user,
             CancellationToken ct) =>
         {
@@ -1091,14 +1093,82 @@ public static class UpmsApiEndpoints
         CancellationToken ct)
     {
         await using var uploadStream = file.OpenReadStream();
-        return await submissions.QueueAsync(
-            uploadStream,
+        var stored = await artifacts.SaveAsync("uploads", file.FileName, uploadStream, file.ContentType, ct);
+        var normalizedMetadata = SnapshotIngestMetadataHelper.Normalize(
+            metadata,
             file.FileName,
             file.ContentType,
+            metadata.UploadChannel,
+            metadata.IsAutomated,
+            stored.RelativePath,
+            stored.Sha256,
+            metadata.RequestedBy);
+
+        var payload = new SnapshotIngestJobPayload(
             itsmSource,
             snapshotDate,
-            ResolveRequestedBy(user),
-            ct);
+            stored.RelativePath,
+            file.FileName,
+            file.ContentType ?? "application/octet-stream",
+            normalizedMetadata);
+
+        return new PreparedSnapshotIngestPayload(stored, normalizedMetadata, payload);
+    }
+
+    private static bool TryBuildSnapshotIngestMetadata(
+        HttpRequest request,
+        IFormCollection form,
+        ClaimsPrincipal user,
+        IFormFile file,
+        string defaultUploadChannel,
+        bool automated,
+        out SnapshotIngestMetadata metadata,
+        out string? error)
+    {
+        metadata = default!;
+        error = null;
+
+        var timestampRaw = FirstNonEmpty(form["timestamp"].ToString(), form["sourceTimestampUtc"].ToString(), form["submittedAtUtc"].ToString());
+        DateTime? sourceTimestampUtc = null;
+        if (!string.IsNullOrWhiteSpace(timestampRaw))
+        {
+            if (!DateTimeOffset.TryParse(timestampRaw, out var parsedTimestamp))
+            {
+                error = "timestamp must be a valid ISO-8601 date/time.";
+                return false;
+            }
+
+            sourceTimestampUtc = parsedTimestamp.UtcDateTime;
+        }
+
+        var requestedBy = ResolveRequestedBy(user);
+        metadata = SnapshotIngestMetadataHelper.Normalize(
+            new SnapshotIngestMetadata
+            {
+                UploadChannel = FirstNonEmpty(form["uploadChannel"].ToString(), defaultUploadChannel) ?? defaultUploadChannel,
+                SourceSystem = FirstNonEmpty(form["sourceSystem"].ToString()),
+                Producer = FirstNonEmpty(form["producer"].ToString()),
+                OriginalFileName = file.FileName,
+                CorrelationId = FirstNonEmpty(form["correlationId"].ToString(), form["referenceId"].ToString(), request.Headers["X-Correlation-Id"].ToString()),
+                SubmittedAtUtc = DateTime.UtcNow,
+                SourceTimestampUtc = sourceTimestampUtc,
+                ContentType = file.ContentType,
+                ContentSha256 = null,
+                SourceFileIdentity = FirstNonEmpty(form["sourceFileIdentity"].ToString(), form["sourceFileId"].ToString()),
+                IdempotencyKey = FirstNonEmpty(form["idempotencyKey"].ToString(), request.Headers["Idempotency-Key"].ToString()),
+                ArtifactPath = null,
+                RequestedBy = requestedBy,
+                IsAutomated = automated
+            },
+            file.FileName,
+            file.ContentType,
+            defaultUploadChannel,
+            automated,
+            artifactPath: null,
+            contentSha256: null,
+            requestedBy: requestedBy);
+
+        return true;
     }
 
     private static bool TryResolveSnapshotDates(
