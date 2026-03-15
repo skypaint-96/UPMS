@@ -5,7 +5,8 @@ public sealed record SnapshotIngestJobPayload(
     DateOnly SnapshotDate,
     string ArtifactPath,
     string OriginalFileName,
-    string ContentType);
+    string ContentType,
+    SnapshotIngestMetadata? Metadata = null);
 
 public sealed record ReportExecutionJobPayload(
     string PluginId,

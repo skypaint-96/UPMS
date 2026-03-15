@@ -120,17 +120,8 @@ public sealed class BackgroundJobWorker : BackgroundService
         var payload = JsonSerializer.Deserialize<SnapshotIngestJobPayload>(job.PayloadJson, JsonOptions)
             ?? throw new InvalidOperationException("Snapshot ingest payload was empty or invalid.");
 
-        var artifacts = services.GetRequiredService<IArtifactStorage>();
-        var ingestService = services.GetRequiredService<ISnapshotIngestService>();
-
-        if (!artifacts.Exists(payload.ArtifactPath))
-            throw new FileNotFoundException("Queued upload artifact could not be found.", payload.ArtifactPath);
-
-        using var stream = artifacts.OpenRead(payload.ArtifactPath);
-        var result = payload.ContentType.Contains("json", StringComparison.OrdinalIgnoreCase)
-            || payload.OriginalFileName.EndsWith(".json", StringComparison.OrdinalIgnoreCase)
-            ? await ingestService.IngestJsonAsync(stream, payload.ItsmSource, payload.SnapshotDate, ct)
-            : await ingestService.IngestCsvAsync(stream, payload.ItsmSource, payload.SnapshotDate, ct);
+        var processor = services.GetRequiredService<ISnapshotIngestJobProcessor>();
+        var result = await processor.ProcessAsync(payload, ct);
 
         var resultJson = JsonSerializer.Serialize(result, JsonOptions);
 

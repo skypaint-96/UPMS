@@ -13,6 +13,7 @@ using UPMS.Data.Jobs;
 using UPMS.Ingestion;
 using UPMS.Reporting;
 using UPMS.Reporting.Plugins;
+using UPMS.Reporting.Plugins.Templates;
 using UPMS.Reporting.Templates;
 
 public static class UpmsApiEndpoints
@@ -286,9 +287,16 @@ public static class UpmsApiEndpoints
         .WithTags("Report Templates")
         .WithName("GetReportTemplateTypes");
 
-        app.MapGet("/report-templates", (IReportTemplateStore templateStore, ReportTemplateTypeRegistry typeRegistry) =>
+        app.MapGet("/report-templates", (
+            string? itsmSource,
+            string? company,
+            IReportTemplateApplicabilityService templateApplicability,
+            ReportTemplateTypeRegistry typeRegistry) =>
         {
-            var rows = templateStore.GetAllTemplates();
+            var rows = string.IsNullOrWhiteSpace(itsmSource) && string.IsNullOrWhiteSpace(company)
+                ? templateApplicability.GetApplicableTemplates()
+                : templateApplicability.GetApplicableTemplates(itsmSource, company, allowPartialContext: false);
+
             return Results.Ok(rows
                 .OrderByDescending(template => template.UpdatedAt ?? template.UploadedAt)
                 .ThenBy(template => template.DisplayName, StringComparer.OrdinalIgnoreCase)
@@ -339,9 +347,20 @@ public static class UpmsApiEndpoints
             var description = form["description"].ToString();
             var subjectTemplate = form["subjectTemplate"].ToString();
             var textContent = form["textContent"].ToString();
+            var scopeRaw = form["scope"].ToString();
 
             if (string.IsNullOrWhiteSpace(displayName))
                 return Results.BadRequest(new { error = "displayName is required." });
+
+            ReportTemplateScope scope;
+            try
+            {
+                scope = ParseTemplateScope(scopeRaw);
+            }
+            catch (JsonException ex)
+            {
+                return Results.BadRequest(new { error = $"scope must be valid JSON: {ex.Message}" });
+            }
 
             var selectedType = string.IsNullOrWhiteSpace(templateTypeId)
                 ? null
@@ -392,6 +411,7 @@ public static class UpmsApiEndpoints
                         Kind = kind,
                         Description = string.IsNullOrWhiteSpace(description) ? null : description.Trim(),
                         SubjectTemplate = string.IsNullOrWhiteSpace(subjectTemplate) ? null : subjectTemplate.Trim(),
+                        Scope = scope,
                         OriginalFileName = originalFileName!,
                         UploadedBy = ResolveRequestedBy(user) ?? "anonymous"
                     }, contentStream, ct);
@@ -432,8 +452,21 @@ public static class UpmsApiEndpoints
             var kindRaw = form.ContainsKey("kind") ? form["kind"].ToString() : existingTemplate.Metadata.Kind.ToString();
             var description = form.ContainsKey("description") ? form["description"].ToString() : existingTemplate.Metadata.Description;
             var subjectTemplate = form.ContainsKey("subjectTemplate") ? form["subjectTemplate"].ToString() : existingTemplate.Metadata.SubjectTemplate;
+            var scopeRaw = form.ContainsKey("scope") ? form["scope"].ToString() : null;
             var hasInlineText = form.ContainsKey("textContent");
             var textContent = hasInlineText ? form["textContent"].ToString() : null;
+
+            ReportTemplateScope scope;
+            try
+            {
+                scope = scopeRaw is null
+                    ? existingTemplate.Metadata.Scope
+                    : ParseTemplateScope(scopeRaw);
+            }
+            catch (JsonException ex)
+            {
+                return Results.BadRequest(new { error = $"scope must be valid JSON: {ex.Message}" });
+            }
 
             var selectedType = string.IsNullOrWhiteSpace(templateTypeId)
                 ? ResolveTemplateDefinition(existingTemplate.Metadata, typeRegistry)
@@ -481,6 +514,7 @@ public static class UpmsApiEndpoints
                         Kind = kind,
                         Description = string.IsNullOrWhiteSpace(description) ? null : description.Trim(),
                         SubjectTemplate = string.IsNullOrWhiteSpace(subjectTemplate) ? null : subjectTemplate.Trim(),
+                        Scope = scope,
                         OriginalFileName = originalFileName,
                         UploadedBy = ResolveRequestedBy(user) ?? "anonymous",
                         IsStarterTemplate = existingTemplate.Metadata.IsStarterTemplate
@@ -572,10 +606,13 @@ public static class UpmsApiEndpoints
             if (!DateOnly.TryParse(snapshotDateRaw, out var snapshotDate))
                 return Results.BadRequest(new { error = "snapshotDate must be a valid date (yyyy-MM-dd)." });
 
+            if (!TryBuildSnapshotIngestMetadata(request, form, user, file, SnapshotUploadChannels.ManualSync, automated: false, out var metadata, out var metadataError))
+                return Results.BadRequest(new { error = metadataError });
+
             await using var stream = file.OpenReadStream();
             var result = IsJson(file)
-                ? await ingestService.IngestJsonAsync(stream, itsmSource.Trim(), snapshotDate, ct)
-                : await ingestService.IngestCsvAsync(stream, itsmSource.Trim(), snapshotDate, ct);
+                ? await ingestService.IngestJsonAsync(stream, itsmSource.Trim(), snapshotDate, metadata, ct)
+                : await ingestService.IngestCsvAsync(stream, itsmSource.Trim(), snapshotDate, metadata, ct);
 
             return result.Success
                 ? Results.Ok(MapIngestResult(result))
@@ -748,12 +785,16 @@ public static class UpmsApiEndpoints
             if (!DateOnly.TryParse(snapshotDateRaw, out var snapshotDate))
                 return Results.BadRequest(new { error = "snapshotDate must be a valid date (yyyy-MM-dd)." });
 
+            if (!TryBuildSnapshotIngestMetadata(request, form, user, file, SnapshotUploadChannels.ManualJob, automated: false, out var metadata, out var metadataError))
+                return Results.BadRequest(new { error = metadataError });
+
             var job = await QueueSnapshotIngestJobAsync(
-                submissions,
-                user,
+                artifacts,
+                jobs,
                 file,
                 itsmSource.Trim(),
                 snapshotDate,
+                metadata,
                 ct);
 
             return Results.Accepted($"/api/v1/jobs/{job.Id}", MapJob(job));
@@ -761,6 +802,57 @@ public static class UpmsApiEndpoints
         .DisableAntiforgery()
         .WithTags("Jobs")
         .WithName("QueueSnapshotIngest");
+
+        app.MapPost("/jobs/snapshot-ingest/automated", async (
+            HttpRequest request,
+            IArtifactStorage artifacts,
+            IBackgroundJobService jobs,
+            ISnapshotDuplicateDetector duplicateDetector,
+            ClaimsPrincipal user,
+            CancellationToken ct) =>
+        {
+            var form = await request.ReadFormAsync(ct);
+            var file = form.Files.GetFile("file");
+            var itsmSource = form["itsmSource"].ToString();
+            var snapshotDateRaw = form["snapshotDate"].ToString();
+
+            if (file is null || file.Length == 0)
+                return Results.BadRequest(new { error = "A snapshot file is required." });
+
+            if (string.IsNullOrWhiteSpace(itsmSource))
+                return Results.BadRequest(new { error = "itsmSource is required." });
+
+            if (!DateOnly.TryParse(snapshotDateRaw, out var snapshotDate))
+                return Results.BadRequest(new { error = "snapshotDate must be a valid date (yyyy-MM-dd)." });
+
+            if (!TryBuildSnapshotIngestMetadata(request, form, user, file, SnapshotUploadChannels.AutomatedApi, automated: true, out var metadata, out var metadataError))
+                return Results.BadRequest(new { error = metadataError });
+
+            var outcome = await SubmitAutomatedSnapshotIngestAsync(
+                artifacts,
+                jobs,
+                duplicateDetector,
+                file,
+                itsmSource.Trim(),
+                snapshotDate,
+                metadata,
+                ct);
+
+            var response = new AutomatedSnapshotIngestResponse(
+                outcome.Queued,
+                outcome.DuplicateDetected,
+                outcome.ExistingSnapshotId,
+                outcome.DuplicateReason,
+                outcome.ContentSha256,
+                outcome.Job is null ? null : MapJob(outcome.Job));
+
+            return outcome.Queued
+                ? Results.Accepted($"/api/v1/jobs/{outcome.Job!.Id}", response)
+                : Results.Ok(response);
+        })
+        .DisableAntiforgery()
+        .WithTags("Jobs")
+        .WithName("QueueAutomatedSnapshotIngest");
 
         app.MapPost("/jobs/snapshot-ingest/bulk", async (
             HttpRequest request,
@@ -790,12 +882,16 @@ public static class UpmsApiEndpoints
                 if (file.Length == 0)
                     return Results.BadRequest(new { error = $"File {index + 1} is empty." });
 
+                if (!TryBuildSnapshotIngestMetadata(request, form, user, file, SnapshotUploadChannels.ManualBulkJob, automated: false, out var metadata, out var metadataError))
+                    return Results.BadRequest(new { error = metadataError });
+
                 var job = await QueueSnapshotIngestJobAsync(
-                    submissions,
-                    user,
+                    artifacts,
+                    jobs,
                     file,
                     trimmedSource,
                     snapshotDates[index],
+                    metadata,
                     ct);
 
                 queuedJobs.Add(job);
@@ -811,10 +907,27 @@ public static class UpmsApiEndpoints
         .WithTags("Jobs")
         .WithName("QueueBulkSnapshotIngest");
 
-        app.MapPost("/jobs/report-execution", async (ExecuteReportRequest request, IBackgroundJobService jobs, ClaimsPrincipal user, CancellationToken ct) =>
+        app.MapPost("/jobs/report-execution", async (
+            ExecuteReportRequest request,
+            IBackgroundJobService jobs,
+            IReportTemplateApplicabilityService templateApplicability,
+            ClaimsPrincipal user,
+            CancellationToken ct) =>
         {
             if (string.IsNullOrWhiteSpace(request.PluginId))
                 return Results.BadRequest(new { error = "pluginId is required." });
+
+            if (string.Equals(request.PluginId.Trim(), TokenisedTemplateReportPlugin.PluginIdValue, StringComparison.OrdinalIgnoreCase))
+            {
+                var parameters = request.Parameters ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                parameters.TryGetValue("template_id", out var templateId);
+                parameters.TryGetValue("itsm_source", out var itsmSource);
+                parameters.TryGetValue("company", out var company);
+
+                var validation = templateApplicability.ValidateSelection(templateId, itsmSource, company);
+                if (!validation.IsValid)
+                    return Results.BadRequest(new { error = validation.ErrorMessage });
+            }
 
             var payload = new ReportExecutionJobPayload(
                 request.PluginId.Trim(),
@@ -871,11 +984,110 @@ public static class UpmsApiEndpoints
     }
 
     private static async Task<BackgroundJob> QueueSnapshotIngestJobAsync(
-        ISnapshotIngestJobSubmissionService submissions,
-        ClaimsPrincipal user,
+        IArtifactStorage artifacts,
+        IBackgroundJobService jobs,
         IFormFile file,
         string itsmSource,
         DateOnly snapshotDate,
+        SnapshotIngestMetadata metadata,
+        CancellationToken ct)
+    {
+        var prepared = await PrepareSnapshotIngestPayloadAsync(
+            artifacts,
+            file,
+            itsmSource,
+            snapshotDate,
+            metadata,
+            ct);
+
+        try
+        {
+            return await jobs.EnqueueAsync(
+                BackgroundJobTypes.SnapshotIngest,
+                JsonSerializer.Serialize(prepared.Payload, JsonOptions),
+                prepared.Metadata.RequestedBy,
+                ct);
+        }
+        catch
+        {
+            artifacts.Delete(prepared.StoredArtifact.RelativePath);
+            throw;
+        }
+    }
+
+    private static async Task<SnapshotIngestQueueOutcome> SubmitAutomatedSnapshotIngestAsync(
+        IArtifactStorage artifacts,
+        IBackgroundJobService jobs,
+        ISnapshotDuplicateDetector duplicateDetector,
+        IFormFile file,
+        string itsmSource,
+        DateOnly snapshotDate,
+        SnapshotIngestMetadata metadata,
+        CancellationToken ct)
+    {
+        var prepared = await PrepareSnapshotIngestPayloadAsync(
+            artifacts,
+            file,
+            itsmSource,
+            snapshotDate,
+            metadata,
+            ct);
+
+        var duplicateJob = await jobs.FindMatchingSnapshotIngestAsync(itsmSource, snapshotDate, prepared.Metadata, ct);
+        if (duplicateJob is not null)
+        {
+            artifacts.Delete(prepared.StoredArtifact.RelativePath);
+            return new SnapshotIngestQueueOutcome(
+                Queued: false,
+                DuplicateDetected: true,
+                Job: duplicateJob,
+                ExistingSnapshotId: null,
+                DuplicateReason: "Matching automated snapshot upload already queued or processed.",
+                ContentSha256: prepared.StoredArtifact.Sha256);
+        }
+
+        var duplicateSnapshot = await duplicateDetector.FindExistingSnapshotAsync(itsmSource, snapshotDate, prepared.Metadata, ct);
+        if (duplicateSnapshot is not null)
+        {
+            artifacts.Delete(prepared.StoredArtifact.RelativePath);
+            return new SnapshotIngestQueueOutcome(
+                Queued: false,
+                DuplicateDetected: true,
+                Job: null,
+                ExistingSnapshotId: duplicateSnapshot.SnapshotId,
+                DuplicateReason: duplicateSnapshot.Reason,
+                ContentSha256: prepared.StoredArtifact.Sha256);
+        }
+
+        try
+        {
+            var job = await jobs.EnqueueAsync(
+                BackgroundJobTypes.SnapshotIngest,
+                JsonSerializer.Serialize(prepared.Payload, JsonOptions),
+                prepared.Metadata.RequestedBy,
+                ct);
+
+            return new SnapshotIngestQueueOutcome(
+                Queued: true,
+                DuplicateDetected: false,
+                Job: job,
+                ExistingSnapshotId: null,
+                DuplicateReason: null,
+                ContentSha256: prepared.StoredArtifact.Sha256);
+        }
+        catch
+        {
+            artifacts.Delete(prepared.StoredArtifact.RelativePath);
+            throw;
+        }
+    }
+
+    private static async Task<PreparedSnapshotIngestPayload> PrepareSnapshotIngestPayloadAsync(
+        IArtifactStorage artifacts,
+        IFormFile file,
+        string itsmSource,
+        DateOnly snapshotDate,
+        SnapshotIngestMetadata metadata,
         CancellationToken ct)
     {
         await using var uploadStream = file.OpenReadStream();
@@ -955,6 +1167,30 @@ public static class UpmsApiEndpoints
         return "anonymous";
     }
 
+    private static string? FirstNonEmpty(params string?[] values)
+    {
+        foreach (var value in values)
+        {
+            if (!string.IsNullOrWhiteSpace(value))
+                return value.Trim();
+        }
+
+        return null;
+    }
+
+    private sealed record PreparedSnapshotIngestPayload(
+        StoredArtifact StoredArtifact,
+        SnapshotIngestMetadata Metadata,
+        SnapshotIngestJobPayload Payload);
+
+    private sealed record SnapshotIngestQueueOutcome(
+        bool Queued,
+        bool DuplicateDetected,
+        BackgroundJob? Job,
+        Guid? ExistingSnapshotId,
+        string? DuplicateReason,
+        string? ContentSha256);
+
     private static bool TryMatchField(IDictionary<string, string?> fields, string fieldName, string fieldValue)
     {
         foreach (var entry in fields)
@@ -1031,6 +1267,9 @@ public static class UpmsApiEndpoints
             result.SnapshotId,
             result.TicketsIngested,
             result.FieldChangesRecorded,
+            result.DuplicateDetected,
+            result.DuplicateOfSnapshotId,
+            result.DuplicateReason,
             result.ErrorMessage,
             result.Warnings.ToArray());
     }
@@ -1065,7 +1304,8 @@ public static class UpmsApiEndpoints
             typeDefinition?.TypeId ?? template.TemplateTypeId,
             typeDefinition?.DisplayName,
             typeDefinition?.SupportsInlineEdit ?? ReportTemplateContentTypeMapper.IsTextLike(template.Extension),
-            template.IsStarterTemplate);
+            template.IsStarterTemplate,
+            MapTemplateScope(template.Scope));
     }
 
     private static ReportTemplateDetailResponse MapTemplateDetail(StoredReportTemplate template, ReportTemplateTypeRegistry typeRegistry)
@@ -1095,8 +1335,30 @@ public static class UpmsApiEndpoints
             typeDefinition?.DisplayName,
             supportsInlineEdit,
             template.Metadata.IsStarterTemplate,
+            MapTemplateScope(template.Metadata.Scope),
             typeDefinition?.AuthoringGuidance,
             editableTextContent);
+    }
+
+    private static ReportTemplateScopeResponse MapTemplateScope(ReportTemplateScope? scope)
+    {
+        var normalized = ReportTemplateScopeEvaluator.Normalize(scope);
+        return new ReportTemplateScopeResponse(
+            normalized.IsGlobal,
+            normalized.ItsmSources,
+            normalized.Companies,
+            normalized.ItsmSourceCompanies
+                .Select(pair => new ReportTemplateScopeCombinationResponse(pair.ItsmSource, pair.Company))
+                .ToArray());
+    }
+
+    private static ReportTemplateScope ParseTemplateScope(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+            return ReportTemplateScopeEvaluator.Normalize(null);
+
+        var parsed = JsonSerializer.Deserialize<ReportTemplateScope>(raw, JsonOptions);
+        return ReportTemplateScopeEvaluator.Normalize(parsed);
     }
 
     private static ReportTemplateTypeResponse MapTemplateType(ReportTemplateTypeDefinition typeDefinition)
@@ -1232,8 +1494,19 @@ public sealed record IngestResultResponse(
     Guid SnapshotId,
     int TicketsIngested,
     int FieldChangesRecorded,
+    bool DuplicateDetected,
+    Guid? DuplicateOfSnapshotId,
+    string? DuplicateReason,
     string? ErrorMessage,
     IReadOnlyList<string> Warnings);
+
+public sealed record AutomatedSnapshotIngestResponse(
+    bool Queued,
+    bool DuplicateDetected,
+    Guid? ExistingSnapshotId,
+    string? DuplicateReason,
+    string? ContentSha256,
+    BackgroundJobResponse? Job);
 
 public sealed record ExecuteReportRequest(string PluginId, Dictionary<string, string>? Parameters);
 
@@ -1277,6 +1550,16 @@ public sealed record ReportTemplateTypeResponse(
     string? StarterTemplateDescription,
     string? DefaultSubjectTemplate);
 
+public sealed record ReportTemplateScopeCombinationResponse(
+    string ItsmSource,
+    string Company);
+
+public sealed record ReportTemplateScopeResponse(
+    bool IsGlobal,
+    IReadOnlyList<string> ItsmSources,
+    IReadOnlyList<string> Companies,
+    IReadOnlyList<ReportTemplateScopeCombinationResponse> ItsmSourceCompanies);
+
 public sealed record ReportTemplateResponse(
     string Id,
     string DisplayName,
@@ -1293,7 +1576,8 @@ public sealed record ReportTemplateResponse(
     string? TemplateTypeId,
     string? TypeDisplayName,
     bool SupportsInlineEdit,
-    bool IsStarterTemplate);
+    bool IsStarterTemplate,
+    ReportTemplateScopeResponse Scope);
 
 public sealed record ReportTemplateDetailResponse(
     string Id,
@@ -1312,6 +1596,7 @@ public sealed record ReportTemplateDetailResponse(
     string? TypeDisplayName,
     bool SupportsInlineEdit,
     bool IsStarterTemplate,
+    ReportTemplateScopeResponse Scope,
     string? AuthoringGuidance,
     string? EditableTextContent);
 

@@ -1,5 +1,7 @@
 namespace UPMS.Data.Artifacts;
 
+using System.Buffers;
+using System.Security.Cryptography;
 using Microsoft.Extensions.Options;
 
 public class FileSystemArtifactStorage : IArtifactStorage
@@ -36,15 +38,36 @@ public class FileSystemArtifactStorage : IArtifactStorage
         string uniquePrefix = Guid.NewGuid().ToString("N");
         string absolutePath = Path.Combine(directory, $"{uniquePrefix}_{safeFileName}");
 
+        string checksumSha256;
         await using (var fileStream = File.Create(absolutePath))
+        using (var sha256 = SHA256.Create())
         {
-            await content.CopyToAsync(fileStream, ct);
+            var buffer = ArrayPool<byte>.Shared.Rent(81920);
+            try
+            {
+                while (true)
+                {
+                    int bytesRead = await content.ReadAsync(buffer.AsMemory(0, buffer.Length), ct);
+                    if (bytesRead <= 0)
+                        break;
+
+                    sha256.TransformBlock(buffer, 0, bytesRead, null, 0);
+                    await fileStream.WriteAsync(buffer.AsMemory(0, bytesRead), ct);
+                }
+
+                sha256.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
+                checksumSha256 = Convert.ToHexString(sha256.Hash ?? Array.Empty<byte>()).ToLowerInvariant();
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(buffer);
+            }
         }
 
         var info = new FileInfo(absolutePath);
         string relativePath = Path.GetRelativePath(_rootPath, absolutePath).Replace('\\', '/');
 
-        return new StoredArtifact(relativePath, absolutePath, safeFileName, contentType, info.Length);
+        return new StoredArtifact(relativePath, absolutePath, safeFileName, contentType, info.Length, checksumSha256);
     }
 
     public async Task<StoredArtifact> SaveBytesAsync(
@@ -84,6 +107,18 @@ public class FileSystemArtifactStorage : IArtifactStorage
     {
         string absolutePath = GetAbsolutePath(relativePath);
         return File.OpenRead(absolutePath);
+    }
+
+    public void Delete(string relativePath)
+    {
+        if (string.IsNullOrWhiteSpace(relativePath))
+            return;
+
+        var absolutePath = GetAbsolutePath(relativePath);
+        if (!File.Exists(absolutePath))
+            return;
+
+        File.Delete(absolutePath);
     }
 
     private static string SanitizePathPart(string value)

@@ -135,6 +135,18 @@ export type ReportTemplateType = {
   defaultSubjectTemplate?: string | null;
 };
 
+export type ReportTemplateScopeCombination = {
+  itsmSource: string;
+  company: string;
+};
+
+export type ReportTemplateScope = {
+  isGlobal: boolean;
+  itsmSources: string[];
+  companies: string[];
+  itsmSourceCompanies: ReportTemplateScopeCombination[];
+};
+
 export type ReportTemplate = {
   id: string;
   displayName: string;
@@ -152,6 +164,7 @@ export type ReportTemplate = {
   typeDisplayName?: string | null;
   supportsInlineEdit: boolean;
   isStarterTemplate: boolean;
+  scope: ReportTemplateScope;
 };
 
 export type ReportTemplateDetail = ReportTemplate & {

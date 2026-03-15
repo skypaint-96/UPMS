@@ -19,4 +19,5 @@ public interface IArtifactStorage
     bool Exists(string relativePath);
     string GetAbsolutePath(string relativePath);
     Stream OpenRead(string relativePath);
+    void Delete(string relativePath);
 }

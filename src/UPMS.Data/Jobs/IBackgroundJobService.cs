@@ -18,6 +18,12 @@ public interface IBackgroundJobService
         TimeSpan leaseDuration,
         CancellationToken ct = default);
 
+    Task<BackgroundJob?> FindMatchingSnapshotIngestAsync(
+        string itsmSource,
+        DateOnly snapshotDate,
+        SnapshotIngestMetadata metadata,
+        CancellationToken ct = default);
+
     Task MarkSucceededAsync(
         Guid id,
         string? resultJson,
