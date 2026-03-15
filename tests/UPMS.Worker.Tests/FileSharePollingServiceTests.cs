@@ -11,7 +11,7 @@ using UPMS.Data.Jobs;
 using UPMS.Worker;
 
 [TestFixture]
-public sealed class FileSharePollingServiceTests
+public sealed class FileSharePollRunnerTests
 {
     private string _rootPath = null!;
     private string _watchPath = null!;
@@ -36,6 +36,7 @@ public sealed class FileSharePollingServiceTests
 
         var services = new ServiceCollection();
         services.AddLogging();
+        services.Configure<FileSharePollingOptions>(_ => { });
         services.AddDbContext<UpmsDbContext>(options =>
             options.UseInMemoryDatabase($"upms-file-poller-db-{Guid.NewGuid():N}"));
         services.AddScoped<IBackgroundJobService, BackgroundJobService>();
@@ -72,21 +73,10 @@ public sealed class FileSharePollingServiceTests
         CreateStableFile("snapshot-2026-03-02.csv", "number,company,state\nPRB0002,Contoso,Open\n");
         CreateStableFile("snapshot-2026-03-03.txt", "ignore me");
 
-        var service = CreatePoller(new FileSharePollingOptions
-        {
-            Enabled = true,
-            PollIntervalSeconds = 1,
-            WatchedPath = _watchPath,
-            FilePatterns = ["*.csv"],
-            ArchivePath = _archivePath,
-            ErrorPath = _errorPath,
-            MaxFilesPerCycle = 10,
-            ItsmSource = "servicenow-prod",
-            StableFileAgeSeconds = 0
-        });
+        var runner = CreateRunner();
+        var result = await runner.PollOnceAsync(CreateSource(patterns: ["*.csv"]), CancellationToken.None);
 
-        var result = await service.PollOnceAsync(CancellationToken.None);
-
+        Assert.That(result.Outcome, Is.EqualTo("completed"));
         Assert.That(result.DiscoveredCount, Is.EqualTo(1));
         Assert.That(result.QueuedCount, Is.EqualTo(1));
         Assert.That(CountJobs(), Is.EqualTo(1));
@@ -102,26 +92,16 @@ public sealed class FileSharePollingServiceTests
         CreateStableFile("snapshot-2026-03-03-b.csv", "number,company,state\nPRB0003,Contoso,Open\n");
         CreateStableFile("snapshot-2026-03-04-c.csv", "number,company,state\nPRB0004,Contoso,Open\n");
 
-        var service = CreatePoller(new FileSharePollingOptions
-        {
-            Enabled = true,
-            PollIntervalSeconds = 1,
-            WatchedPath = _watchPath,
-            FilePatterns = ["*.csv"],
-            ArchivePath = _archivePath,
-            ErrorPath = _errorPath,
-            MaxFilesPerCycle = 2,
-            ItsmSource = "servicenow-prod",
-            StableFileAgeSeconds = 0
-        });
+        var runner = CreateRunner();
+        var source = CreateSource(patterns: ["*.csv"], maxFilesPerCycle: 2);
 
-        var firstCycle = await service.PollOnceAsync(CancellationToken.None);
+        var firstCycle = await runner.PollOnceAsync(source, CancellationToken.None);
         Assert.That(firstCycle.DiscoveredCount, Is.EqualTo(3));
         Assert.That(firstCycle.QueuedCount, Is.EqualTo(2));
         Assert.That(CountJobs(), Is.EqualTo(2));
         Assert.That(Directory.GetFiles(_watchPath, "*.csv", SearchOption.TopDirectoryOnly), Has.Length.EqualTo(1));
 
-        var secondCycle = await service.PollOnceAsync(CancellationToken.None);
+        var secondCycle = await runner.PollOnceAsync(source, CancellationToken.None);
         Assert.That(secondCycle.QueuedCount, Is.EqualTo(1));
         Assert.That(CountJobs(), Is.EqualTo(3));
     }
@@ -131,39 +111,16 @@ public sealed class FileSharePollingServiceTests
     {
         CreateStableFile("snapshot-2026-03-02.csv", "number,company,state\nPRB0002,Contoso,Open\n");
 
-        var firstService = CreatePoller(new FileSharePollingOptions
-        {
-            Enabled = true,
-            PollIntervalSeconds = 1,
-            WatchedPath = _watchPath,
-            FilePatterns = ["*.csv"],
-            ArchivePath = _archivePath,
-            ErrorPath = _errorPath,
-            MaxFilesPerCycle = 10,
-            ItsmSource = "servicenow-prod",
-            StableFileAgeSeconds = 0
-        });
+        var runner = CreateRunner();
+        var source = CreateSource(patterns: ["*.csv"]);
 
-        var firstCycle = await firstService.PollOnceAsync(CancellationToken.None);
+        var firstCycle = await runner.PollOnceAsync(source, CancellationToken.None);
         Assert.That(firstCycle.QueuedCount, Is.EqualTo(1));
         Assert.That(CountJobs(), Is.EqualTo(1));
 
         CreateStableFile("snapshot-2026-03-02-duplicate.csv", "number,company,state\nPRB0002,Contoso,Open\n");
 
-        var secondService = CreatePoller(new FileSharePollingOptions
-        {
-            Enabled = true,
-            PollIntervalSeconds = 1,
-            WatchedPath = _watchPath,
-            FilePatterns = ["*.csv"],
-            ArchivePath = _archivePath,
-            ErrorPath = _errorPath,
-            MaxFilesPerCycle = 10,
-            ItsmSource = "servicenow-prod",
-            StableFileAgeSeconds = 0
-        });
-
-        var secondCycle = await secondService.PollOnceAsync(CancellationToken.None);
+        var secondCycle = await runner.PollOnceAsync(source, CancellationToken.None);
 
         Assert.That(secondCycle.QueuedCount, Is.EqualTo(0));
         Assert.That(secondCycle.QuarantinedCount, Is.EqualTo(1));
@@ -172,24 +129,28 @@ public sealed class FileSharePollingServiceTests
     }
 
     [Test]
+    public async Task PollOnceAsync_creates_archive_and_error_directories_when_they_do_not_exist()
+    {
+        Directory.Delete(_archivePath, recursive: true);
+        Directory.Delete(_errorPath, recursive: true);
+        CreateStableFile("snapshot-2026-03-02.csv", "number,company,state\nPRB0002,Contoso,Open\n");
+
+        var runner = CreateRunner();
+        var result = await runner.PollOnceAsync(CreateSource(patterns: ["*.csv"]), CancellationToken.None);
+
+        Assert.That(result.QueuedCount, Is.EqualTo(1));
+        Assert.That(Directory.Exists(_archivePath), Is.True);
+        Assert.That(Directory.Exists(_errorPath), Is.True);
+        Assert.That(Directory.GetFiles(_archivePath, "*.csv", SearchOption.AllDirectories), Has.Length.EqualTo(1));
+    }
+
+    [Test]
     public async Task PollOnceAsync_moves_files_with_unresolved_metadata_to_quarantine()
     {
         CreateStableFile("no-date.csv", "number,company,state\nPRB0002,Contoso,Open\n");
 
-        var service = CreatePoller(new FileSharePollingOptions
-        {
-            Enabled = true,
-            PollIntervalSeconds = 1,
-            WatchedPath = _watchPath,
-            FilePatterns = ["*.csv"],
-            ArchivePath = _archivePath,
-            ErrorPath = _errorPath,
-            MaxFilesPerCycle = 10,
-            ItsmSource = "servicenow-prod",
-            StableFileAgeSeconds = 0
-        });
-
-        var result = await service.PollOnceAsync(CancellationToken.None);
+        var runner = CreateRunner();
+        var result = await runner.PollOnceAsync(CreateSource(patterns: ["*.csv"]), CancellationToken.None);
 
         Assert.That(result.QueuedCount, Is.EqualTo(0));
         Assert.That(result.QuarantinedCount, Is.EqualTo(1));
@@ -203,20 +164,8 @@ public sealed class FileSharePollingServiceTests
     {
         CreateStableFile("snapshot-2026-03-02.csv", "number,company,state\nPRB0002,Contoso,Open\n");
 
-        var service = CreatePoller(new FileSharePollingOptions
-        {
-            Enabled = true,
-            PollIntervalSeconds = 1,
-            WatchedPath = _watchPath,
-            FilePatterns = ["*.csv"],
-            ArchivePath = _archivePath,
-            ErrorPath = _errorPath,
-            MaxFilesPerCycle = 10,
-            ItsmSource = "servicenow-prod",
-            StableFileAgeSeconds = 0
-        });
-
-        var result = await service.PollOnceAsync(CancellationToken.None);
+        var runner = CreateRunner();
+        var result = await runner.PollOnceAsync(CreateSource(patterns: ["*.csv"]), CancellationToken.None);
         Assert.That(result.QueuedCount, Is.EqualTo(1));
 
         using var scope = _services.CreateScope();
@@ -240,37 +189,53 @@ public sealed class FileSharePollingServiceTests
     {
         var filePath = CreateStableFile("snapshot-2026-03-02.csv", "number,company,state\nPRB0002,Contoso,Open\n", adjustLastWrite: false);
 
-        var service = CreatePoller(new FileSharePollingOptions
-        {
-            Enabled = true,
-            PollIntervalSeconds = 1,
-            WatchedPath = _watchPath,
-            FilePatterns = ["*.csv"],
-            ArchivePath = _archivePath,
-            ErrorPath = _errorPath,
-            MaxFilesPerCycle = 10,
-            ItsmSource = "servicenow-prod",
-            StableFileAgeSeconds = 60
-        });
+        var runner = CreateRunner();
+        var source = CreateSource(patterns: ["*.csv"], stableFileAgeSeconds: 60);
 
-        var firstCycle = await service.PollOnceAsync(CancellationToken.None);
+        var firstCycle = await runner.PollOnceAsync(source, CancellationToken.None);
         Assert.That(firstCycle.QueuedCount, Is.EqualTo(0));
         Assert.That(File.Exists(filePath), Is.True);
         Assert.That(CountJobs(), Is.EqualTo(0));
 
         File.SetLastWriteTimeUtc(filePath, DateTime.UtcNow.AddMinutes(-5));
 
-        var secondCycle = await service.PollOnceAsync(CancellationToken.None);
+        var secondCycle = await runner.PollOnceAsync(source, CancellationToken.None);
         Assert.That(secondCycle.QueuedCount, Is.EqualTo(1));
         Assert.That(CountJobs(), Is.EqualTo(1));
     }
 
-    private FileSharePollingService CreatePoller(FileSharePollingOptions options)
+    private IFileSharePollRunner CreateRunner(int maxFilesPerCycleCap = 100)
     {
-        return new FileSharePollingService(
-            _services,
-            Options.Create(options),
-            NullLogger<FileSharePollingService>.Instance);
+        return new FileSharePollRunner(
+            _services.GetRequiredService<IServiceScopeFactory>(),
+            Options.Create(new FileSharePollingOptions
+            {
+                Enabled = true,
+                MaxFilesPerCycleCap = maxFilesPerCycleCap,
+                DefaultStableFileAgeSeconds = 30,
+            }),
+            NullLogger<FileSharePollRunner>.Instance);
+    }
+
+    private FileSharePollingSource CreateSource(string[]? patterns = null, int? maxFilesPerCycle = 10, int stableFileAgeSeconds = 0)
+    {
+        var source = new FileSharePollingSource
+        {
+            Id = Guid.NewGuid(),
+            Name = "Nightly drop",
+            Enabled = true,
+            WatchedPath = _watchPath,
+            ArchivePath = _archivePath,
+            ErrorPath = _errorPath,
+            ItsmSource = "servicenow-prod",
+            PollIntervalSeconds = 300,
+            MaxFilesPerCycle = maxFilesPerCycle,
+            StableFileAgeSeconds = stableFileAgeSeconds,
+            CreatedBy = "tester",
+            CreatedAt = DateTime.UtcNow,
+        };
+        source.SetFilePatterns(patterns ?? ["*.csv", "*.json"]);
+        return source;
     }
 
     private string CreateStableFile(string fileName, string content, bool adjustLastWrite = true)

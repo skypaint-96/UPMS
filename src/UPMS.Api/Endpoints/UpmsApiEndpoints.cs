@@ -6,6 +6,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.Options;
 using UPMS.Data;
 using UPMS.Data.Artifacts;
 using UPMS.Data.Jobs;
@@ -143,6 +144,139 @@ public static class UpmsApiEndpoints
         })
         .WithTags("ITSM Sources")
         .WithName("DeleteItsmSource");
+
+
+        app.MapGet("/file-share-polling/settings", (IOptions<FileSharePollingOptions> options) =>
+        {
+            var settings = options.Value;
+            return Results.Ok(new FileSharePollingSettingsResponse(
+                settings.Enabled,
+                settings.AllowUserManagedSources,
+                settings.DefaultPollIntervalSeconds,
+                settings.MinPollIntervalSeconds,
+                settings.MaxPollIntervalSeconds,
+                settings.DefaultStableFileAgeSeconds,
+                settings.MaxFilesPerCycleCap,
+                settings.AllowedWatchedRoots,
+                settings.AllowedArchiveRoots,
+                settings.AllowedErrorRoots));
+        })
+        .WithTags("File Share Polling")
+        .WithName("GetFileSharePollingSettings");
+
+        app.MapGet("/file-share-polling-sources", async (IFileSharePollingSourceService sources, CancellationToken ct) =>
+        {
+            var rows = await sources.GetAllAsync(ct);
+            return Results.Ok(rows.Select(MapFileSharePollingSource));
+        })
+        .WithTags("File Share Polling")
+        .WithName("GetFileSharePollingSources");
+
+        app.MapGet("/file-share-polling-sources/{id:guid}", async (Guid id, IFileSharePollingSourceService sources, CancellationToken ct) =>
+        {
+            var source = await sources.GetByIdAsync(id, ct);
+            return source is null ? Results.NotFound() : Results.Ok(MapFileSharePollingSource(source));
+        })
+        .WithTags("File Share Polling")
+        .WithName("GetFileSharePollingSourceById");
+
+        app.MapPost("/file-share-polling-sources", async (
+            UpsertFileSharePollingSourceRequest request,
+            IFileSharePollingSourceService sources,
+            ClaimsPrincipal user,
+            CancellationToken ct) =>
+        {
+            try
+            {
+                var created = await sources.CreateAsync(
+                    MapFileSharePollingSourceUpsert(request),
+                    ResolveRequestedBy(user),
+                    ct);
+
+                return Results.Created(
+                    $"/api/v1/file-share-polling-sources/{created.Id}",
+                    MapFileSharePollingSource(created));
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.BadRequest(new { error = ex.Message });
+            }
+        })
+        .WithTags("File Share Polling")
+        .WithName("CreateFileSharePollingSource");
+
+        app.MapPut("/file-share-polling-sources/{id:guid}", async (
+            Guid id,
+            UpsertFileSharePollingSourceRequest request,
+            IFileSharePollingSourceService sources,
+            ClaimsPrincipal user,
+            CancellationToken ct) =>
+        {
+            try
+            {
+                var updated = await sources.UpdateAsync(
+                    id,
+                    MapFileSharePollingSourceUpsert(request),
+                    ResolveRequestedBy(user),
+                    ct);
+
+                return Results.Ok(MapFileSharePollingSource(updated));
+            }
+            catch (KeyNotFoundException)
+            {
+                return Results.NotFound();
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.BadRequest(new { error = ex.Message });
+            }
+        })
+        .WithTags("File Share Polling")
+        .WithName("UpdateFileSharePollingSource");
+
+        app.MapDelete("/file-share-polling-sources/{id:guid}", async (Guid id, IFileSharePollingSourceService sources, CancellationToken ct) =>
+        {
+            try
+            {
+                await sources.DeleteAsync(id, ct);
+                return Results.NoContent();
+            }
+            catch (KeyNotFoundException)
+            {
+                return Results.NotFound();
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.BadRequest(new { error = ex.Message });
+            }
+        })
+        .WithTags("File Share Polling")
+        .WithName("DeleteFileSharePollingSource");
+
+        app.MapPost("/file-share-polling-sources/{id:guid}/run", async (
+            Guid id,
+            IFileSharePollingSourceService sources,
+            ClaimsPrincipal user,
+            CancellationToken ct) =>
+        {
+            try
+            {
+                var queued = await sources.QueuePollJobAsync(id, true, ResolveRequestedBy(user), ct);
+                return Results.Accepted(
+                    $"/api/v1/jobs/{queued.Job.Id}",
+                    new FileSharePollingRunResponse(MapJob(queued.Job), queued.AlreadyQueued));
+            }
+            catch (KeyNotFoundException)
+            {
+                return Results.NotFound();
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.BadRequest(new { error = ex.Message });
+            }
+        })
+        .WithTags("File Share Polling")
+        .WithName("RunFileSharePollingSourceNow");
 
         app.MapGet("/report-template-types", (ReportTemplateTypeRegistry typeRegistry) =>
         {
@@ -835,6 +969,49 @@ public static class UpmsApiEndpoints
         return false;
     }
 
+    private static FileSharePollingSourceResponse MapFileSharePollingSource(FileSharePollingSource source)
+    {
+        return new FileSharePollingSourceResponse(
+            source.Id,
+            source.Name,
+            source.Enabled,
+            source.WatchedPath,
+            source.GetFilePatterns().ToArray(),
+            source.ArchivePath,
+            source.ErrorPath,
+            source.ItsmSource,
+            source.PollIntervalSeconds,
+            source.MaxFilesPerCycle,
+            source.StableFileAgeSeconds,
+            source.LastRunStartedAt,
+            source.LastRunCompletedAt,
+            source.LastSucceededAt,
+            source.NextPollDueAt,
+            source.LastError,
+            source.CurrentJobId,
+            source.LastJobId,
+            source.IsSystemManaged,
+            source.CreatedBy,
+            source.CreatedAt,
+            source.UpdatedBy,
+            source.UpdatedAt);
+    }
+
+    private static FileSharePollingSourceUpsert MapFileSharePollingSourceUpsert(UpsertFileSharePollingSourceRequest request)
+    {
+        return new FileSharePollingSourceUpsert(
+            request.Name,
+            request.Enabled,
+            request.WatchedPath,
+            request.FilePatterns,
+            request.ArchivePath,
+            request.ErrorPath,
+            request.ItsmSource,
+            request.PollIntervalSeconds,
+            request.MaxFilesPerCycle,
+            request.StableFileAgeSeconds);
+    }
+
     private static TicketResponse MapTicket(Ticket ticket)
     {
         return new TicketResponse(
@@ -974,6 +1151,57 @@ public sealed record ItsmSourceDefinitionResponse(int Id, string Name, string Di
 public sealed record CreateItsmSourceRequest(string Name, string DisplayLabel);
 
 public sealed record UpsertItsmFieldMappingRequest(string CanonicalFieldName, bool IsRequired);
+
+public sealed record FileSharePollingSettingsResponse(
+    bool Enabled,
+    bool AllowUserManagedSources,
+    int DefaultPollIntervalSeconds,
+    int MinPollIntervalSeconds,
+    int MaxPollIntervalSeconds,
+    int DefaultStableFileAgeSeconds,
+    int MaxFilesPerCycleCap,
+    IReadOnlyList<string> AllowedWatchedRoots,
+    IReadOnlyList<string> AllowedArchiveRoots,
+    IReadOnlyList<string> AllowedErrorRoots);
+
+public sealed record FileSharePollingSourceResponse(
+    Guid Id,
+    string Name,
+    bool Enabled,
+    string WatchedPath,
+    IReadOnlyList<string> FilePatterns,
+    string ArchivePath,
+    string ErrorPath,
+    string ItsmSource,
+    int PollIntervalSeconds,
+    int? MaxFilesPerCycle,
+    int StableFileAgeSeconds,
+    DateTime? LastRunStartedAt,
+    DateTime? LastRunCompletedAt,
+    DateTime? LastSucceededAt,
+    DateTime? NextPollDueAt,
+    string? LastError,
+    Guid? CurrentJobId,
+    Guid? LastJobId,
+    bool IsSystemManaged,
+    string CreatedBy,
+    DateTime CreatedAt,
+    string? UpdatedBy,
+    DateTime? UpdatedAt);
+
+public sealed record UpsertFileSharePollingSourceRequest(
+    string Name,
+    bool Enabled,
+    string WatchedPath,
+    IReadOnlyList<string>? FilePatterns,
+    string ArchivePath,
+    string ErrorPath,
+    string ItsmSource,
+    int? PollIntervalSeconds,
+    int? MaxFilesPerCycle,
+    int? StableFileAgeSeconds);
+
+public sealed record FileSharePollingRunResponse(BackgroundJobResponse Job, bool AlreadyQueued);
 
 public sealed record SnapshotResponse(Guid Id, string ItsmSource, DateTime SnapshotDate, string UploadedBy, DateTime UploadedAt, string? UploadMetadata);
 

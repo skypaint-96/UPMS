@@ -12,6 +12,10 @@ public sealed record ReportExecutionJobPayload(
     IReadOnlyDictionary<string, string> Parameters,
     string? RequestedBy);
 
+public sealed record FileSharePollJobPayload(
+    Guid SourceId,
+    bool TriggeredManually);
+
 public sealed record ReportExecutionPreviewResult(
     string OutputType,
     string? HtmlContent,

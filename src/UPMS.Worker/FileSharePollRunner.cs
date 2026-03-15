@@ -4,12 +4,17 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using UPMS.Data;
 using UPMS.Data.Jobs;
 
-public sealed partial class FileSharePollingService : BackgroundService
+public interface IFileSharePollRunner
+{
+    Task<FileSharePollingCycleResult> PollOnceAsync(FileSharePollingSource source, CancellationToken ct);
+}
+
+public sealed partial class FileSharePollRunner : IFileSharePollRunner
 {
     private static readonly JsonSerializerOptions MetadataJsonOptions = new(JsonSerializerDefaults.Web)
     {
@@ -19,102 +24,60 @@ public sealed partial class FileSharePollingService : BackgroundService
 
     private static readonly TimeSpan StaleClaimAge = TimeSpan.FromMinutes(30);
 
-    private readonly IServiceProvider _services;
-    private readonly ILogger<FileSharePollingService> _logger;
+    private readonly IServiceScopeFactory _scopeFactory;
+    private readonly ILogger<FileSharePollRunner> _logger;
     private readonly FileSharePollingOptions _options;
 
-    public FileSharePollingService(
-        IServiceProvider services,
+    public FileSharePollRunner(
+        IServiceScopeFactory scopeFactory,
         IOptions<FileSharePollingOptions> options,
-        ILogger<FileSharePollingService> logger)
+        ILogger<FileSharePollRunner> logger)
     {
-        _services = services ?? throw new ArgumentNullException(nameof(services));
+        _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _options = options?.Value ?? new FileSharePollingOptions();
     }
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    public async Task<FileSharePollingCycleResult> PollOnceAsync(FileSharePollingSource source, CancellationToken ct)
     {
-        if (!_options.Enabled)
+        ArgumentNullException.ThrowIfNull(source);
+
+        if (!TryValidateConfiguration(source, out var validationError))
         {
-            _logger.LogInformation("File share polling is disabled.");
-            return;
+            _logger.LogError(
+                "Skipping file share polling cycle for source {SourceId} ({SourceName}) because configuration is invalid. {ValidationError}",
+                source.Id,
+                source.Name,
+                validationError);
+
+            return FileSharePollingCycleResult.InvalidConfiguration(validationError!);
         }
 
-        if (!TryValidateConfiguration(out var validationError))
-        {
-            _logger.LogError("File share polling is enabled but invalid. {ValidationError}", validationError);
-            return;
-        }
-
-        _logger.LogInformation(
-            "File share polling enabled for {WatchedPath}.",
-            NormalizePath(_options.WatchedPath!));
-
-        while (!stoppingToken.IsCancellationRequested)
-        {
-            try
-            {
-                var result = await PollOnceAsync(stoppingToken);
-                if (result.DiscoveredCount > 0 || result.QueuedCount > 0 || result.QuarantinedCount > 0)
-                {
-                    _logger.LogInformation(
-                        "File share polling cycle completed. Discovered={DiscoveredCount}, queued={QueuedCount}, quarantined={QuarantinedCount}, skipped={SkippedCount}.",
-                        result.DiscoveredCount,
-                        result.QueuedCount,
-                        result.QuarantinedCount,
-                        result.SkippedCount);
-                }
-            }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-            {
-                break;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Unhandled file share polling cycle error for {WatchedPath}.", _options.WatchedPath);
-            }
-
-            await Task.Delay(
-                TimeSpan.FromSeconds(Math.Max(_options.PollIntervalSeconds, 1)),
-                stoppingToken);
-        }
-    }
-
-    public async Task<FileSharePollingCycleResult> PollOnceAsync(CancellationToken ct)
-    {
-        if (!_options.Enabled)
-            return FileSharePollingCycleResult.Disabled;
-
-        if (!TryValidateConfiguration(out var validationError))
-        {
-            _logger.LogError("Skipping file share polling cycle because configuration is invalid. {ValidationError}", validationError);
-            return FileSharePollingCycleResult.InvalidConfiguration;
-        }
-
-        string watchedPath = NormalizePath(_options.WatchedPath!);
-        string archivePath = NormalizePath(_options.ArchivePath!);
-        string errorPath = NormalizePath(_options.ErrorPath!);
-        string processingPath = GetProcessingPath(watchedPath);
-        string receiptRoot = GetReceiptRoot(archivePath);
+        string watchedPath = NormalizePath(source.WatchedPath);
+        string archivePath = NormalizePath(source.ArchivePath);
+        string errorPath = NormalizePath(source.ErrorPath);
+        string processingPath = GetProcessingPath(watchedPath, source.Id);
+        string receiptRoot = GetReceiptRoot(archivePath, source.Id);
 
         if (!TryEnsureOperationalDirectories(watchedPath, processingPath, archivePath, errorPath, receiptRoot, out var pathError))
         {
-            _logger.LogWarning("Skipping file share polling cycle because a required path is unavailable. {PathError}", pathError);
-            return FileSharePollingCycleResult.Empty;
+            _logger.LogWarning(
+                "Skipping file share polling cycle for source {SourceId} ({SourceName}) because a required path is unavailable. {PathError}",
+                source.Id,
+                source.Name,
+                pathError);
+
+            return FileSharePollingCycleResult.PathUnavailable(pathError!);
         }
 
-        await RecoverStaleProcessingFilesAsync(processingPath, errorPath, ct);
+        await RecoverStaleProcessingFilesAsync(source, processingPath, errorPath, receiptRoot, ct);
         RecoverStaleClaimFiles(receiptRoot);
 
-        var discoveredFiles = DiscoverCandidateFiles(watchedPath);
+        var discoveredFiles = DiscoverCandidateFiles(source, watchedPath);
         if (discoveredFiles.Count == 0)
             return FileSharePollingCycleResult.Empty;
 
-        int maxFilesPerCycle = _options.MaxFilesPerCycle.GetValueOrDefault(int.MaxValue);
-        if (maxFilesPerCycle <= 0)
-            maxFilesPerCycle = int.MaxValue;
-
+        int maxFilesPerCycle = GetEffectiveMaxFilesPerCycle(source);
         var selectedFiles = discoveredFiles.Take(maxFilesPerCycle).ToArray();
 
         int queuedCount = 0;
@@ -125,7 +88,7 @@ public sealed partial class FileSharePollingService : BackgroundService
         {
             ct.ThrowIfCancellationRequested();
 
-            var outcome = await ProcessCandidateAsync(filePath, processingPath, archivePath, errorPath, receiptRoot, ct);
+            var outcome = await ProcessCandidateAsync(source, filePath, processingPath, archivePath, errorPath, receiptRoot, ct);
             switch (outcome)
             {
                 case CandidateProcessingOutcome.Queued:
@@ -142,7 +105,7 @@ public sealed partial class FileSharePollingService : BackgroundService
             }
         }
 
-        return new FileSharePollingCycleResult(
+        return FileSharePollingCycleResult.Completed(
             discoveredFiles.Count,
             queuedCount,
             quarantinedCount,
@@ -150,6 +113,7 @@ public sealed partial class FileSharePollingService : BackgroundService
     }
 
     private async Task<CandidateProcessingOutcome> ProcessCandidateAsync(
+        FileSharePollingSource source,
         string sourcePath,
         string processingPath,
         string archivePath,
@@ -166,13 +130,18 @@ public sealed partial class FileSharePollingService : BackgroundService
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            _logger.LogWarning(ex, "Unable to inspect polled file {FilePath}.", sourcePath);
+            _logger.LogWarning(ex, "Unable to inspect polled file {FilePath} for source {SourceId} ({SourceName}).", sourcePath, source.Id, source.Name);
             return CandidateProcessingOutcome.Skipped;
         }
 
-        if (!IsFileReady(sourceInfo, out var readinessReason))
+        if (!IsFileReady(sourceInfo, source.StableFileAgeSeconds, out var readinessReason))
         {
-            _logger.LogDebug("Skipping polled file {FilePath} because it is not ready. {ReadinessReason}", sourcePath, readinessReason);
+            _logger.LogDebug(
+                "Skipping polled file {FilePath} for source {SourceId} ({SourceName}) because it is not ready. {ReadinessReason}",
+                sourcePath,
+                source.Id,
+                source.Name,
+                readinessReason);
             return CandidateProcessingOutcome.Skipped;
         }
 
@@ -192,7 +161,6 @@ public sealed partial class FileSharePollingService : BackgroundService
 
         string? fingerprint = null;
         DateOnly? snapshotDate = null;
-        string? itsmSource = null;
 
         try
         {
@@ -203,13 +171,13 @@ public sealed partial class FileSharePollingService : BackgroundService
             if (claimedInfo.Length == 0)
             {
                 await QuarantineClaimedFileAsync(
+                    source,
                     claimedPath,
                     originalPath,
                     originalFileName,
                     errorPath,
                     "empty-file",
                     "File length was zero and was not queued for ingest.",
-                    null,
                     null,
                     null,
                     null,
@@ -224,6 +192,7 @@ public sealed partial class FileSharePollingService : BackgroundService
             if (!TryResolveSnapshotDate(originalFileName, out var resolvedSnapshotDate))
             {
                 await QuarantineClaimedFileAsync(
+                    source,
                     claimedPath,
                     originalPath,
                     originalFileName,
@@ -233,7 +202,6 @@ public sealed partial class FileSharePollingService : BackgroundService
                     fingerprint,
                     null,
                     null,
-                    null,
                     claimedInfo.Length,
                     ct);
 
@@ -241,33 +209,15 @@ public sealed partial class FileSharePollingService : BackgroundService
             }
 
             snapshotDate = resolvedSnapshotDate;
-            itsmSource = ResolveItsmSource(originalFileName);
-            if (string.IsNullOrWhiteSpace(itsmSource))
-            {
-                await QuarantineClaimedFileAsync(
-                    claimedPath,
-                    originalPath,
-                    originalFileName,
-                    errorPath,
-                    "itsm-source-unresolved",
-                    "ITSM source could not be resolved. Configure FileSharePolling:ItsmSource for the watched path.",
-                    fingerprint,
-                    null,
-                    snapshotDate,
-                    null,
-                    claimedInfo.Length,
-                    ct);
-
-                return CandidateProcessingOutcome.Quarantined;
-            }
 
             var claim = TryAcquireFingerprintClaim(
                 receiptRoot,
                 CreateMetadata(
+                    source,
                     originalPath,
                     originalFileName,
                     fingerprint,
-                    itsmSource,
+                    source.ItsmSource,
                     snapshotDate,
                     ResolveContentType(originalFileName),
                     claimedInfo.Length,
@@ -279,14 +229,14 @@ public sealed partial class FileSharePollingService : BackgroundService
             if (claim is null)
             {
                 await QuarantineClaimedFileAsync(
+                    source,
                     claimedPath,
                     originalPath,
                     originalFileName,
                     errorPath,
                     "duplicate",
-                    "A matching file fingerprint has already been queued or processed.",
+                    "A matching file fingerprint has already been queued or processed for this polling source.",
                     fingerprint,
-                    itsmSource,
                     snapshotDate,
                     null,
                     claimedInfo.Length,
@@ -298,7 +248,7 @@ public sealed partial class FileSharePollingService : BackgroundService
             try
             {
                 BackgroundJob job;
-                using (var scope = _services.CreateScope())
+                using (var scope = _scopeFactory.CreateScope())
                 {
                     var submissions = scope.ServiceProvider.GetRequiredService<ISnapshotIngestJobSubmissionService>();
                     await using var stream = File.OpenRead(claimedPath);
@@ -306,7 +256,7 @@ public sealed partial class FileSharePollingService : BackgroundService
                         stream,
                         originalFileName,
                         ResolveContentType(originalFileName),
-                        itsmSource,
+                        source.ItsmSource,
                         snapshotDate.Value,
                         BuildRequestedBy(),
                         ct);
@@ -318,10 +268,11 @@ public sealed partial class FileSharePollingService : BackgroundService
                     originalFileName);
 
                 var metadata = CreateMetadata(
+                    source,
                     originalPath,
                     originalFileName,
                     fingerprint,
-                    itsmSource,
+                    source.ItsmSource,
                     snapshotDate,
                     ResolveContentType(originalFileName),
                     claimedInfo.Length,
@@ -345,13 +296,15 @@ public sealed partial class FileSharePollingService : BackgroundService
                 }
 
                 _logger.LogInformation(
-                    "Queued snapshot ingest job {JobId} for polled file {FileName} from {OriginalPath}. Fingerprint={Fingerprint}; SnapshotDate={SnapshotDate}; ItsmSource={ItsmSource}; SizeBytes={SizeBytes}; ArchivedPath={ArchivedPath}",
+                    "Queued snapshot ingest job {JobId} for polled file {FileName} from {OriginalPath}. SourceId={SourceId}; SourceName={SourceName}; Fingerprint={Fingerprint}; SnapshotDate={SnapshotDate}; ItsmSource={ItsmSource}; SizeBytes={SizeBytes}; ArchivedPath={ArchivedPath}",
                     job.Id,
                     originalFileName,
                     originalPath,
+                    source.Id,
+                    source.Name,
                     fingerprint,
                     snapshotDate,
-                    itsmSource,
+                    source.ItsmSource,
                     claimedInfo.Length,
                     archivedPath);
 
@@ -362,6 +315,7 @@ public sealed partial class FileSharePollingService : BackgroundService
                 ReleaseFingerprintClaim(claim);
 
                 await QuarantineClaimedFileAsync(
+                    source,
                     claimedPath,
                     originalPath,
                     originalFileName,
@@ -369,7 +323,6 @@ public sealed partial class FileSharePollingService : BackgroundService
                     "submission-failed",
                     ex.Message,
                     fingerprint,
-                    itsmSource,
                     snapshotDate,
                     null,
                     claimedInfo.Length,
@@ -381,7 +334,7 @@ public sealed partial class FileSharePollingService : BackgroundService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Unexpected file share polling error while processing {OriginalPath}.", originalPath);
+            _logger.LogError(ex, "Unexpected file share polling error while processing {OriginalPath} for source {SourceId} ({SourceName}).", originalPath, source.Id, source.Name);
 
             if (File.Exists(claimedPath))
             {
@@ -389,6 +342,7 @@ public sealed partial class FileSharePollingService : BackgroundService
                 {
                     var claimedInfo = new FileInfo(claimedPath);
                     await QuarantineClaimedFileAsync(
+                        source,
                         claimedPath,
                         originalPath,
                         originalFileName,
@@ -396,7 +350,6 @@ public sealed partial class FileSharePollingService : BackgroundService
                         "unexpected-error",
                         ex.Message,
                         fingerprint,
-                        itsmSource,
                         snapshotDate,
                         null,
                         claimedInfo.Exists ? claimedInfo.Length : null,
@@ -413,8 +366,10 @@ public sealed partial class FileSharePollingService : BackgroundService
     }
 
     private async Task RecoverStaleProcessingFilesAsync(
+        FileSharePollingSource source,
         string processingPath,
         string errorPath,
+        string receiptRoot,
         CancellationToken ct)
     {
         if (!Directory.Exists(processingPath))
@@ -437,7 +392,7 @@ public sealed partial class FileSharePollingService : BackgroundService
                 if (info.Length > 0)
                 {
                     fingerprint = await ComputeFingerprintAsync(processingFile, ct);
-                    DeleteReceiptClaimFileIfPresent(GetReceiptClaimPath(GetReceiptRoot(NormalizePath(_options.ArchivePath!)), fingerprint));
+                    DeleteReceiptClaimFileIfPresent(GetReceiptClaimPath(receiptRoot, fingerprint));
                 }
             }
             catch (Exception ex)
@@ -446,6 +401,7 @@ public sealed partial class FileSharePollingService : BackgroundService
             }
 
             await QuarantineClaimedFileAsync(
+                source,
                 processingFile,
                 processingFile,
                 info.Name,
@@ -453,7 +409,6 @@ public sealed partial class FileSharePollingService : BackgroundService
                 "stale-processing",
                 "The file was left in the processing folder by an earlier interrupted poll cycle.",
                 fingerprint,
-                null,
                 null,
                 null,
                 info.Length,
@@ -489,13 +444,13 @@ public sealed partial class FileSharePollingService : BackgroundService
         }
     }
 
-    private IReadOnlyList<string> DiscoverCandidateFiles(string watchedPath)
+    private IReadOnlyList<string> DiscoverCandidateFiles(FileSharePollingSource source, string watchedPath)
     {
         try
         {
             var files = new Dictionary<string, FileInfo>(StringComparer.OrdinalIgnoreCase);
 
-            foreach (var pattern in GetEffectivePatterns())
+            foreach (var pattern in GetEffectivePatterns(source))
             {
                 foreach (var filePath in Directory.EnumerateFiles(watchedPath, pattern, SearchOption.TopDirectoryOnly))
                 {
@@ -515,12 +470,12 @@ public sealed partial class FileSharePollingService : BackgroundService
         }
         catch (Exception ex) when (ex is DirectoryNotFoundException or IOException or UnauthorizedAccessException)
         {
-            _logger.LogWarning(ex, "Unable to enumerate watched path {WatchedPath}.", watchedPath);
+            _logger.LogWarning(ex, "Unable to enumerate watched path {WatchedPath} for source {SourceId} ({SourceName}).", watchedPath, source.Id, source.Name);
             return Array.Empty<string>();
         }
     }
 
-    private bool IsFileReady(FileInfo info, out string reason)
+    private static bool IsFileReady(FileInfo info, int stableAgeSeconds, out string reason)
     {
         if (!info.Exists)
         {
@@ -528,10 +483,10 @@ public sealed partial class FileSharePollingService : BackgroundService
             return false;
         }
 
-        int stableAgeSeconds = Math.Max(_options.StableFileAgeSeconds, 0);
-        if (stableAgeSeconds > 0 && DateTime.UtcNow - info.LastWriteTimeUtc < TimeSpan.FromSeconds(stableAgeSeconds))
+        int boundedStableAgeSeconds = Math.Max(stableAgeSeconds, 0);
+        if (boundedStableAgeSeconds > 0 && DateTime.UtcNow - info.LastWriteTimeUtc < TimeSpan.FromSeconds(boundedStableAgeSeconds))
         {
-            reason = $"File was modified less than {stableAgeSeconds} seconds ago.";
+            reason = $"File was modified less than {boundedStableAgeSeconds} seconds ago.";
             return false;
         }
 
@@ -548,7 +503,7 @@ public sealed partial class FileSharePollingService : BackgroundService
         }
     }
 
-    private string ClaimSourceFile(string sourcePath, string originalFileName, string processingPath)
+    private static string ClaimSourceFile(string sourcePath, string originalFileName, string processingPath)
     {
         Directory.CreateDirectory(processingPath);
 
@@ -557,7 +512,7 @@ public sealed partial class FileSharePollingService : BackgroundService
         return claimedPath;
     }
 
-    private string MoveClaimedFile(string claimedPath, string destinationDirectory, string originalFileName)
+    private static string MoveClaimedFile(string claimedPath, string destinationDirectory, string originalFileName)
     {
         Directory.CreateDirectory(destinationDirectory);
 
@@ -615,7 +570,7 @@ public sealed partial class FileSharePollingService : BackgroundService
         }
     }
 
-    private async Task FinalizeFingerprintReceiptAsync(
+    private static async Task FinalizeFingerprintReceiptAsync(
         FingerprintClaim claim,
         FileSharePollingMetadata metadata,
         CancellationToken ct)
@@ -632,12 +587,13 @@ public sealed partial class FileSharePollingService : BackgroundService
         DeleteReceiptClaimFileIfPresent(claim.ClaimPath);
     }
 
-    private void ReleaseFingerprintClaim(FingerprintClaim claim)
+    private static void ReleaseFingerprintClaim(FingerprintClaim claim)
     {
         DeleteReceiptClaimFileIfPresent(claim.ClaimPath);
     }
 
     private async Task<string> QuarantineClaimedFileAsync(
+        FileSharePollingSource source,
         string claimedPath,
         string originalPath,
         string originalFileName,
@@ -645,7 +601,6 @@ public sealed partial class FileSharePollingService : BackgroundService
         string reason,
         string error,
         string? fingerprint,
-        string? itsmSource,
         DateOnly? snapshotDate,
         Guid? jobId,
         long? sizeBytes,
@@ -657,10 +612,11 @@ public sealed partial class FileSharePollingService : BackgroundService
             originalFileName);
 
         var metadata = CreateMetadata(
+            source,
             originalPath,
             originalFileName,
             fingerprint,
-            itsmSource,
+            source.ItsmSource,
             snapshotDate,
             ResolveContentType(originalFileName),
             sizeBytes,
@@ -672,24 +628,27 @@ public sealed partial class FileSharePollingService : BackgroundService
         await WriteSidecarAsync(quarantinedPath, metadata, ct);
 
         _logger.LogWarning(
-            "Moved polled file {OriginalPath} to quarantine at {QuarantinedPath}. Reason={Reason}; Fingerprint={Fingerprint}; SnapshotDate={SnapshotDate}; ItsmSource={ItsmSource}",
+            "Moved polled file {OriginalPath} to quarantine at {QuarantinedPath}. SourceId={SourceId}; SourceName={SourceName}; Reason={Reason}; Fingerprint={Fingerprint}; SnapshotDate={SnapshotDate}; ItsmSource={ItsmSource}",
             originalPath,
             quarantinedPath,
+            source.Id,
+            source.Name,
             reason,
             fingerprint,
             snapshotDate,
-            itsmSource);
+            source.ItsmSource);
 
         return quarantinedPath;
     }
 
-    private async Task WriteSidecarAsync(string targetPath, FileSharePollingMetadata metadata, CancellationToken ct)
+    private static async Task WriteSidecarAsync(string targetPath, FileSharePollingMetadata metadata, CancellationToken ct)
     {
         string sidecarPath = targetPath + ".metadata.json";
         await File.WriteAllTextAsync(sidecarPath, JsonSerializer.Serialize(metadata, MetadataJsonOptions), ct);
     }
 
     private FileSharePollingMetadata CreateMetadata(
+        FileSharePollingSource source,
         string originalPath,
         string fileName,
         string? fingerprint,
@@ -703,6 +662,8 @@ public sealed partial class FileSharePollingService : BackgroundService
         string? error)
     {
         return new FileSharePollingMetadata(
+            source.Id,
+            source.Name,
             originalPath,
             fileName,
             fingerprint,
@@ -719,7 +680,7 @@ public sealed partial class FileSharePollingService : BackgroundService
             Environment.MachineName);
     }
 
-    private bool TryEnsureOperationalDirectories(
+    private static bool TryEnsureOperationalDirectories(
         string watchedPath,
         string processingPath,
         string archivePath,
@@ -737,18 +698,8 @@ public sealed partial class FileSharePollingService : BackgroundService
                 return false;
             }
 
-            if (!Directory.Exists(archivePath))
-            {
-                error = $"Archive path '{archivePath}' does not exist or is unavailable.";
-                return false;
-            }
-
-            if (!Directory.Exists(errorPath))
-            {
-                error = $"Error path '{errorPath}' does not exist or is unavailable.";
-                return false;
-            }
-
+            Directory.CreateDirectory(archivePath);
+            Directory.CreateDirectory(errorPath);
             Directory.CreateDirectory(processingPath);
             Directory.CreateDirectory(receiptRoot);
             return true;
@@ -760,31 +711,37 @@ public sealed partial class FileSharePollingService : BackgroundService
         }
     }
 
-    private bool TryValidateConfiguration(out string? validationError)
+    private static bool TryValidateConfiguration(FileSharePollingSource source, out string? validationError)
     {
         validationError = null;
 
-        if (string.IsNullOrWhiteSpace(_options.WatchedPath))
+        if (string.IsNullOrWhiteSpace(source.WatchedPath))
         {
-            validationError = "FileSharePolling:WatchedPath is required when polling is enabled.";
+            validationError = "WatchedPath is required.";
             return false;
         }
 
-        if (string.IsNullOrWhiteSpace(_options.ArchivePath))
+        if (string.IsNullOrWhiteSpace(source.ArchivePath))
         {
-            validationError = "FileSharePolling:ArchivePath is required when polling is enabled.";
+            validationError = "ArchivePath is required.";
             return false;
         }
 
-        if (string.IsNullOrWhiteSpace(_options.ErrorPath))
+        if (string.IsNullOrWhiteSpace(source.ErrorPath))
         {
-            validationError = "FileSharePolling:ErrorPath is required when polling is enabled.";
+            validationError = "ErrorPath is required.";
             return false;
         }
 
-        string watchedPath = NormalizePath(_options.WatchedPath);
-        string archivePath = NormalizePath(_options.ArchivePath);
-        string errorPath = NormalizePath(_options.ErrorPath);
+        if (string.IsNullOrWhiteSpace(source.ItsmSource))
+        {
+            validationError = "ItsmSource is required.";
+            return false;
+        }
+
+        string watchedPath = NormalizePath(source.WatchedPath);
+        string archivePath = NormalizePath(source.ArchivePath);
+        string errorPath = NormalizePath(source.ErrorPath);
 
         if (string.Equals(watchedPath, archivePath, StringComparison.OrdinalIgnoreCase))
         {
@@ -798,34 +755,45 @@ public sealed partial class FileSharePollingService : BackgroundService
             return false;
         }
 
-        if (GetEffectivePatterns().Count == 0)
+        if (string.Equals(archivePath, errorPath, StringComparison.OrdinalIgnoreCase))
         {
-            validationError = "At least one FileSharePolling:FilePatterns entry is required.";
+            validationError = "ArchivePath and ErrorPath must be different.";
+            return false;
+        }
+
+        if (GetEffectivePatterns(source).Count == 0)
+        {
+            validationError = "At least one file pattern is required.";
+            return false;
+        }
+
+        if (source.StableFileAgeSeconds < 0)
+        {
+            validationError = "StableFileAgeSeconds must be zero or greater.";
             return false;
         }
 
         return true;
     }
 
-    private IReadOnlyList<string> GetEffectivePatterns()
+    private int GetEffectiveMaxFilesPerCycle(FileSharePollingSource source)
     {
-        var configuredPatterns = (_options.FilePatterns ?? Array.Empty<string>())
-            .Select(pattern => pattern?.Trim())
-            .Where(pattern => !string.IsNullOrWhiteSpace(pattern))
-            .Select(pattern => pattern!)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
+        int configuredLimit = source.MaxFilesPerCycle.GetValueOrDefault(int.MaxValue);
+        if (configuredLimit <= 0)
+            configuredLimit = int.MaxValue;
 
-        return configuredPatterns.Length == 0
-            ? ["*.csv", "*.json"]
-            : configuredPatterns;
+        int cap = Math.Max(_options.MaxFilesPerCycleCap, 1);
+        return Math.Min(configuredLimit, cap);
     }
 
-    private static string GetProcessingPath(string watchedPath)
-        => Path.Combine(watchedPath, ".upms-processing");
+    private static IReadOnlyList<string> GetEffectivePatterns(FileSharePollingSource source)
+        => source.GetFilePatterns();
 
-    private static string GetReceiptRoot(string archivePath)
-        => Path.Combine(archivePath, ".upms-receipts");
+    private static string GetProcessingPath(string watchedPath, Guid sourceId)
+        => Path.Combine(watchedPath, ".upms-processing", sourceId.ToString("N"));
+
+    private static string GetReceiptRoot(string archivePath, Guid sourceId)
+        => Path.Combine(archivePath, ".upms-receipts", sourceId.ToString("N"));
 
     private static string GetReceiptPath(string receiptRoot, string fingerprint)
         => Path.Combine(receiptRoot, $"{fingerprint}.json");
@@ -844,14 +812,6 @@ public sealed partial class FileSharePollingService : BackgroundService
         {
             // Best-effort cleanup of transient fingerprint claim files.
         }
-    }
-
-    private string ResolveItsmSource(string fileName)
-    {
-        _ = fileName;
-        return string.IsNullOrWhiteSpace(_options.ItsmSource)
-            ? string.Empty
-            : _options.ItsmSource.Trim();
     }
 
     private static bool TryResolveSnapshotDate(string fileName, out DateOnly snapshotDate)
@@ -945,6 +905,8 @@ public sealed partial class FileSharePollingService : BackgroundService
     private sealed record FingerprintClaim(string ClaimPath, string ReceiptPath);
 
     private sealed record FileSharePollingMetadata(
+        Guid SourceId,
+        string SourceName,
         string OriginalPath,
         string FileName,
         string? Fingerprint,

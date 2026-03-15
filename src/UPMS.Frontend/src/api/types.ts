@@ -21,6 +21,50 @@ export type ItsmSourceDefinition = ItsmSourceSummary & {
   mappings: ItsmFieldMapping[];
 };
 
+export type FileSharePollingSettings = {
+  enabled: boolean;
+  allowUserManagedSources: boolean;
+  defaultPollIntervalSeconds: number;
+  minPollIntervalSeconds: number;
+  maxPollIntervalSeconds: number;
+  defaultStableFileAgeSeconds: number;
+  maxFilesPerCycleCap: number;
+  allowedWatchedRoots: string[];
+  allowedArchiveRoots: string[];
+  allowedErrorRoots: string[];
+};
+
+export type FileSharePollingSource = {
+  id: string;
+  name: string;
+  enabled: boolean;
+  watchedPath: string;
+  filePatterns: string[];
+  archivePath: string;
+  errorPath: string;
+  itsmSource: string;
+  pollIntervalSeconds: number;
+  maxFilesPerCycle?: number | null;
+  stableFileAgeSeconds: number;
+  lastRunStartedAt?: string | null;
+  lastRunCompletedAt?: string | null;
+  lastSucceededAt?: string | null;
+  nextPollDueAt?: string | null;
+  lastError?: string | null;
+  currentJobId?: string | null;
+  lastJobId?: string | null;
+  isSystemManaged: boolean;
+  createdBy: string;
+  createdAt: string;
+  updatedBy?: string | null;
+  updatedAt?: string | null;
+};
+
+export type FileSharePollingRunResponse = {
+  job: BackgroundJob;
+  alreadyQueued: boolean;
+};
+
 export type Snapshot = {
   id: string;
   itsmSource: string;

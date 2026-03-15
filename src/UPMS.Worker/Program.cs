@@ -12,8 +12,9 @@ builder.Services.Configure<FileSharePollingOptions>(builder.Configuration.GetSec
 builder.Services.AddUpmsData(builder.Configuration);
 builder.Services.AddUpmsIngestion();
 builder.Services.AddUpmsReporting(builder.Configuration);
+builder.Services.AddScoped<IFileSharePollRunner, FileSharePollRunner>();
 builder.Services.AddHostedService<BackgroundJobWorker>();
-builder.Services.AddHostedService<FileSharePollingService>();
+builder.Services.AddHostedService<FileSharePollingSchedulerService>();
 
 var host = builder.Build();
 
