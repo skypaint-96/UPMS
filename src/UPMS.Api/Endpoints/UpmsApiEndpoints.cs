@@ -1501,7 +1501,7 @@ public static class UpmsApiEndpoints
         try
         {
             return JsonSerializer.Deserialize<List<ReportDeliveryRecipientResponse>>(recipientSnapshotJson, JsonOptions)
-                ?? Array.Empty<ReportDeliveryRecipientResponse>();
+                ?? Array.Empty<ReportDeliveryRecipientResponse>().ToList();
         }
         catch
         {
