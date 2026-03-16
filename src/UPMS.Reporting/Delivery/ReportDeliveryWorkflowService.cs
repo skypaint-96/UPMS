@@ -358,7 +358,7 @@ public sealed class ReportDeliveryWorkflowService : IReportDeliveryWorkflowServi
             return Array.Empty<ReportDeliveryRecipientSnapshot>();
 
         return JsonSerializer.Deserialize<List<ReportDeliveryRecipientSnapshot>>(recipientSnapshotJson, JsonOptions)
-            ?? Array.Empty<ReportDeliveryRecipientSnapshot>();
+            ?? Array.Empty<ReportDeliveryRecipientSnapshot>().ToList();
     }
 
     private static string BuildSubject(string? artifactFileName, string companyDisplayName)
