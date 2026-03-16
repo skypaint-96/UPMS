@@ -29,6 +29,7 @@ public static class DataServiceExtensions
             options.UseNpgsql(connectionString));
 
         services.Configure<ArtifactStorageOptions>(configuration.GetSection("Artifacts"));
+        services.Configure<FileSharePollingOptions>(configuration.GetSection("FileSharePolling"));
         services.PostConfigure<ArtifactStorageOptions>(options =>
         {
             if (string.IsNullOrWhiteSpace(options.RootPath))
@@ -49,6 +50,8 @@ public static class DataServiceExtensions
         services.AddScoped<TicketDataServiceInstance>();
         services.AddScoped<IBackgroundJobService, BackgroundJobService>();
         services.AddScoped<IDistributionListService, DistributionListService>();
+        services.AddScoped<ISnapshotIngestJobSubmissionService, SnapshotIngestJobSubmissionService>();
+        services.AddScoped<IFileSharePollingSourceService, FileSharePollingSourceService>();
         services.AddSingleton<IArtifactStorage, FileSystemArtifactStorage>();
 
         return services;

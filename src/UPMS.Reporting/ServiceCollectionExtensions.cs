@@ -28,6 +28,7 @@ public static class ServiceCollectionExtensions
             var typeRegistry = sp.GetRequiredService<ReportTemplateTypeRegistry>();
             return new FileSystemReportTemplateStore(storagePath, typeRegistry);
         });
+        services.AddSingleton<IReportTemplateApplicabilityService, ReportTemplateApplicabilityService>();
         services.AddSingleton<IReportTemplateBootstrapper, ReportTemplateBootstrapper>();
 
         services.Configure<EmailDeliveryOptions>(configuration.GetSection("Delivery:Email"));

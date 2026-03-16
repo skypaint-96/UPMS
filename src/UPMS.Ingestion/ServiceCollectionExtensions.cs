@@ -7,6 +7,8 @@ public static class ServiceCollectionExtensions
     public static IServiceCollection AddUpmsIngestion(this IServiceCollection services)
     {
         services.AddHttpContextAccessor();
+        services.AddScoped<ISnapshotDuplicateDetector, SnapshotDuplicateDetector>();
+        services.AddScoped<ISnapshotIngestJobProcessor, SnapshotIngestJobProcessor>();
         services.AddScoped<ISnapshotIngestService, SnapshotIngestService>();
         return services;
     }

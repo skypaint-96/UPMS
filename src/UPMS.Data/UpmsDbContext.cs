@@ -28,6 +28,7 @@ public class UpmsDbContext : DbContext
     public DbSet<DistributionList> DistributionLists => Set<DistributionList>();
     public DbSet<DistributionListRecipient> DistributionListRecipients => Set<DistributionListRecipient>();
     public DbSet<ReportDelivery> ReportDeliveries => Set<ReportDelivery>();
+    public DbSet<FileSharePollingSource> FileSharePollingSources => Set<FileSharePollingSource>();
 
     // ── Keyless result sets (stored-procedure reads) ───────────────────────
 
@@ -199,6 +200,117 @@ public class UpmsDbContext : DbContext
                 .HasColumnName("is_required")
                 .HasColumnType("boolean")
                 .HasDefaultValue(false);
+        });
+
+        // ── file_share_polling_source ─────────────────────────────────────────
+        modelBuilder.Entity<FileSharePollingSource>(e =>
+        {
+            e.ToTable("file_share_polling_source");
+            e.HasKey(x => x.Id);
+
+            e.Property(x => x.Id)
+                .HasColumnName("id")
+                .HasColumnType("uuid")
+                .ValueGeneratedNever();
+            e.Property(x => x.Name)
+                .HasColumnName("name")
+                .HasColumnType("varchar(200)")
+                .IsRequired();
+            e.Property(x => x.Enabled)
+                .HasColumnName("enabled")
+                .HasColumnType("boolean")
+                .HasDefaultValue(true);
+            e.Property(x => x.WatchedPath)
+                .HasColumnName("watched_path")
+                .HasColumnType("text")
+                .IsRequired();
+            e.Property(x => x.FilePatternsJson)
+                .HasColumnName("file_patterns_json")
+                .HasColumnType("text")
+                .IsRequired();
+            e.Property(x => x.ArchivePath)
+                .HasColumnName("archive_path")
+                .HasColumnType("text")
+                .IsRequired();
+            e.Property(x => x.ErrorPath)
+                .HasColumnName("error_path")
+                .HasColumnType("text")
+                .IsRequired();
+            e.Property(x => x.ItsmSource)
+                .HasColumnName("itsm_source")
+                .HasColumnType("varchar(100)")
+                .IsRequired();
+            e.Property(x => x.PollIntervalSeconds)
+                .HasColumnName("poll_interval_seconds")
+                .HasColumnType("integer")
+                .HasDefaultValue(300);
+            e.Property(x => x.MaxFilesPerCycle)
+                .HasColumnName("max_files_per_cycle")
+                .HasColumnType("integer")
+                .IsRequired(false);
+            e.Property(x => x.StableFileAgeSeconds)
+                .HasColumnName("stable_file_age_seconds")
+                .HasColumnType("integer")
+                .HasDefaultValue(30);
+            e.Property(x => x.LastRunStartedAt)
+                .HasColumnName("last_run_started_at")
+                .HasColumnType("timestamptz")
+                .IsRequired(false);
+            e.Property(x => x.LastRunCompletedAt)
+                .HasColumnName("last_run_completed_at")
+                .HasColumnType("timestamptz")
+                .IsRequired(false);
+            e.Property(x => x.LastSucceededAt)
+                .HasColumnName("last_succeeded_at")
+                .HasColumnType("timestamptz")
+                .IsRequired(false);
+            e.Property(x => x.NextPollDueAt)
+                .HasColumnName("next_poll_due_at")
+                .HasColumnType("timestamptz")
+                .IsRequired(false);
+            e.Property(x => x.LastError)
+                .HasColumnName("last_error")
+                .HasColumnType("text")
+                .IsRequired(false);
+            e.Property(x => x.CurrentJobId)
+                .HasColumnName("current_job_id")
+                .HasColumnType("uuid")
+                .IsRequired(false);
+            e.Property(x => x.LastJobId)
+                .HasColumnName("last_job_id")
+                .HasColumnType("uuid")
+                .IsRequired(false);
+            e.Property(x => x.IsSystemManaged)
+                .HasColumnName("is_system_managed")
+                .HasColumnType("boolean")
+                .HasDefaultValue(false);
+            e.Property(x => x.CreatedBy)
+                .HasColumnName("created_by")
+                .HasColumnType("varchar(255)")
+                .IsRequired();
+            e.Property(x => x.CreatedAt)
+                .HasColumnName("created_at")
+                .HasColumnType("timestamptz")
+                .IsRequired();
+            e.Property(x => x.UpdatedBy)
+                .HasColumnName("updated_by")
+                .HasColumnType("varchar(255)")
+                .IsRequired(false);
+            e.Property(x => x.UpdatedAt)
+                .HasColumnName("updated_at")
+                .HasColumnType("timestamptz")
+                .IsRequired(false);
+
+            e.HasIndex(x => x.Name)
+                .IsUnique()
+                .HasDatabaseName("ix_file_share_polling_source_name");
+            e.HasIndex(x => x.WatchedPath)
+                .IsUnique()
+                .HasDatabaseName("ix_file_share_polling_source_watched_path");
+            e.HasIndex(x => new { x.Enabled, x.NextPollDueAt })
+                .HasDatabaseName("ix_file_share_polling_source_enabled_due_at");
+            e.HasIndex(x => x.CurrentJobId)
+                .HasDatabaseName("ix_file_share_polling_source_current_job_id");
         });
 
         // ── background_job ───────────────────────────────────────────────────

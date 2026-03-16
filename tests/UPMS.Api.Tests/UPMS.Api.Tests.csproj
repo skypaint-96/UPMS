@@ -15,9 +15,14 @@
     <PackageReference Include="NUnit3TestAdapter" Version="5.0.0" />
   </ItemGroup>
 
+
+  <ItemGroup>
+    <Using Include="NUnit.Framework" />
+  </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\UPMS.Api\UPMS.Api.csproj" />
     <ProjectReference Include="..\..\src\UPMS.Data\UPMS.Data.csproj" />
+    <ProjectReference Include="..\..\src\UPMS.Ingestion\UPMS.Ingestion.csproj" />
   </ItemGroup>
 
 </Project>

@@ -12,6 +12,7 @@ using UPMS.Reporting.Templates;
 /// </summary>
 public sealed class TokenisedTemplateReportPlugin : IReportPlugin
 {
+    public const string PluginIdValue = "tokenised-template-report";
     public const string OutputModeAuto = "Auto";
     public const string OutputModePreviewHtml = "Preview HTML";
     public const string OutputModeDownloadFile = "Download Filled File";
@@ -43,19 +44,22 @@ public sealed class TokenisedTemplateReportPlugin : IReportPlugin
 
     private readonly TicketDataServiceInstance _dataService;
     private readonly IReportTemplateStore _templateStore;
+    private readonly IReportTemplateApplicabilityService _templateApplicability;
     private readonly ReportTemplateTypeRegistry _typeRegistry;
 
     public TokenisedTemplateReportPlugin(
         TicketDataServiceInstance dataService,
         IReportTemplateStore templateStore,
+        IReportTemplateApplicabilityService templateApplicability,
         ReportTemplateTypeRegistry typeRegistry)
     {
         _dataService = dataService ?? throw new ArgumentNullException(nameof(dataService));
         _templateStore = templateStore ?? throw new ArgumentNullException(nameof(templateStore));
+        _templateApplicability = templateApplicability ?? throw new ArgumentNullException(nameof(templateApplicability));
         _typeRegistry = typeRegistry ?? throw new ArgumentNullException(nameof(typeRegistry));
     }
 
-    public string PluginId => "tokenised-template-report";
+    public string PluginId => PluginIdValue;
     public string DisplayName => "Template-Driven Report Generation";
     public string Description => "Generates user-facing reports from uploaded tokenised templates, including starter examples for each supported template type.";
 
@@ -101,7 +105,8 @@ public sealed class TokenisedTemplateReportPlugin : IReportPlugin
                     Key = "itsm_source",
                     DisplayName = "ITSM Source",
                     Type = ReportParameterType.ItsmSource,
-                    IsRequired = true
+                    IsRequired = true,
+                    Description = "Choose the ITSM source used for the report context and template scoping checks."
                 },
                 new ReportParameterDefinition
                 {
@@ -110,6 +115,7 @@ public sealed class TokenisedTemplateReportPlugin : IReportPlugin
                     Type = ReportParameterType.Text,
                     IsRequired = true,
                     Placeholder = "Start typing a company name",
+                    Description = "Pragmatic first version: enter the company name exactly as it appears in ingested ticket data.",
                     CanonicalFieldName = "Company"
                 },
                 new ReportParameterDefinition
@@ -142,19 +148,20 @@ public sealed class TokenisedTemplateReportPlugin : IReportPlugin
 
     public async Task<ReportResult> GenerateAsync(ReportRequest request, CancellationToken ct = default)
     {
-        if (!request.Parameters.TryGetValue("template_id", out var templateOption) || string.IsNullOrWhiteSpace(templateOption))
-            return ReportResult.Failure("Required parameter 'template_id' is missing.");
+        request.Parameters.TryGetValue("template_id", out var templateOption);
+        request.Parameters.TryGetValue("itsm_source", out var itsmSource);
+        request.Parameters.TryGetValue("company", out var company);
 
-        if (!request.Parameters.TryGetValue("itsm_source", out var itsmSource) || string.IsNullOrWhiteSpace(itsmSource))
-            return ReportResult.Failure("Required parameter 'itsm_source' is missing.");
-
-        if (!request.Parameters.TryGetValue("company", out var company) || string.IsNullOrWhiteSpace(company))
-            return ReportResult.Failure("Required parameter 'company' is missing.");
+        var validation = _templateApplicability.ValidateSelection(templateOption, itsmSource, company);
+        if (!validation.IsValid)
+            return ReportResult.Failure(validation.ErrorMessage!);
 
         if (!request.Parameters.TryGetValue("as_of_date", out var asOfDateRaw) || !DateTime.TryParse(asOfDateRaw, out var asOfDate))
             return ReportResult.Failure("Required parameter 'as_of_date' is missing or invalid.");
 
-        var templateId = ParseTemplateId(templateOption);
+        var templateId = validation.Template!.Id;
+        var trimmedSource = itsmSource!.Trim();
+        var trimmedCompany = company!.Trim();
         var template = await _templateStore.GetTemplateContentAsync(templateId, ct);
         if (template is null)
             return ReportResult.Failure("The selected template could not be loaded.");
@@ -168,7 +175,7 @@ public sealed class TokenisedTemplateReportPlugin : IReportPlugin
 
         try
         {
-            var allTickets = (await _dataService.GetTicketsAsync(itsmSource, company, asOfDate)).ToList();
+            var allTickets = (await _dataService.GetTicketsAsync(trimmedSource, trimmedCompany, asOfDate)).ToList();
             var requestedTicketIds = ParseTicketIds(ticketKeysRaw);
             var selectedTickets = requestedTicketIds.Count == 0
                 ? allTickets.OrderBy(ticket => ticket.TicketKey, StringComparer.OrdinalIgnoreCase).ToList()
@@ -178,13 +185,13 @@ public sealed class TokenisedTemplateReportPlugin : IReportPlugin
                     .OrderBy(ticket => ticket.TicketKey, StringComparer.OrdinalIgnoreCase)
                     .ToList();
 
-            var renderContext = TemplateReportTokenBuilder.BuildContext(itsmSource, company, asOfDate, selectedTickets, detailFields, request.RequestedBy);
+            var renderContext = TemplateReportTokenBuilder.BuildContext(trimmedSource, trimmedCompany, asOfDate, selectedTickets, detailFields, request.RequestedBy);
             var renderedBytes = TemplateTokenRenderer.RenderBytes(template.FileContent, template.Metadata.Extension, renderContext);
             var renderedText = ReportTemplateContentTypeMapper.IsTextLike(template.Metadata.Extension)
                 ? Encoding.UTF8.GetString(renderedBytes)
                 : null;
 
-            return BuildResult(template.Metadata, renderedBytes, renderedText, renderContext.GlobalTokens, outputMode, company, asOfDate);
+            return BuildResult(template.Metadata, renderedBytes, renderedText, renderContext.GlobalTokens, outputMode, trimmedCompany, asOfDate);
         }
         catch (Exception ex)
         {
@@ -258,14 +265,6 @@ public sealed class TokenisedTemplateReportPlugin : IReportPlugin
             ContentType = metadata.ContentType,
             FileContent = renderedBytes
         };
-    }
-
-    private static string ParseTemplateId(string selectedOption)
-    {
-        var separatorIndex = selectedOption.IndexOf('|');
-        return separatorIndex >= 0
-            ? selectedOption[..separatorIndex].Trim()
-            : selectedOption.Trim();
     }
 
     private static List<string> ParseMulti(string? raw, IReadOnlyList<string> supported)

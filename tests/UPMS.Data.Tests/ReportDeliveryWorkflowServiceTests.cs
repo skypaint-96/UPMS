@@ -155,6 +155,49 @@ public sealed class ReportDeliveryWorkflowServiceTests
         Assert.That(await context.BackgroundJobs.CountAsync(job => job.JobType == BackgroundJobTypes.ReportDelivery), Is.EqualTo(2));
     }
 
+
+    [Test]
+    public async Task RetryAsync_rejects_delivery_records_that_failed_before_queueing_a_delivery_job()
+    {
+        await using var context = CreateContext();
+        var distributionLists = new DistributionListService(context);
+        var jobs = new BackgroundJobService(context);
+        var artifacts = new TestArtifactStorage();
+        var sender = new RecordingSender();
+        var workflow = new ReportDeliveryWorkflowService(context, jobs, artifacts, sender, NullLogger<ReportDeliveryWorkflowService>.Instance);
+
+        var list = await distributionLists.CreateAsync(
+            new SaveDistributionListCommand(
+                "Contoso",
+                "Leadership",
+                null,
+                true,
+                [new DistributionListRecipientInput("email", "leader@example.com", null, null, true, 0)]),
+            "tester");
+
+        await artifacts.SaveBytesAsync("reports", "status-report.txt", Encoding.UTF8.GetBytes("hello"), "text/plain");
+        var reportJob = await jobs.EnqueueAsync(BackgroundJobTypes.ReportExecution, "{}", "tester");
+        var deliveries = await workflow.QueueAsync(
+            reportJob,
+            [list.Id],
+            "Fabrikam",
+            "reports/status-report.txt",
+            "status-report.txt",
+            "text/plain",
+            "tester");
+
+        var failedDelivery = deliveries.Single();
+        Assert.That(failedDelivery.Status, Is.EqualTo(ReportDeliveryStatuses.Failed));
+        Assert.That(failedDelivery.LastBackgroundJobId, Is.Null);
+        Assert.That(failedDelivery.CompletedAt, Is.Not.Null);
+
+        var retry = async () => await workflow.RetryAsync(failedDelivery.Id, "retry-user");
+
+        Assert.That(retry, Throws.TypeOf<InvalidOperationException>()
+            .With.Message.Contains("failed validation before any delivery job was queued"));
+        Assert.That(await context.BackgroundJobs.CountAsync(job => job.JobType == BackgroundJobTypes.ReportDelivery), Is.EqualTo(0));
+    }
+
     private sealed class RecordingSender : IEmailReportDeliverySender
     {
         public List<EmailDeliveryMessage> Messages { get; } = new();
@@ -207,6 +250,11 @@ public sealed class ReportDeliveryWorkflowServiceTests
         {
             var file = _files[relativePath];
             return new MemoryStream(file.Content, writable: false);
+        }
+
+        public void Delete(string relativePath)
+        {
+            _files.Remove(relativePath);
         }
     }
 }

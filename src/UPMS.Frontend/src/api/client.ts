@@ -6,6 +6,9 @@ import {
   CompanyProfile,
   DistributionList,
   FieldChange,
+  FileSharePollingRunResponse,
+  FileSharePollingSettings,
+  FileSharePollingSource,
   ItsmSourceDefinition,
   ItsmSourceSummary,
   ReportDelivery,
@@ -23,6 +26,22 @@ const apiBaseUrl = import.meta.env.VITE_UPMS_API_BASE_URL ?? '/api/v1';
 const api = axios.create({
   baseURL: apiBaseUrl,
 });
+
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (axios.isAxiosError(error)) {
+      const payload = error.response?.data;
+      const message = typeof payload === 'string'
+        ? payload
+        : payload?.error ?? payload?.title ?? error.message;
+
+      return Promise.reject(new Error(message));
+    }
+
+    return Promise.reject(error);
+  },
+);
 
 function buildApiUrl(path: string) {
   return `${apiBaseUrl.replace(/\/$/, '')}${path.startsWith('/') ? path : `/${path}`}`;
@@ -54,6 +73,51 @@ export const upmsApi = {
   async deleteItsmMapping(sourceName: string, sourceFieldName: string) {
     await api.delete(`/itsm-sources/${encodeURIComponent(sourceName)}/mappings/${encodeURIComponent(sourceFieldName)}`);
   },
+  async getFileSharePollingSettings() {
+    const { data } = await api.get<FileSharePollingSettings>('/file-share-polling/settings');
+    return data;
+  },
+  async getFileSharePollingSources() {
+    const { data } = await api.get<FileSharePollingSource[]>('/file-share-polling-sources');
+    return data;
+  },
+  async createFileSharePollingSource(payload: {
+    name: string;
+    enabled: boolean;
+    watchedPath: string;
+    filePatterns: string[];
+    archivePath: string;
+    errorPath: string;
+    itsmSource: string;
+    pollIntervalSeconds?: number | null;
+    maxFilesPerCycle?: number | null;
+    stableFileAgeSeconds?: number | null;
+  }) {
+    const { data } = await api.post<FileSharePollingSource>('/file-share-polling-sources', payload);
+    return data;
+  },
+  async updateFileSharePollingSource(id: string, payload: {
+    name: string;
+    enabled: boolean;
+    watchedPath: string;
+    filePatterns: string[];
+    archivePath: string;
+    errorPath: string;
+    itsmSource: string;
+    pollIntervalSeconds?: number | null;
+    maxFilesPerCycle?: number | null;
+    stableFileAgeSeconds?: number | null;
+  }) {
+    const { data } = await api.put<FileSharePollingSource>(`/file-share-polling-sources/${encodeURIComponent(id)}`, payload);
+    return data;
+  },
+  async deleteFileSharePollingSource(id: string) {
+    await api.delete(`/file-share-polling-sources/${encodeURIComponent(id)}`);
+  },
+  async runFileSharePollingSource(id: string) {
+    const { data } = await api.post<FileSharePollingRunResponse>(`/file-share-polling-sources/${encodeURIComponent(id)}/run`);
+    return data;
+  },
   async getSnapshots(params?: { itsmSource?: string; company?: string }) {
     const { data } = await api.get<Snapshot[]>('/snapshots', { params });
     return data;
@@ -84,8 +148,8 @@ export const upmsApi = {
     const { data } = await api.get<ReportTemplateType[]>('/report-template-types');
     return data;
   },
-  async getReportTemplates() {
-    const { data } = await api.get<ReportTemplate[]>('/report-templates');
+  async getReportTemplates(params?: { itsmSource?: string; company?: string }) {
+    const { data } = await api.get<ReportTemplate[]>('/report-templates', { params });
     return data;
   },
   async getReportTemplate(id: string) {

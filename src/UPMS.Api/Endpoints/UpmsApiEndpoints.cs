@@ -6,6 +6,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.Options;
 using UPMS.Data;
 using UPMS.Data.Artifacts;
 using UPMS.Data.Jobs;
@@ -14,6 +15,7 @@ using UPMS.Ingestion;
 using UPMS.Reporting;
 using UPMS.Reporting.Delivery;
 using UPMS.Reporting.Plugins;
+using UPMS.Reporting.Plugins.Templates;
 using UPMS.Reporting.Templates;
 
 public static class UpmsApiEndpoints
@@ -146,6 +148,139 @@ public static class UpmsApiEndpoints
         .WithTags("ITSM Sources")
         .WithName("DeleteItsmSource");
 
+
+        app.MapGet("/file-share-polling/settings", (IOptions<FileSharePollingOptions> options) =>
+        {
+            var settings = options.Value;
+            return Results.Ok(new FileSharePollingSettingsResponse(
+                settings.Enabled,
+                settings.AllowUserManagedSources,
+                settings.DefaultPollIntervalSeconds,
+                settings.MinPollIntervalSeconds,
+                settings.MaxPollIntervalSeconds,
+                settings.DefaultStableFileAgeSeconds,
+                settings.MaxFilesPerCycleCap,
+                settings.AllowedWatchedRoots,
+                settings.AllowedArchiveRoots,
+                settings.AllowedErrorRoots));
+        })
+        .WithTags("File Share Polling")
+        .WithName("GetFileSharePollingSettings");
+
+        app.MapGet("/file-share-polling-sources", async (IFileSharePollingSourceService sources, CancellationToken ct) =>
+        {
+            var rows = await sources.GetAllAsync(ct);
+            return Results.Ok(rows.Select(MapFileSharePollingSource));
+        })
+        .WithTags("File Share Polling")
+        .WithName("GetFileSharePollingSources");
+
+        app.MapGet("/file-share-polling-sources/{id:guid}", async (Guid id, IFileSharePollingSourceService sources, CancellationToken ct) =>
+        {
+            var source = await sources.GetByIdAsync(id, ct);
+            return source is null ? Results.NotFound() : Results.Ok(MapFileSharePollingSource(source));
+        })
+        .WithTags("File Share Polling")
+        .WithName("GetFileSharePollingSourceById");
+
+        app.MapPost("/file-share-polling-sources", async (
+            UpsertFileSharePollingSourceRequest request,
+            IFileSharePollingSourceService sources,
+            ClaimsPrincipal user,
+            CancellationToken ct) =>
+        {
+            try
+            {
+                var created = await sources.CreateAsync(
+                    MapFileSharePollingSourceUpsert(request),
+                    ResolveRequestedBy(user),
+                    ct);
+
+                return Results.Created(
+                    $"/api/v1/file-share-polling-sources/{created.Id}",
+                    MapFileSharePollingSource(created));
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.BadRequest(new { error = ex.Message });
+            }
+        })
+        .WithTags("File Share Polling")
+        .WithName("CreateFileSharePollingSource");
+
+        app.MapPut("/file-share-polling-sources/{id:guid}", async (
+            Guid id,
+            UpsertFileSharePollingSourceRequest request,
+            IFileSharePollingSourceService sources,
+            ClaimsPrincipal user,
+            CancellationToken ct) =>
+        {
+            try
+            {
+                var updated = await sources.UpdateAsync(
+                    id,
+                    MapFileSharePollingSourceUpsert(request),
+                    ResolveRequestedBy(user),
+                    ct);
+
+                return Results.Ok(MapFileSharePollingSource(updated));
+            }
+            catch (KeyNotFoundException)
+            {
+                return Results.NotFound();
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.BadRequest(new { error = ex.Message });
+            }
+        })
+        .WithTags("File Share Polling")
+        .WithName("UpdateFileSharePollingSource");
+
+        app.MapDelete("/file-share-polling-sources/{id:guid}", async (Guid id, IFileSharePollingSourceService sources, CancellationToken ct) =>
+        {
+            try
+            {
+                await sources.DeleteAsync(id, ct);
+                return Results.NoContent();
+            }
+            catch (KeyNotFoundException)
+            {
+                return Results.NotFound();
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.BadRequest(new { error = ex.Message });
+            }
+        })
+        .WithTags("File Share Polling")
+        .WithName("DeleteFileSharePollingSource");
+
+        app.MapPost("/file-share-polling-sources/{id:guid}/run", async (
+            Guid id,
+            IFileSharePollingSourceService sources,
+            ClaimsPrincipal user,
+            CancellationToken ct) =>
+        {
+            try
+            {
+                var queued = await sources.QueuePollJobAsync(id, true, ResolveRequestedBy(user), ct);
+                return Results.Accepted(
+                    $"/api/v1/jobs/{queued.Job.Id}",
+                    new FileSharePollingRunResponse(MapJob(queued.Job), queued.AlreadyQueued));
+            }
+            catch (KeyNotFoundException)
+            {
+                return Results.NotFound();
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.BadRequest(new { error = ex.Message });
+            }
+        })
+        .WithTags("File Share Polling")
+        .WithName("RunFileSharePollingSourceNow");
+
         app.MapGet("/report-template-types", (ReportTemplateTypeRegistry typeRegistry) =>
         {
             var rows = typeRegistry.GetAll();
@@ -154,9 +289,16 @@ public static class UpmsApiEndpoints
         .WithTags("Report Templates")
         .WithName("GetReportTemplateTypes");
 
-        app.MapGet("/report-templates", (IReportTemplateStore templateStore, ReportTemplateTypeRegistry typeRegistry) =>
+        app.MapGet("/report-templates", (
+            string? itsmSource,
+            string? company,
+            IReportTemplateApplicabilityService templateApplicability,
+            ReportTemplateTypeRegistry typeRegistry) =>
         {
-            var rows = templateStore.GetAllTemplates();
+            var rows = string.IsNullOrWhiteSpace(itsmSource) && string.IsNullOrWhiteSpace(company)
+                ? templateApplicability.GetApplicableTemplates()
+                : templateApplicability.GetApplicableTemplates(itsmSource, company, allowPartialContext: false);
+
             return Results.Ok(rows
                 .OrderByDescending(template => template.UpdatedAt ?? template.UploadedAt)
                 .ThenBy(template => template.DisplayName, StringComparer.OrdinalIgnoreCase)
@@ -207,9 +349,20 @@ public static class UpmsApiEndpoints
             var description = form["description"].ToString();
             var subjectTemplate = form["subjectTemplate"].ToString();
             var textContent = form["textContent"].ToString();
+            var scopeRaw = form["scope"].ToString();
 
             if (string.IsNullOrWhiteSpace(displayName))
                 return Results.BadRequest(new { error = "displayName is required." });
+
+            ReportTemplateScope scope;
+            try
+            {
+                scope = ParseTemplateScope(scopeRaw);
+            }
+            catch (JsonException ex)
+            {
+                return Results.BadRequest(new { error = $"scope must be valid JSON: {ex.Message}" });
+            }
 
             var selectedType = string.IsNullOrWhiteSpace(templateTypeId)
                 ? null
@@ -260,6 +413,7 @@ public static class UpmsApiEndpoints
                         Kind = kind,
                         Description = string.IsNullOrWhiteSpace(description) ? null : description.Trim(),
                         SubjectTemplate = string.IsNullOrWhiteSpace(subjectTemplate) ? null : subjectTemplate.Trim(),
+                        Scope = scope,
                         OriginalFileName = originalFileName!,
                         UploadedBy = ResolveRequestedBy(user) ?? "anonymous"
                     }, contentStream, ct);
@@ -300,8 +454,21 @@ public static class UpmsApiEndpoints
             var kindRaw = form.ContainsKey("kind") ? form["kind"].ToString() : existingTemplate.Metadata.Kind.ToString();
             var description = form.ContainsKey("description") ? form["description"].ToString() : existingTemplate.Metadata.Description;
             var subjectTemplate = form.ContainsKey("subjectTemplate") ? form["subjectTemplate"].ToString() : existingTemplate.Metadata.SubjectTemplate;
+            var scopeRaw = form.ContainsKey("scope") ? form["scope"].ToString() : null;
             var hasInlineText = form.ContainsKey("textContent");
             var textContent = hasInlineText ? form["textContent"].ToString() : null;
+
+            ReportTemplateScope scope;
+            try
+            {
+                scope = scopeRaw is null
+                    ? existingTemplate.Metadata.Scope
+                    : ParseTemplateScope(scopeRaw);
+            }
+            catch (JsonException ex)
+            {
+                return Results.BadRequest(new { error = $"scope must be valid JSON: {ex.Message}" });
+            }
 
             var selectedType = string.IsNullOrWhiteSpace(templateTypeId)
                 ? ResolveTemplateDefinition(existingTemplate.Metadata, typeRegistry)
@@ -349,6 +516,7 @@ public static class UpmsApiEndpoints
                         Kind = kind,
                         Description = string.IsNullOrWhiteSpace(description) ? null : description.Trim(),
                         SubjectTemplate = string.IsNullOrWhiteSpace(subjectTemplate) ? null : subjectTemplate.Trim(),
+                        Scope = scope,
                         OriginalFileName = originalFileName,
                         UploadedBy = ResolveRequestedBy(user) ?? "anonymous",
                         IsStarterTemplate = existingTemplate.Metadata.IsStarterTemplate
@@ -440,10 +608,13 @@ public static class UpmsApiEndpoints
             if (!DateOnly.TryParse(snapshotDateRaw, out var snapshotDate))
                 return Results.BadRequest(new { error = "snapshotDate must be a valid date (yyyy-MM-dd)." });
 
+            if (!TryBuildSnapshotIngestMetadata(request, form, user, file, SnapshotUploadChannels.ManualSync, automated: false, out var metadata, out var metadataError))
+                return Results.BadRequest(new { error = metadataError });
+
             await using var stream = file.OpenReadStream();
             var result = IsJson(file)
-                ? await ingestService.IngestJsonAsync(stream, itsmSource.Trim(), snapshotDate, ct)
-                : await ingestService.IngestCsvAsync(stream, itsmSource.Trim(), snapshotDate, ct);
+                ? await ingestService.IngestJsonAsync(stream, itsmSource.Trim(), snapshotDate, metadata, ct)
+                : await ingestService.IngestCsvAsync(stream, itsmSource.Trim(), snapshotDate, metadata, ct);
 
             return result.Success
                 ? Results.Ok(MapIngestResult(result))
@@ -716,13 +887,16 @@ public static class UpmsApiEndpoints
             if (!DateOnly.TryParse(snapshotDateRaw, out var snapshotDate))
                 return Results.BadRequest(new { error = "snapshotDate must be a valid date (yyyy-MM-dd)." });
 
+            if (!TryBuildSnapshotIngestMetadata(request, form, user, file, SnapshotUploadChannels.ManualJob, automated: false, out var metadata, out var metadataError))
+                return Results.BadRequest(new { error = metadataError });
+
             var job = await QueueSnapshotIngestJobAsync(
                 artifacts,
                 jobs,
-                user,
                 file,
                 itsmSource.Trim(),
                 snapshotDate,
+                metadata,
                 ct);
 
             return Results.Accepted($"/api/v1/jobs/{job.Id}", MapJob(job));
@@ -730,6 +904,57 @@ public static class UpmsApiEndpoints
         .DisableAntiforgery()
         .WithTags("Jobs")
         .WithName("QueueSnapshotIngest");
+
+        app.MapPost("/jobs/snapshot-ingest/automated", async (
+            HttpRequest request,
+            IArtifactStorage artifacts,
+            IBackgroundJobService jobs,
+            ISnapshotDuplicateDetector duplicateDetector,
+            ClaimsPrincipal user,
+            CancellationToken ct) =>
+        {
+            var form = await request.ReadFormAsync(ct);
+            var file = form.Files.GetFile("file");
+            var itsmSource = form["itsmSource"].ToString();
+            var snapshotDateRaw = form["snapshotDate"].ToString();
+
+            if (file is null || file.Length == 0)
+                return Results.BadRequest(new { error = "A snapshot file is required." });
+
+            if (string.IsNullOrWhiteSpace(itsmSource))
+                return Results.BadRequest(new { error = "itsmSource is required." });
+
+            if (!DateOnly.TryParse(snapshotDateRaw, out var snapshotDate))
+                return Results.BadRequest(new { error = "snapshotDate must be a valid date (yyyy-MM-dd)." });
+
+            if (!TryBuildSnapshotIngestMetadata(request, form, user, file, SnapshotUploadChannels.AutomatedApi, automated: true, out var metadata, out var metadataError))
+                return Results.BadRequest(new { error = metadataError });
+
+            var outcome = await SubmitAutomatedSnapshotIngestAsync(
+                artifacts,
+                jobs,
+                duplicateDetector,
+                file,
+                itsmSource.Trim(),
+                snapshotDate,
+                metadata,
+                ct);
+
+            var response = new AutomatedSnapshotIngestResponse(
+                outcome.Queued,
+                outcome.DuplicateDetected,
+                outcome.ExistingSnapshotId,
+                outcome.DuplicateReason,
+                outcome.ContentSha256,
+                outcome.Job is null ? null : MapJob(outcome.Job));
+
+            return outcome.Queued
+                ? Results.Accepted($"/api/v1/jobs/{outcome.Job!.Id}", response)
+                : Results.Ok(response);
+        })
+        .DisableAntiforgery()
+        .WithTags("Jobs")
+        .WithName("QueueAutomatedSnapshotIngest");
 
         app.MapPost("/jobs/snapshot-ingest/bulk", async (
             HttpRequest request,
@@ -760,13 +985,16 @@ public static class UpmsApiEndpoints
                 if (file.Length == 0)
                     return Results.BadRequest(new { error = $"File {index + 1} is empty." });
 
+                if (!TryBuildSnapshotIngestMetadata(request, form, user, file, SnapshotUploadChannels.ManualBulkJob, automated: false, out var metadata, out var metadataError))
+                    return Results.BadRequest(new { error = metadataError });
+
                 var job = await QueueSnapshotIngestJobAsync(
                     artifacts,
                     jobs,
-                    user,
                     file,
                     trimmedSource,
                     snapshotDates[index],
+                    metadata,
                     ct);
 
                 queuedJobs.Add(job);
@@ -782,10 +1010,27 @@ public static class UpmsApiEndpoints
         .WithTags("Jobs")
         .WithName("QueueBulkSnapshotIngest");
 
-        app.MapPost("/jobs/report-execution", async (ExecuteReportRequest request, IBackgroundJobService jobs, ClaimsPrincipal user, CancellationToken ct) =>
+        app.MapPost("/jobs/report-execution", async (
+            ExecuteReportRequest request,
+            IBackgroundJobService jobs,
+            IReportTemplateApplicabilityService templateApplicability,
+            ClaimsPrincipal user,
+            CancellationToken ct) =>
         {
             if (string.IsNullOrWhiteSpace(request.PluginId))
                 return Results.BadRequest(new { error = "pluginId is required." });
+
+            if (string.Equals(request.PluginId.Trim(), TokenisedTemplateReportPlugin.PluginIdValue, StringComparison.OrdinalIgnoreCase))
+            {
+                var parameters = request.Parameters ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                parameters.TryGetValue("template_id", out var templateId);
+                parameters.TryGetValue("itsm_source", out var itsmSource);
+                parameters.TryGetValue("company", out var company);
+
+                var validation = templateApplicability.ValidateSelection(templateId, itsmSource, company);
+                if (!validation.IsValid)
+                    return Results.BadRequest(new { error = validation.ErrorMessage });
+            }
 
             var payload = new ReportExecutionJobPayload(
                 request.PluginId.Trim(),
@@ -889,26 +1134,187 @@ public static class UpmsApiEndpoints
     private static async Task<BackgroundJob> QueueSnapshotIngestJobAsync(
         IArtifactStorage artifacts,
         IBackgroundJobService jobs,
-        ClaimsPrincipal user,
         IFormFile file,
         string itsmSource,
         DateOnly snapshotDate,
+        SnapshotIngestMetadata metadata,
+        CancellationToken ct)
+    {
+        var prepared = await PrepareSnapshotIngestPayloadAsync(
+            artifacts,
+            file,
+            itsmSource,
+            snapshotDate,
+            metadata,
+            ct);
+
+        try
+        {
+            return await jobs.EnqueueAsync(
+                BackgroundJobTypes.SnapshotIngest,
+                JsonSerializer.Serialize(prepared.Payload, JsonOptions),
+                prepared.Metadata.RequestedBy,
+                ct);
+        }
+        catch
+        {
+            artifacts.Delete(prepared.StoredArtifact.RelativePath);
+            throw;
+        }
+    }
+
+    private static async Task<SnapshotIngestQueueOutcome> SubmitAutomatedSnapshotIngestAsync(
+        IArtifactStorage artifacts,
+        IBackgroundJobService jobs,
+        ISnapshotDuplicateDetector duplicateDetector,
+        IFormFile file,
+        string itsmSource,
+        DateOnly snapshotDate,
+        SnapshotIngestMetadata metadata,
+        CancellationToken ct)
+    {
+        var prepared = await PrepareSnapshotIngestPayloadAsync(
+            artifacts,
+            file,
+            itsmSource,
+            snapshotDate,
+            metadata,
+            ct);
+
+        var duplicateJob = await jobs.FindMatchingSnapshotIngestAsync(itsmSource, snapshotDate, prepared.Metadata, ct);
+        if (duplicateJob is not null)
+        {
+            artifacts.Delete(prepared.StoredArtifact.RelativePath);
+            return new SnapshotIngestQueueOutcome(
+                Queued: false,
+                DuplicateDetected: true,
+                Job: duplicateJob,
+                ExistingSnapshotId: null,
+                DuplicateReason: "Matching automated snapshot upload already queued or processed.",
+                ContentSha256: prepared.StoredArtifact.Sha256);
+        }
+
+        var duplicateSnapshot = await duplicateDetector.FindExistingSnapshotAsync(itsmSource, snapshotDate, prepared.Metadata, ct);
+        if (duplicateSnapshot is not null)
+        {
+            artifacts.Delete(prepared.StoredArtifact.RelativePath);
+            return new SnapshotIngestQueueOutcome(
+                Queued: false,
+                DuplicateDetected: true,
+                Job: null,
+                ExistingSnapshotId: duplicateSnapshot.SnapshotId,
+                DuplicateReason: duplicateSnapshot.Reason,
+                ContentSha256: prepared.StoredArtifact.Sha256);
+        }
+
+        try
+        {
+            var job = await jobs.EnqueueAsync(
+                BackgroundJobTypes.SnapshotIngest,
+                JsonSerializer.Serialize(prepared.Payload, JsonOptions),
+                prepared.Metadata.RequestedBy,
+                ct);
+
+            return new SnapshotIngestQueueOutcome(
+                Queued: true,
+                DuplicateDetected: false,
+                Job: job,
+                ExistingSnapshotId: null,
+                DuplicateReason: null,
+                ContentSha256: prepared.StoredArtifact.Sha256);
+        }
+        catch
+        {
+            artifacts.Delete(prepared.StoredArtifact.RelativePath);
+            throw;
+        }
+    }
+
+    private static async Task<PreparedSnapshotIngestPayload> PrepareSnapshotIngestPayloadAsync(
+        IArtifactStorage artifacts,
+        IFormFile file,
+        string itsmSource,
+        DateOnly snapshotDate,
+        SnapshotIngestMetadata metadata,
         CancellationToken ct)
     {
         await using var uploadStream = file.OpenReadStream();
         var stored = await artifacts.SaveAsync("uploads", file.FileName, uploadStream, file.ContentType, ct);
+        var normalizedMetadata = SnapshotIngestMetadataHelper.Normalize(
+            metadata,
+            file.FileName,
+            file.ContentType,
+            metadata.UploadChannel,
+            metadata.IsAutomated,
+            stored.RelativePath,
+            stored.Sha256,
+            metadata.RequestedBy);
+
         var payload = new SnapshotIngestJobPayload(
             itsmSource,
             snapshotDate,
             stored.RelativePath,
             file.FileName,
-            file.ContentType ?? "application/octet-stream");
+            file.ContentType ?? "application/octet-stream",
+            normalizedMetadata);
 
-        return await jobs.EnqueueAsync(
-            BackgroundJobTypes.SnapshotIngest,
-            JsonSerializer.Serialize(payload, JsonOptions),
-            ResolveRequestedBy(user),
-            ct);
+        return new PreparedSnapshotIngestPayload(stored, normalizedMetadata, payload);
+    }
+
+    private static bool TryBuildSnapshotIngestMetadata(
+        HttpRequest request,
+        IFormCollection form,
+        ClaimsPrincipal user,
+        IFormFile file,
+        string defaultUploadChannel,
+        bool automated,
+        out SnapshotIngestMetadata metadata,
+        out string? error)
+    {
+        metadata = default!;
+        error = null;
+
+        var timestampRaw = FirstNonEmpty(form["timestamp"].ToString(), form["sourceTimestampUtc"].ToString(), form["submittedAtUtc"].ToString());
+        DateTime? sourceTimestampUtc = null;
+        if (!string.IsNullOrWhiteSpace(timestampRaw))
+        {
+            if (!DateTimeOffset.TryParse(timestampRaw, out var parsedTimestamp))
+            {
+                error = "timestamp must be a valid ISO-8601 date/time.";
+                return false;
+            }
+
+            sourceTimestampUtc = parsedTimestamp.UtcDateTime;
+        }
+
+        var requestedBy = ResolveRequestedBy(user);
+        metadata = SnapshotIngestMetadataHelper.Normalize(
+            new SnapshotIngestMetadata
+            {
+                UploadChannel = FirstNonEmpty(form["uploadChannel"].ToString(), defaultUploadChannel) ?? defaultUploadChannel,
+                SourceSystem = FirstNonEmpty(form["sourceSystem"].ToString()),
+                Producer = FirstNonEmpty(form["producer"].ToString()),
+                OriginalFileName = file.FileName,
+                CorrelationId = FirstNonEmpty(form["correlationId"].ToString(), form["referenceId"].ToString(), request.Headers["X-Correlation-Id"].ToString()),
+                SubmittedAtUtc = DateTime.UtcNow,
+                SourceTimestampUtc = sourceTimestampUtc,
+                ContentType = file.ContentType,
+                ContentSha256 = null,
+                SourceFileIdentity = FirstNonEmpty(form["sourceFileIdentity"].ToString(), form["sourceFileId"].ToString()),
+                IdempotencyKey = FirstNonEmpty(form["idempotencyKey"].ToString(), request.Headers["Idempotency-Key"].ToString()),
+                ArtifactPath = null,
+                RequestedBy = requestedBy,
+                IsAutomated = automated
+            },
+            file.FileName,
+            file.ContentType,
+            defaultUploadChannel,
+            automated,
+            artifactPath: null,
+            contentSha256: null,
+            requestedBy: requestedBy);
+
+        return true;
     }
 
     private static bool TryResolveSnapshotDates(
@@ -976,6 +1382,30 @@ public static class UpmsApiEndpoints
 
         return "anonymous";
     }
+
+    private static string? FirstNonEmpty(params string?[] values)
+    {
+        foreach (var value in values)
+        {
+            if (!string.IsNullOrWhiteSpace(value))
+                return value.Trim();
+        }
+
+        return null;
+    }
+
+    private sealed record PreparedSnapshotIngestPayload(
+        StoredArtifact StoredArtifact,
+        SnapshotIngestMetadata Metadata,
+        SnapshotIngestJobPayload Payload);
+
+    private sealed record SnapshotIngestQueueOutcome(
+        bool Queued,
+        bool DuplicateDetected,
+        BackgroundJob? Job,
+        Guid? ExistingSnapshotId,
+        string? DuplicateReason,
+        string? ContentSha256);
 
 
     private static SaveDistributionListCommand ToSaveDistributionListCommand(SaveDistributionListRequest request)
@@ -1093,6 +1523,49 @@ public static class UpmsApiEndpoints
         return false;
     }
 
+    private static FileSharePollingSourceResponse MapFileSharePollingSource(FileSharePollingSource source)
+    {
+        return new FileSharePollingSourceResponse(
+            source.Id,
+            source.Name,
+            source.Enabled,
+            source.WatchedPath,
+            source.GetFilePatterns().ToArray(),
+            source.ArchivePath,
+            source.ErrorPath,
+            source.ItsmSource,
+            source.PollIntervalSeconds,
+            source.MaxFilesPerCycle,
+            source.StableFileAgeSeconds,
+            source.LastRunStartedAt,
+            source.LastRunCompletedAt,
+            source.LastSucceededAt,
+            source.NextPollDueAt,
+            source.LastError,
+            source.CurrentJobId,
+            source.LastJobId,
+            source.IsSystemManaged,
+            source.CreatedBy,
+            source.CreatedAt,
+            source.UpdatedBy,
+            source.UpdatedAt);
+    }
+
+    private static FileSharePollingSourceUpsert MapFileSharePollingSourceUpsert(UpsertFileSharePollingSourceRequest request)
+    {
+        return new FileSharePollingSourceUpsert(
+            request.Name,
+            request.Enabled,
+            request.WatchedPath,
+            request.FilePatterns,
+            request.ArchivePath,
+            request.ErrorPath,
+            request.ItsmSource,
+            request.PollIntervalSeconds,
+            request.MaxFilesPerCycle,
+            request.StableFileAgeSeconds);
+    }
+
     private static TicketResponse MapTicket(Ticket ticket)
     {
         return new TicketResponse(
@@ -1112,6 +1585,9 @@ public static class UpmsApiEndpoints
             result.SnapshotId,
             result.TicketsIngested,
             result.FieldChangesRecorded,
+            result.DuplicateDetected,
+            result.DuplicateOfSnapshotId,
+            result.DuplicateReason,
             result.ErrorMessage,
             result.Warnings.ToArray());
     }
@@ -1146,7 +1622,8 @@ public static class UpmsApiEndpoints
             typeDefinition?.TypeId ?? template.TemplateTypeId,
             typeDefinition?.DisplayName,
             typeDefinition?.SupportsInlineEdit ?? ReportTemplateContentTypeMapper.IsTextLike(template.Extension),
-            template.IsStarterTemplate);
+            template.IsStarterTemplate,
+            MapTemplateScope(template.Scope));
     }
 
     private static ReportTemplateDetailResponse MapTemplateDetail(StoredReportTemplate template, ReportTemplateTypeRegistry typeRegistry)
@@ -1176,8 +1653,30 @@ public static class UpmsApiEndpoints
             typeDefinition?.DisplayName,
             supportsInlineEdit,
             template.Metadata.IsStarterTemplate,
+            MapTemplateScope(template.Metadata.Scope),
             typeDefinition?.AuthoringGuidance,
             editableTextContent);
+    }
+
+    private static ReportTemplateScopeResponse MapTemplateScope(ReportTemplateScope? scope)
+    {
+        var normalized = ReportTemplateScopeEvaluator.Normalize(scope);
+        return new ReportTemplateScopeResponse(
+            normalized.IsGlobal,
+            normalized.ItsmSources,
+            normalized.Companies,
+            normalized.ItsmSourceCompanies
+                .Select(pair => new ReportTemplateScopeCombinationResponse(pair.ItsmSource, pair.Company))
+                .ToArray());
+    }
+
+    private static ReportTemplateScope ParseTemplateScope(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+            return ReportTemplateScopeEvaluator.Normalize(null);
+
+        var parsed = JsonSerializer.Deserialize<ReportTemplateScope>(raw, JsonOptions);
+        return ReportTemplateScopeEvaluator.Normalize(parsed);
     }
 
     private static ReportTemplateTypeResponse MapTemplateType(ReportTemplateTypeDefinition typeDefinition)
@@ -1233,6 +1732,57 @@ public sealed record CreateItsmSourceRequest(string Name, string DisplayLabel);
 
 public sealed record UpsertItsmFieldMappingRequest(string CanonicalFieldName, bool IsRequired);
 
+public sealed record FileSharePollingSettingsResponse(
+    bool Enabled,
+    bool AllowUserManagedSources,
+    int DefaultPollIntervalSeconds,
+    int MinPollIntervalSeconds,
+    int MaxPollIntervalSeconds,
+    int DefaultStableFileAgeSeconds,
+    int MaxFilesPerCycleCap,
+    IReadOnlyList<string> AllowedWatchedRoots,
+    IReadOnlyList<string> AllowedArchiveRoots,
+    IReadOnlyList<string> AllowedErrorRoots);
+
+public sealed record FileSharePollingSourceResponse(
+    Guid Id,
+    string Name,
+    bool Enabled,
+    string WatchedPath,
+    IReadOnlyList<string> FilePatterns,
+    string ArchivePath,
+    string ErrorPath,
+    string ItsmSource,
+    int PollIntervalSeconds,
+    int? MaxFilesPerCycle,
+    int StableFileAgeSeconds,
+    DateTime? LastRunStartedAt,
+    DateTime? LastRunCompletedAt,
+    DateTime? LastSucceededAt,
+    DateTime? NextPollDueAt,
+    string? LastError,
+    Guid? CurrentJobId,
+    Guid? LastJobId,
+    bool IsSystemManaged,
+    string CreatedBy,
+    DateTime CreatedAt,
+    string? UpdatedBy,
+    DateTime? UpdatedAt);
+
+public sealed record UpsertFileSharePollingSourceRequest(
+    string Name,
+    bool Enabled,
+    string WatchedPath,
+    IReadOnlyList<string>? FilePatterns,
+    string ArchivePath,
+    string ErrorPath,
+    string ItsmSource,
+    int? PollIntervalSeconds,
+    int? MaxFilesPerCycle,
+    int? StableFileAgeSeconds);
+
+public sealed record FileSharePollingRunResponse(BackgroundJobResponse Job, bool AlreadyQueued);
+
 public sealed record SnapshotResponse(Guid Id, string ItsmSource, DateTime SnapshotDate, string UploadedBy, DateTime UploadedAt, string? UploadMetadata);
 
 public sealed record TicketResponse(
@@ -1262,8 +1812,19 @@ public sealed record IngestResultResponse(
     Guid SnapshotId,
     int TicketsIngested,
     int FieldChangesRecorded,
+    bool DuplicateDetected,
+    Guid? DuplicateOfSnapshotId,
+    string? DuplicateReason,
     string? ErrorMessage,
     IReadOnlyList<string> Warnings);
+
+public sealed record AutomatedSnapshotIngestResponse(
+    bool Queued,
+    bool DuplicateDetected,
+    Guid? ExistingSnapshotId,
+    string? DuplicateReason,
+    string? ContentSha256,
+    BackgroundJobResponse? Job);
 
 public sealed record CompanyProfileResponse(Guid Id, string CompanyKey, string DisplayName, int DistributionListCount);
 
@@ -1378,6 +1939,16 @@ public sealed record ReportTemplateTypeResponse(
     string? StarterTemplateDescription,
     string? DefaultSubjectTemplate);
 
+public sealed record ReportTemplateScopeCombinationResponse(
+    string ItsmSource,
+    string Company);
+
+public sealed record ReportTemplateScopeResponse(
+    bool IsGlobal,
+    IReadOnlyList<string> ItsmSources,
+    IReadOnlyList<string> Companies,
+    IReadOnlyList<ReportTemplateScopeCombinationResponse> ItsmSourceCompanies);
+
 public sealed record ReportTemplateResponse(
     string Id,
     string DisplayName,
@@ -1394,7 +1965,8 @@ public sealed record ReportTemplateResponse(
     string? TemplateTypeId,
     string? TypeDisplayName,
     bool SupportsInlineEdit,
-    bool IsStarterTemplate);
+    bool IsStarterTemplate,
+    ReportTemplateScopeResponse Scope);
 
 public sealed record ReportTemplateDetailResponse(
     string Id,
@@ -1413,6 +1985,7 @@ public sealed record ReportTemplateDetailResponse(
     string? TypeDisplayName,
     bool SupportsInlineEdit,
     bool IsStarterTemplate,
+    ReportTemplateScopeResponse Scope,
     string? AuthoringGuidance,
     string? EditableTextContent);
 

@@ -5,4 +5,5 @@ public sealed record StoredArtifact(
     string AbsolutePath,
     string FileName,
     string? ContentType,
-    long ContentLength);
+    long ContentLength,
+    string? Sha256 = null);

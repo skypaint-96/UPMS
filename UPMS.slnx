@@ -9,4 +9,5 @@
   <Project Path="src/UPMS.Worker/UPMS.Worker.csproj" Id="f7d8dfe5-5fd7-48a8-8d6f-1c89fc78ec62" />
   <Project Path="tests/UPMS.Data.Tests/UPMS.Data.Tests.csproj" Id="f646b49d-dff0-431b-b606-52ccbb182723" />
   <Project Path="tests/UPMS.Api.Tests/UPMS.Api.Tests.csproj" Id="28e2b278-d58f-4c1d-b2da-f3ca4cd339bf" />
+  <Project Path="tests/UPMS.Worker.Tests/UPMS.Worker.Tests.csproj" Id="8d65df7d-5d7b-4e62-bc56-0a89ac4c6c51" />
 </Solution>

@@ -6,8 +6,8 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Microsoft.VisualBasic.FileIO;
 using UPMS.Data;
-using UPMS.Ingestion;
 
 /// <summary>
 /// Parses uploaded flat-table CSV and JSON snapshot files and persists extracted ticket and
@@ -22,18 +22,21 @@ public class SnapshotIngestService : ISnapshotIngestService
     private readonly UpmsDbContext _dbContext;
     private readonly ILogger<SnapshotIngestService> _logger;
     private readonly IHttpContextAccessor? _httpContextAccessor;
+    private readonly ISnapshotDuplicateDetector _duplicateDetector;
 
     public SnapshotIngestService(
         ICommandRepository commandRepository,
         IItsmSourceService sourceService,
         UpmsDbContext dbContext,
         ILogger<SnapshotIngestService> logger,
+        ISnapshotDuplicateDetector duplicateDetector,
         IHttpContextAccessor? httpContextAccessor = null)
     {
         _commandRepository = commandRepository ?? throw new ArgumentNullException(nameof(commandRepository));
         _sourceService = sourceService ?? throw new ArgumentNullException(nameof(sourceService));
         _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _duplicateDetector = duplicateDetector ?? throw new ArgumentNullException(nameof(duplicateDetector));
         _httpContextAccessor = httpContextAccessor;
     }
 
@@ -42,39 +45,88 @@ public class SnapshotIngestService : ISnapshotIngestService
         Stream csvStream,
         string itsmSourceName,
         DateOnly snapshotDate,
+        SnapshotIngestMetadata? metadata = null,
         CancellationToken ct = default)
     {
+        ArgumentNullException.ThrowIfNull(csvStream);
         ArgumentException.ThrowIfNullOrWhiteSpace(itsmSourceName);
+
+        var normalizedMetadata = SnapshotIngestMetadataHelper.Normalize(
+            metadata,
+            metadata?.OriginalFileName ?? "snapshot.csv",
+            metadata?.ContentType ?? "text/csv",
+            metadata?.UploadChannel ?? SnapshotUploadChannels.ManualSync,
+            metadata?.IsAutomated ?? false,
+            metadata?.ArtifactPath,
+            metadata?.ContentSha256,
+            ResolveRequestedByFromContext());
 
         try
         {
-            using var reader = new StreamReader(csvStream, Encoding.UTF8, leaveOpen: true);
-            var warnings = new List<string>();
+            var sourceDefinition = await _sourceService.GetSourceDefinitionAsync(itsmSourceName);
+            IReadOnlyList<string> requiredFields = await _sourceService.GetRequiredFieldsAsync(itsmSourceName);
+            var mappingLookup = sourceDefinition.Mappings
+                .GroupBy(m => m.SourceFieldName, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.First().CanonicalFieldName, StringComparer.OrdinalIgnoreCase);
 
-            string? headerLine = await reader.ReadLineAsync(ct);
-            if (string.IsNullOrWhiteSpace(headerLine))
+            using var reader = new StreamReader(
+                csvStream,
+                Encoding.UTF8,
+                detectEncodingFromByteOrderMarks: true,
+                bufferSize: 1024,
+                leaveOpen: true);
+            using var parser = new TextFieldParser(reader)
             {
+                TextFieldType = FieldType.Delimited,
+                HasFieldsEnclosedInQuotes = true,
+                TrimWhiteSpace = false
+            };
+            parser.SetDelimiters(",");
+
+            if (parser.EndOfData)
                 return IngestResult.Failure("CSV file is empty or has no header row.");
+
+            string[] headerFields;
+            try
+            {
+                headerFields = parser.ReadFields() ?? Array.Empty<string>();
+            }
+            catch (MalformedLineException ex)
+            {
+                return IngestResult.Failure($"Invalid CSV header row: {ex.Message}");
             }
 
-            string[] headers = headerLine.Split(',').Select(h => h.Trim()).ToArray();
+            string[] headers = headerFields
+                .Select(field => field?.Trim() ?? string.Empty)
+                .ToArray();
 
-            IReadOnlyList<string> requiredFields = await _sourceService.GetRequiredFieldsAsync(itsmSourceName);
+            if (headers.Length == 0 || headers.All(string.IsNullOrWhiteSpace))
+                return IngestResult.Failure("CSV file is empty or has no header row.");
+
+            var duplicateHeaders = headers
+                .Where(header => !string.IsNullOrWhiteSpace(header))
+                .GroupBy(header => header, StringComparer.OrdinalIgnoreCase)
+                .Where(group => group.Count() > 1)
+                .Select(group => group.Key)
+                .OrderBy(value => value, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            if (duplicateHeaders.Length > 0)
+            {
+                return IngestResult.Failure($"Duplicate CSV header names are not allowed: {string.Join(", ", duplicateHeaders)}");
+            }
+
             var missingRequired = requiredFields
-                .Where(req => !headers.Contains(req, StringComparer.Ordinal))
+                .Where(required => !headers.Contains(required, StringComparer.OrdinalIgnoreCase))
+                .OrderBy(value => value, StringComparer.OrdinalIgnoreCase)
                 .ToList();
-
             if (missingRequired.Count > 0)
             {
-                return IngestResult.Failure(
-                    $"Missing required fields: {string.Join(", ", missingRequired)}");
+                return IngestResult.Failure($"Missing required fields: {string.Join(", ", missingRequired)}");
             }
 
-            string?[] canonicalHeaders = new string?[headers.Length];
-            for (int i = 0; i < headers.Length; i++)
-            {
-                canonicalHeaders[i] = await _sourceService.GetCanonicalNameAsync(itsmSourceName, headers[i]);
-            }
+            string?[] canonicalHeaders = headers
+                .Select(header => mappingLookup.TryGetValue(header, out var canonical) ? canonical : null)
+                .ToArray();
 
             int ticketNumberColIndex = FindCanonicalIndex(canonicalHeaders, CanonicalAliasesForTicketNumber);
             int companyColIndex = FindCanonicalIndex(canonicalHeaders, CanonicalAliasesForCompany);
@@ -93,40 +145,50 @@ public class SnapshotIngestService : ISnapshotIngestService
                     "Add a field mapping for Company before uploading.");
             }
 
+            var warnings = new List<string>();
             var parsedRows = new List<(string TicketKey, string CompanyName, string[] Columns)>();
-            int lineNumber = 1;
+            var recordNumber = 0;
 
-            string? line;
-            while ((line = await reader.ReadLineAsync(ct)) is not null)
+            while (!parser.EndOfData)
             {
-                lineNumber++;
+                ct.ThrowIfCancellationRequested();
+                recordNumber++;
 
-                if (string.IsNullOrWhiteSpace(line))
+                string[] cols;
+                try
                 {
-                    warnings.Add($"Line {lineNumber}: blank row skipped.");
+                    cols = parser.ReadFields() ?? Array.Empty<string>();
+                }
+                catch (MalformedLineException ex)
+                {
+                    return IngestResult.Failure($"Invalid CSV data near line {ResolveCsvErrorLineNumber(parser, recordNumber + 1)}: {ex.Message}", warnings.AsReadOnly());
+                }
+
+                if (IsBlankRecord(cols))
+                {
+                    warnings.Add($"Record {recordNumber}: blank row skipped.");
                     continue;
                 }
 
-                string[] cols = line.Split(',').Select(c => c.Trim()).ToArray();
-
-                if (cols.Length <= Math.Max(ticketNumberColIndex, companyColIndex))
+                var normalizedColumns = cols.Select(column => column?.Trim() ?? string.Empty).ToArray();
+                if (normalizedColumns.Length <= Math.Max(ticketNumberColIndex, companyColIndex))
                 {
-                    warnings.Add($"Line {lineNumber}: insufficient columns, row skipped.");
+                    warnings.Add($"Record {recordNumber}: insufficient columns, row skipped.");
                     continue;
                 }
 
-                string ticketNumber = cols[ticketNumberColIndex];
-                string companyName = cols[companyColIndex];
+                string? ticketNumber = NormalizeValue(normalizedColumns[ticketNumberColIndex]);
+                string? companyName = NormalizeValue(normalizedColumns[companyColIndex]);
 
                 if (string.IsNullOrWhiteSpace(ticketNumber))
                 {
-                    warnings.Add($"Line {lineNumber}: empty ticket number, row skipped.");
+                    warnings.Add($"Record {recordNumber}: empty ticket number, row skipped.");
                     continue;
                 }
 
                 if (string.IsNullOrWhiteSpace(companyName))
                 {
-                    warnings.Add($"Line {lineNumber}: empty company value, row skipped.");
+                    warnings.Add($"Record {recordNumber}: empty company value, row skipped.");
                     continue;
                 }
 
@@ -137,11 +199,11 @@ public class SnapshotIngestService : ISnapshotIngestService
                 }
                 catch (ArgumentException ex)
                 {
-                    warnings.Add($"Line {lineNumber}: {ex.Message}, row skipped.");
+                    warnings.Add($"Record {recordNumber}: {ex.Message}, row skipped.");
                     continue;
                 }
 
-                parsedRows.Add((ticketKey, companyName, cols));
+                parsedRows.Add((ticketKey, companyName, normalizedColumns));
             }
 
             return await PersistFlatTableRowsAsync(
@@ -150,8 +212,14 @@ public class SnapshotIngestService : ISnapshotIngestService
                 canonicalHeaders,
                 itsmSourceName,
                 snapshotDate,
+                normalizedMetadata,
                 warnings,
                 ct);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            _logger.LogWarning(ex, "Snapshot ingest rejected because ITSM source {Source} was not found.", itsmSourceName);
+            return IngestResult.Failure(ex.Message);
         }
         catch (Exception ex)
         {
@@ -165,33 +233,44 @@ public class SnapshotIngestService : ISnapshotIngestService
         Stream jsonStream,
         string itsmSourceName,
         DateOnly snapshotDate,
+        SnapshotIngestMetadata? metadata = null,
         CancellationToken ct = default)
     {
+        ArgumentNullException.ThrowIfNull(jsonStream);
         ArgumentException.ThrowIfNullOrWhiteSpace(itsmSourceName);
+
+        var normalizedMetadata = SnapshotIngestMetadataHelper.Normalize(
+            metadata,
+            metadata?.OriginalFileName ?? "snapshot.json",
+            metadata?.ContentType ?? "application/json",
+            metadata?.UploadChannel ?? SnapshotUploadChannels.ManualSync,
+            metadata?.IsAutomated ?? false,
+            metadata?.ArtifactPath,
+            metadata?.ContentSha256,
+            ResolveRequestedByFromContext());
 
         try
         {
             var warnings = new List<string>();
             var parsedRows = new List<(string TicketKey, string CompanyName, Dictionary<string, string?> Fields)>();
 
-            using JsonDocument document = await JsonDocument.ParseAsync(jsonStream, cancellationToken: ct);
+            var sourceDefinition = await _sourceService.GetSourceDefinitionAsync(itsmSourceName);
+            IReadOnlyList<string> requiredFields = await _sourceService.GetRequiredFieldsAsync(itsmSourceName);
+            var canonicalLookup = sourceDefinition.Mappings
+                .GroupBy(m => m.SourceFieldName, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.First().CanonicalFieldName, StringComparer.OrdinalIgnoreCase);
+
+            using JsonDocument document = await JsonDocument.ParseAsync(jsonStream, new JsonDocumentOptions(), ct);
 
             if (document.RootElement.ValueKind != JsonValueKind.Array)
             {
                 return IngestResult.Failure("JSON root element must be an array.");
             }
 
-            IReadOnlyList<string> requiredFields = await _sourceService.GetRequiredFieldsAsync(itsmSourceName);
-
-            var mappings = await _sourceService.GetSourceDefinitionAsync(itsmSourceName);
-            var canonicalLookup = mappings.Mappings.ToDictionary(
-                m => m.SourceFieldName,
-                m => m.CanonicalFieldName,
-                StringComparer.OrdinalIgnoreCase);
-
             int elementIndex = 0;
             foreach (JsonElement element in document.RootElement.EnumerateArray())
             {
+                ct.ThrowIfCancellationRequested();
                 elementIndex++;
 
                 if (element.ValueKind != JsonValueKind.Object)
@@ -200,7 +279,7 @@ public class SnapshotIngestService : ISnapshotIngestService
                     continue;
                 }
 
-                var fields = new Dictionary<string, string?>(StringComparer.Ordinal);
+                var fields = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
                 foreach (JsonProperty prop in element.EnumerateObject())
                 {
                     fields[prop.Name] = prop.Value.ValueKind == JsonValueKind.Null
@@ -209,9 +288,9 @@ public class SnapshotIngestService : ISnapshotIngestService
                 }
 
                 var missingRequired = requiredFields
-                    .Where(req => !fields.ContainsKey(req))
+                    .Where(required => !fields.ContainsKey(required))
+                    .OrderBy(value => value, StringComparer.OrdinalIgnoreCase)
                     .ToList();
-
                 if (missingRequired.Count > 0)
                 {
                     warnings.Add($"Element {elementIndex}: missing required fields: {string.Join(", ", missingRequired)}, skipped.");
@@ -222,10 +301,10 @@ public class SnapshotIngestService : ISnapshotIngestService
                 string? companyName = null;
                 foreach (var (sourceField, value) in fields)
                 {
-                    if (ticketNumber is null && canonicalLookup.TryGetValue(sourceField, out var can1) && IsTicketNumberCanonical(can1))
+                    if (ticketNumber is null && canonicalLookup.TryGetValue(sourceField, out var ticketCanonical) && IsTicketNumberCanonical(ticketCanonical))
                         ticketNumber = value;
 
-                    if (companyName is null && canonicalLookup.TryGetValue(sourceField, out var can2) && IsCompanyCanonical(can2))
+                    if (companyName is null && canonicalLookup.TryGetValue(sourceField, out var companyCanonical) && IsCompanyCanonical(companyCanonical))
                         companyName = value;
 
                     if (ticketNumber is not null && companyName is not null)
@@ -266,8 +345,14 @@ public class SnapshotIngestService : ISnapshotIngestService
                 itsmSourceName,
                 canonicalLookup,
                 snapshotDate,
+                normalizedMetadata,
                 warnings,
                 ct);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            _logger.LogWarning(ex, "Snapshot ingest rejected because ITSM source {Source} was not found.", itsmSourceName);
+            return IngestResult.Failure(ex.Message);
         }
         catch (JsonException ex)
         {
@@ -287,19 +372,29 @@ public class SnapshotIngestService : ISnapshotIngestService
         string?[] canonicalHeaders,
         string itsmSourceName,
         DateOnly snapshotDate,
+        SnapshotIngestMetadata metadata,
         List<string> warnings,
         CancellationToken ct)
     {
         if (rows.Count == 0)
         {
-            return new IngestResult
-            {
-                Success = true,
-                SnapshotId = Guid.Empty,
-                TicketsIngested = 0,
-                FieldChangesRecorded = 0,
-                Warnings = warnings.AsReadOnly()
-            };
+            return IngestResult.Failure(
+                warnings.Count == 0
+                    ? "CSV file contained no data rows."
+                    : "No valid rows were found in the uploaded CSV file.",
+                warnings.AsReadOnly());
+        }
+
+        var duplicate = await _duplicateDetector.FindExistingSnapshotAsync(itsmSourceName, snapshotDate, metadata, ct);
+        if (duplicate is not null)
+        {
+            warnings.Add($"Duplicate snapshot ignored: {duplicate.Reason}");
+            _logger.LogInformation(
+                "Duplicate snapshot upload detected for source {Source} on {SnapshotDate}: existing snapshot {SnapshotId}.",
+                itsmSourceName,
+                snapshotDate,
+                duplicate.SnapshotId);
+            return IngestResult.Duplicate(duplicate.SnapshotId, duplicate.Reason, warnings.AsReadOnly());
         }
 
         DateTime snapshotDateTime = snapshotDate.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
@@ -310,8 +405,9 @@ public class SnapshotIngestService : ISnapshotIngestService
                 Id = Guid.NewGuid(),
                 ItsmSource = itsmSourceName,
                 SnapshotDate = snapshotDateTime,
-                UploadedBy = "web-upload",
-                UploadedAt = DateTime.UtcNow,
+                UploadedBy = ResolveUploadedBy(metadata),
+                UploadedAt = metadata.SubmittedAtUtc,
+                UploadMetadata = SnapshotIngestMetadataHelper.Serialize(metadata)
             },
             ct);
 
@@ -398,18 +494,17 @@ public class SnapshotIngestService : ISnapshotIngestService
 
         await _commandRepository.RecordFieldChangesAsync(fieldChanges, ct);
 
-        string? actor = _httpContextAccessor?.HttpContext?.User?.FindFirst("preferred_username")?.Value
-                        ?? _httpContextAccessor?.HttpContext?.User?.FindFirst(ClaimTypes.Upn)?.Value
-                        ?? _httpContextAccessor?.HttpContext?.User?.FindFirst("name")?.Value
-                        ?? _httpContextAccessor?.HttpContext?.User?.FindFirst("oid")?.Value
-                        ?? "anonymous";
-
+        var actor = ResolveUploadedBy(metadata);
         _logger.LogInformation(
-            "Snapshot {SnapshotId} ingested by {Actor}: {Tickets} tickets, {Changes} field changes",
+            "Snapshot {SnapshotId} ingested by {Actor}: {Tickets} tickets, {Changes} field changes, sourceSystem={SourceSystem}, producer={Producer}, channel={UploadChannel}, correlationId={CorrelationId}",
             snapshotId,
             actor,
             ticketEntries.Count,
-            fieldChanges.Count);
+            fieldChanges.Count,
+            metadata.SourceSystem,
+            metadata.Producer,
+            metadata.UploadChannel,
+            metadata.CorrelationId);
 
         return new IngestResult
         {
@@ -426,19 +521,29 @@ public class SnapshotIngestService : ISnapshotIngestService
         string itsmSourceName,
         Dictionary<string, string> canonicalLookup,
         DateOnly snapshotDate,
+        SnapshotIngestMetadata metadata,
         List<string> warnings,
         CancellationToken ct)
     {
         if (rows.Count == 0)
         {
-            return new IngestResult
-            {
-                Success = true,
-                SnapshotId = Guid.Empty,
-                TicketsIngested = 0,
-                FieldChangesRecorded = 0,
-                Warnings = warnings.AsReadOnly()
-            };
+            return IngestResult.Failure(
+                warnings.Count == 0
+                    ? "JSON file contained no data elements."
+                    : "No valid rows were found in the uploaded JSON file.",
+                warnings.AsReadOnly());
+        }
+
+        var duplicate = await _duplicateDetector.FindExistingSnapshotAsync(itsmSourceName, snapshotDate, metadata, ct);
+        if (duplicate is not null)
+        {
+            warnings.Add($"Duplicate snapshot ignored: {duplicate.Reason}");
+            _logger.LogInformation(
+                "Duplicate snapshot upload detected for source {Source} on {SnapshotDate}: existing snapshot {SnapshotId}.",
+                itsmSourceName,
+                snapshotDate,
+                duplicate.SnapshotId);
+            return IngestResult.Duplicate(duplicate.SnapshotId, duplicate.Reason, warnings.AsReadOnly());
         }
 
         DateTime snapshotDateTime = snapshotDate.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
@@ -449,8 +554,9 @@ public class SnapshotIngestService : ISnapshotIngestService
                 Id = Guid.NewGuid(),
                 ItsmSource = itsmSourceName,
                 SnapshotDate = snapshotDateTime,
-                UploadedBy = "web-upload",
-                UploadedAt = DateTime.UtcNow,
+                UploadedBy = ResolveUploadedBy(metadata),
+                UploadedAt = metadata.SubmittedAtUtc,
+                UploadMetadata = SnapshotIngestMetadataHelper.Serialize(metadata)
             },
             ct);
 
@@ -529,18 +635,17 @@ public class SnapshotIngestService : ISnapshotIngestService
 
         await _commandRepository.RecordFieldChangesAsync(fieldChanges, ct);
 
-        string? actor = _httpContextAccessor?.HttpContext?.User?.FindFirst("preferred_username")?.Value
-                        ?? _httpContextAccessor?.HttpContext?.User?.FindFirst(ClaimTypes.Upn)?.Value
-                        ?? _httpContextAccessor?.HttpContext?.User?.FindFirst("name")?.Value
-                        ?? _httpContextAccessor?.HttpContext?.User?.FindFirst("oid")?.Value
-                        ?? "anonymous";
-
+        var actor = ResolveUploadedBy(metadata);
         _logger.LogInformation(
-            "Snapshot {SnapshotId} ingested by {Actor}: {Tickets} tickets, {Changes} field changes",
+            "Snapshot {SnapshotId} ingested by {Actor}: {Tickets} tickets, {Changes} field changes, sourceSystem={SourceSystem}, producer={Producer}, channel={UploadChannel}, correlationId={CorrelationId}",
             snapshotId,
             actor,
             ticketEntries.Count,
-            fieldChanges.Count);
+            fieldChanges.Count,
+            metadata.SourceSystem,
+            metadata.Producer,
+            metadata.UploadChannel,
+            metadata.CorrelationId);
 
         return new IngestResult
         {
@@ -586,6 +691,25 @@ public class SnapshotIngestService : ISnapshotIngestService
         return false;
     }
 
+    private static bool IsBlankRecord(string[] values)
+    {
+        if (values.Length == 0)
+            return true;
+
+        foreach (var value in values)
+        {
+            if (!string.IsNullOrWhiteSpace(value))
+                return false;
+        }
+
+        return true;
+    }
+
+    private static long ResolveCsvErrorLineNumber(TextFieldParser parser, int fallbackLineNumber)
+    {
+        return parser.ErrorLineNumber > 0 ? parser.ErrorLineNumber : fallbackLineNumber;
+    }
+
     private static string GetDisplayFieldName(string? canonicalFieldName, string sourceFieldName)
     {
         if (!string.IsNullOrWhiteSpace(canonicalFieldName))
@@ -600,6 +724,23 @@ public class SnapshotIngestService : ISnapshotIngestService
             return null;
 
         return value.Trim();
+    }
+
+    private string ResolveRequestedByFromContext()
+    {
+        return _httpContextAccessor?.HttpContext?.User?.FindFirst("preferred_username")?.Value
+            ?? _httpContextAccessor?.HttpContext?.User?.FindFirst(ClaimTypes.Upn)?.Value
+            ?? _httpContextAccessor?.HttpContext?.User?.FindFirst("name")?.Value
+            ?? _httpContextAccessor?.HttpContext?.User?.FindFirst(ClaimTypes.NameIdentifier)?.Value
+            ?? "anonymous";
+    }
+
+    private string ResolveUploadedBy(SnapshotIngestMetadata metadata)
+    {
+        return SnapshotIngestMetadataHelper.NormalizeOptional(metadata.RequestedBy)
+            ?? SnapshotIngestMetadataHelper.NormalizeOptional(metadata.Producer)
+            ?? SnapshotIngestMetadataHelper.NormalizeOptional(metadata.SourceSystem)
+            ?? ResolveRequestedByFromContext();
     }
 
     private async Task<Dictionary<(string CompanyName, string TicketKey, string FieldName), string?>> LoadLatestFieldValuesAsync(

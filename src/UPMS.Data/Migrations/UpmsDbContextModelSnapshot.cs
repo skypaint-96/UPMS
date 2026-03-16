@@ -145,6 +145,135 @@ namespace UPMS.Data.Migrations
                     b.ToTable("itsm_source", (string)null);
                 });
 
+            modelBuilder.Entity("UPMS.Data.FileSharePollingSource", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedNever()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("ArchivePath")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("archive_path");
+
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .HasColumnType("varchar(255)")
+                        .HasColumnName("created_by");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid?>("CurrentJobId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("current_job_id");
+
+                    b.Property<bool>("Enabled")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true)
+                        .HasColumnName("enabled");
+
+                    b.Property<string>("ErrorPath")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("error_path");
+
+                    b.Property<string>("FilePatternsJson")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("file_patterns_json");
+
+                    b.Property<bool>("IsSystemManaged")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("is_system_managed");
+
+                    b.Property<string>("ItsmSource")
+                        .IsRequired()
+                        .HasColumnType("varchar(100)")
+                        .HasColumnName("itsm_source");
+
+                    b.Property<string>("LastError")
+                        .HasColumnType("text")
+                        .HasColumnName("last_error");
+
+                    b.Property<Guid?>("LastJobId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("last_job_id");
+
+                    b.Property<DateTime?>("LastRunCompletedAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("last_run_completed_at");
+
+                    b.Property<DateTime?>("LastRunStartedAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("last_run_started_at");
+
+                    b.Property<DateTime?>("LastSucceededAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("last_succeeded_at");
+
+                    b.Property<int?>("MaxFilesPerCycle")
+                        .HasColumnType("integer")
+                        .HasColumnName("max_files_per_cycle");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("varchar(200)")
+                        .HasColumnName("name");
+
+                    b.Property<DateTime?>("NextPollDueAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("next_poll_due_at");
+
+                    b.Property<int>("PollIntervalSeconds")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(300)
+                        .HasColumnName("poll_interval_seconds");
+
+                    b.Property<int>("StableFileAgeSeconds")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(30)
+                        .HasColumnName("stable_file_age_seconds");
+
+                    b.Property<string>("UpdatedBy")
+                        .HasColumnType("varchar(255)")
+                        .HasColumnName("updated_by");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("updated_at");
+
+                    b.Property<string>("WatchedPath")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("watched_path");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CurrentJobId")
+                        .HasDatabaseName("ix_file_share_polling_source_current_job_id");
+
+                    b.HasIndex("Enabled", "NextPollDueAt")
+                        .HasDatabaseName("ix_file_share_polling_source_enabled_due_at");
+
+                    b.HasIndex("Name")
+                        .IsUnique()
+                        .HasDatabaseName("ix_file_share_polling_source_name");
+
+                    b.HasIndex("WatchedPath")
+                        .IsUnique()
+                        .HasDatabaseName("ix_file_share_polling_source_watched_path");
+
+                    b.ToTable("file_share_polling_source", (string)null);
+                });
+
             modelBuilder.Entity("UPMS.Data.Jobs.BackgroundJob", b =>
                 {
                     b.Property<Guid>("Id")

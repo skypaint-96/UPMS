@@ -5,7 +5,8 @@ public sealed record SnapshotIngestJobPayload(
     DateOnly SnapshotDate,
     string ArtifactPath,
     string OriginalFileName,
-    string ContentType);
+    string ContentType,
+    SnapshotIngestMetadata? Metadata = null);
 
 public sealed record ReportExecutionJobPayload(
     string PluginId,
@@ -14,6 +15,10 @@ public sealed record ReportExecutionJobPayload(
     IReadOnlyList<Guid>? DistributionListIds);
 
 public sealed record ReportDeliveryJobPayload(Guid DeliveryId);
+
+public sealed record FileSharePollJobPayload(
+    Guid SourceId,
+    bool TriggeredManually);
 
 public sealed record ReportExecutionPreviewResult(
     string OutputType,

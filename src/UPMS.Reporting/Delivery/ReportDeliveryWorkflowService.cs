@@ -133,6 +133,7 @@ public sealed class ReportDeliveryWorkflowService : IReportDeliveryWorkflowServi
                 RequestedBy = NormalizeOptional(requestedBy),
                 CreatedAt = utcNow,
                 UpdatedAt = utcNow,
+                CompletedAt = failureReason is null ? null : utcNow,
                 LastErrorMessage = failureReason
             };
 
@@ -211,6 +212,12 @@ public sealed class ReportDeliveryWorkflowService : IReportDeliveryWorkflowServi
 
         if (string.IsNullOrWhiteSpace(delivery.ArtifactPath))
             throw new InvalidOperationException("The selected delivery does not reference a report artifact.");
+
+        if (delivery.AttemptCount == 0 && delivery.LastBackgroundJobId is null)
+        {
+            throw new InvalidOperationException(
+                "The selected delivery failed validation before any delivery job was queued and cannot be retried. Update the distribution list selection and rerun the report.");
+        }
 
         var payload = new ReportDeliveryJobPayload(delivery.Id);
         var backgroundJob = await _jobs.EnqueueAsync(

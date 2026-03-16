@@ -11,17 +11,27 @@ using UPMS.Data;
 public sealed class CustomWebApplicationFactory : WebApplicationFactory<Program>
 {
     private readonly string _artifactsRoot = Path.Combine(Path.GetTempPath(), $"upms-api-tests-artifacts-{Guid.NewGuid():N}");
+    private readonly string _pollingRoot = Path.Combine(Path.GetTempPath(), $"upms-api-tests-polling-{Guid.NewGuid():N}");
+
+    public string PollingRoot => _pollingRoot;
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment("Development");
+        Directory.CreateDirectory(_artifactsRoot);
+        Directory.CreateDirectory(_pollingRoot);
         builder.ConfigureAppConfiguration((_, config) =>
         {
             var settings = new Dictionary<string, string?>
             {
                 ["Auth:Mode"] = "None",
                 ["ConnectionStrings:DefaultConnection"] = "Host=localhost;Database=ignored;Username=ignored;Password=ignored",
-                ["Artifacts:RootPath"] = _artifactsRoot
+                ["Artifacts:RootPath"] = _artifactsRoot,
+                ["FileSharePolling:Enabled"] = "true",
+                ["FileSharePolling:AllowUserManagedSources"] = "true",
+                ["FileSharePolling:AllowedWatchedRoots:0"] = _pollingRoot,
+                ["FileSharePolling:AllowedArchiveRoots:0"] = _pollingRoot,
+                ["FileSharePolling:AllowedErrorRoots:0"] = _pollingRoot
             };
 
             config.AddInMemoryCollection(settings);
@@ -53,6 +63,18 @@ public sealed class CustomWebApplicationFactory : WebApplicationFactory<Program>
             catch
             {
                 // Best-effort cleanup for temporary API test artifacts.
+            }
+        }
+
+        if (disposing && Directory.Exists(_pollingRoot))
+        {
+            try
+            {
+                Directory.Delete(_pollingRoot, recursive: true);
+            }
+            catch
+            {
+                // Best-effort cleanup for temporary API test polling paths.
             }
         }
     }
