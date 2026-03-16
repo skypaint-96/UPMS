@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore.Design;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using UPMS.Data.ReadModels;
 using UPMS.Data.Jobs;
+using UPMS.Data.Delivery;
 
 /// <summary>
 /// EF Core database context for UPMS. Covers all persisted entities plus
@@ -23,6 +24,10 @@ public class UpmsDbContext : DbContext
     public DbSet<ItsmFieldMapping> ItsmFieldMappings => Set<ItsmFieldMapping>();
     public DbSet<CanonicalFieldDefinition> CanonicalFieldDefinitions => Set<CanonicalFieldDefinition>();
     public DbSet<BackgroundJob> BackgroundJobs => Set<BackgroundJob>();
+    public DbSet<CompanyProfile> CompanyProfiles => Set<CompanyProfile>();
+    public DbSet<DistributionList> DistributionLists => Set<DistributionList>();
+    public DbSet<DistributionListRecipient> DistributionListRecipients => Set<DistributionListRecipient>();
+    public DbSet<ReportDelivery> ReportDeliveries => Set<ReportDelivery>();
     public DbSet<FileSharePollingSource> FileSharePollingSources => Set<FileSharePollingSource>();
 
     // ── Keyless result sets (stored-procedure reads) ───────────────────────
@@ -379,6 +384,274 @@ public class UpmsDbContext : DbContext
                 .HasDatabaseName("ix_background_job_status_created_at");
             e.HasIndex(x => new { x.JobType, x.Status, x.CreatedAt })
                 .HasDatabaseName("ix_background_job_job_type_status_created_at");
+        });
+
+
+        // ── company_profile ───────────────────────────────────────────────
+        modelBuilder.Entity<CompanyProfile>(e =>
+        {
+            e.ToTable("company_profile");
+            e.HasKey(x => x.Id);
+
+            e.Property(x => x.Id)
+                .HasColumnName("id")
+                .HasColumnType("uuid")
+                .ValueGeneratedNever();
+            e.Property(x => x.CompanyKey)
+                .HasColumnName("company_key")
+                .HasColumnType("varchar(255)")
+                .IsRequired();
+            e.Property(x => x.DisplayName)
+                .HasColumnName("display_name")
+                .HasColumnType("varchar(255)")
+                .IsRequired();
+            e.Property(x => x.CreatedAt)
+                .HasColumnName("created_at")
+                .HasColumnType("timestamptz")
+                .IsRequired();
+            e.Property(x => x.UpdatedAt)
+                .HasColumnName("updated_at")
+                .HasColumnType("timestamptz")
+                .IsRequired();
+
+            e.HasIndex(x => x.CompanyKey)
+                .IsUnique()
+                .HasDatabaseName("ix_company_profile_company_key");
+            e.HasIndex(x => x.DisplayName)
+                .HasDatabaseName("ix_company_profile_display_name");
+        });
+
+        // ── distribution_list ────────────────────────────────────────────
+        modelBuilder.Entity<DistributionList>(e =>
+        {
+            e.ToTable("distribution_list");
+            e.HasKey(x => x.Id);
+
+            e.Property(x => x.Id)
+                .HasColumnName("id")
+                .HasColumnType("uuid")
+                .ValueGeneratedNever();
+            e.Property(x => x.CompanyProfileId)
+                .HasColumnName("company_profile_id")
+                .HasColumnType("uuid")
+                .IsRequired();
+            e.Property(x => x.Name)
+                .HasColumnName("name")
+                .HasColumnType("varchar(255)")
+                .IsRequired();
+            e.Property(x => x.Description)
+                .HasColumnName("description")
+                .HasColumnType("text")
+                .IsRequired(false);
+            e.Property(x => x.IsActive)
+                .HasColumnName("is_active")
+                .HasColumnType("boolean")
+                .HasDefaultValue(true)
+                .IsRequired();
+            e.Property(x => x.CreatedAt)
+                .HasColumnName("created_at")
+                .HasColumnType("timestamptz")
+                .IsRequired();
+            e.Property(x => x.CreatedBy)
+                .HasColumnName("created_by")
+                .HasColumnType("varchar(255)")
+                .IsRequired();
+            e.Property(x => x.UpdatedAt)
+                .HasColumnName("updated_at")
+                .HasColumnType("timestamptz")
+                .IsRequired();
+            e.Property(x => x.UpdatedBy)
+                .HasColumnName("updated_by")
+                .HasColumnType("varchar(255)")
+                .IsRequired(false);
+
+            e.HasIndex(x => new { x.CompanyProfileId, x.Name })
+                .IsUnique()
+                .HasDatabaseName("ix_distribution_list_company_profile_id_name");
+            e.HasIndex(x => new { x.CompanyProfileId, x.IsActive, x.Name })
+                .HasDatabaseName("ix_distribution_list_company_profile_id_is_active_name");
+
+            e.HasOne(x => x.CompanyProfile)
+                .WithMany(x => x.DistributionLists)
+                .HasForeignKey(x => x.CompanyProfileId)
+                .HasConstraintName("fk_distribution_list_company_profile_id")
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ── distribution_list_recipient ──────────────────────────────────
+        modelBuilder.Entity<DistributionListRecipient>(e =>
+        {
+            e.ToTable("distribution_list_recipient");
+            e.HasKey(x => x.Id);
+
+            e.Property(x => x.Id)
+                .HasColumnName("id")
+                .HasColumnType("uuid")
+                .ValueGeneratedNever();
+            e.Property(x => x.DistributionListId)
+                .HasColumnName("distribution_list_id")
+                .HasColumnType("uuid")
+                .IsRequired();
+            e.Property(x => x.Channel)
+                .HasColumnName("channel")
+                .HasColumnType("varchar(50)")
+                .IsRequired();
+            e.Property(x => x.Endpoint)
+                .HasColumnName("endpoint")
+                .HasColumnType("varchar(512)")
+                .IsRequired();
+            e.Property(x => x.DisplayName)
+                .HasColumnName("display_name")
+                .HasColumnType("varchar(255)")
+                .IsRequired(false);
+            e.Property(x => x.MetadataJson)
+                .HasColumnName("metadata_json")
+                .HasColumnType("text")
+                .IsRequired(false);
+            e.Property(x => x.IsActive)
+                .HasColumnName("is_active")
+                .HasColumnType("boolean")
+                .HasDefaultValue(true)
+                .IsRequired();
+            e.Property(x => x.SortOrder)
+                .HasColumnName("sort_order")
+                .HasColumnType("integer")
+                .HasDefaultValue(0)
+                .IsRequired();
+            e.Property(x => x.CreatedAt)
+                .HasColumnName("created_at")
+                .HasColumnType("timestamptz")
+                .IsRequired();
+            e.Property(x => x.UpdatedAt)
+                .HasColumnName("updated_at")
+                .HasColumnType("timestamptz")
+                .IsRequired();
+
+            e.HasIndex(x => new { x.DistributionListId, x.Channel, x.Endpoint })
+                .IsUnique()
+                .HasDatabaseName("ix_distribution_list_recipient_distribution_list_id_channel_endpoint");
+            e.HasIndex(x => new { x.DistributionListId, x.IsActive, x.SortOrder })
+                .HasDatabaseName("ix_distribution_list_recipient_distribution_list_id_is_active_sort_order");
+
+            e.HasOne(x => x.DistributionList)
+                .WithMany(x => x.Recipients)
+                .HasForeignKey(x => x.DistributionListId)
+                .HasConstraintName("fk_distribution_list_recipient_distribution_list_id")
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ── report_delivery ───────────────────────────────────────────────
+        modelBuilder.Entity<ReportDelivery>(e =>
+        {
+            e.ToTable("report_delivery");
+            e.HasKey(x => x.Id);
+
+            e.Property(x => x.Id)
+                .HasColumnName("id")
+                .HasColumnType("uuid")
+                .ValueGeneratedNever();
+            e.Property(x => x.ReportJobId)
+                .HasColumnName("report_job_id")
+                .HasColumnType("uuid")
+                .IsRequired();
+            e.Property(x => x.LastBackgroundJobId)
+                .HasColumnName("last_background_job_id")
+                .HasColumnType("uuid")
+                .IsRequired(false);
+            e.Property(x => x.CompanyProfileId)
+                .HasColumnName("company_profile_id")
+                .HasColumnType("uuid")
+                .IsRequired();
+            e.Property(x => x.CompanyKey)
+                .HasColumnName("company_key")
+                .HasColumnType("varchar(255)")
+                .IsRequired();
+            e.Property(x => x.CompanyDisplayName)
+                .HasColumnName("company_display_name")
+                .HasColumnType("varchar(255)")
+                .IsRequired();
+            e.Property(x => x.DistributionListId)
+                .HasColumnName("distribution_list_id")
+                .HasColumnType("uuid")
+                .IsRequired();
+            e.Property(x => x.DistributionListName)
+                .HasColumnName("distribution_list_name")
+                .HasColumnType("varchar(255)")
+                .IsRequired();
+            e.Property(x => x.Channel)
+                .HasColumnName("channel")
+                .HasColumnType("varchar(50)")
+                .IsRequired();
+            e.Property(x => x.Status)
+                .HasColumnName("status")
+                .HasColumnType("varchar(50)")
+                .IsRequired();
+            e.Property(x => x.ArtifactPath)
+                .HasColumnName("artifact_path")
+                .HasColumnType("text")
+                .IsRequired();
+            e.Property(x => x.ArtifactFileName)
+                .HasColumnName("artifact_file_name")
+                .HasColumnType("varchar(512)")
+                .IsRequired(false);
+            e.Property(x => x.ArtifactContentType)
+                .HasColumnName("artifact_content_type")
+                .HasColumnType("varchar(255)")
+                .IsRequired(false);
+            e.Property(x => x.Subject)
+                .HasColumnName("subject")
+                .HasColumnType("varchar(512)")
+                .IsRequired();
+            e.Property(x => x.RecipientSnapshotJson)
+                .HasColumnName("recipient_snapshot_json")
+                .HasColumnType("text")
+                .IsRequired();
+            e.Property(x => x.RecipientCount)
+                .HasColumnName("recipient_count")
+                .HasColumnType("integer")
+                .IsRequired();
+            e.Property(x => x.AttemptCount)
+                .HasColumnName("attempt_count")
+                .HasColumnType("integer")
+                .HasDefaultValue(0)
+                .IsRequired();
+            e.Property(x => x.RequestedBy)
+                .HasColumnName("requested_by")
+                .HasColumnType("varchar(255)")
+                .IsRequired(false);
+            e.Property(x => x.CreatedAt)
+                .HasColumnName("created_at")
+                .HasColumnType("timestamptz")
+                .IsRequired();
+            e.Property(x => x.UpdatedAt)
+                .HasColumnName("updated_at")
+                .HasColumnType("timestamptz")
+                .IsRequired();
+            e.Property(x => x.StartedAt)
+                .HasColumnName("started_at")
+                .HasColumnType("timestamptz")
+                .IsRequired(false);
+            e.Property(x => x.CompletedAt)
+                .HasColumnName("completed_at")
+                .HasColumnType("timestamptz")
+                .IsRequired(false);
+            e.Property(x => x.LastAttemptedAt)
+                .HasColumnName("last_attempted_at")
+                .HasColumnType("timestamptz")
+                .IsRequired(false);
+            e.Property(x => x.LastErrorMessage)
+                .HasColumnName("last_error_message")
+                .HasColumnType("text")
+                .IsRequired(false);
+
+            e.HasIndex(x => new { x.ReportJobId, x.CreatedAt })
+                .HasDatabaseName("ix_report_delivery_report_job_id_created_at");
+            e.HasIndex(x => new { x.CompanyKey, x.CreatedAt })
+                .HasDatabaseName("ix_report_delivery_company_key_created_at");
+            e.HasIndex(x => new { x.Status, x.CreatedAt })
+                .HasDatabaseName("ix_report_delivery_status_created_at");
+            e.HasIndex(x => new { x.DistributionListId, x.CreatedAt })
+                .HasDatabaseName("ix_report_delivery_distribution_list_id_created_at");
         });
 
         // ── canonical_field_definition ─────────────────────────────────────

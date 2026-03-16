@@ -1,5 +1,6 @@
 namespace UPMS.Worker;
 
+using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
 using UPMS.Data;
@@ -7,6 +8,7 @@ using UPMS.Data.Artifacts;
 using UPMS.Data.Jobs;
 using UPMS.Ingestion;
 using UPMS.Reporting;
+using UPMS.Reporting.Delivery;
 using UPMS.Reporting.Plugins;
 
 public sealed class BackgroundJobWorker : BackgroundService
@@ -40,6 +42,7 @@ public sealed class BackgroundJobWorker : BackgroundService
         {
             BackgroundJobTypes.SnapshotIngest,
             BackgroundJobTypes.ReportExecution,
+            BackgroundJobTypes.ReportDelivery,
             BackgroundJobTypes.FileSharePoll
         };
 
@@ -97,6 +100,10 @@ public sealed class BackgroundJobWorker : BackgroundService
 
                 case BackgroundJobTypes.FileSharePoll:
                     await ProcessFileSharePollAsync(job, services, jobs, ct);
+                    break;
+
+                case BackgroundJobTypes.ReportDelivery:
+                    await ProcessReportDeliveryAsync(job, services, jobs, ct);
                     break;
 
                 default:
@@ -191,6 +198,7 @@ public sealed class BackgroundJobWorker : BackgroundService
 
         var reporting = services.GetRequiredService<IReportExecutionService>();
         var artifacts = services.GetRequiredService<IArtifactStorage>();
+        var deliveryWorkflow = services.GetRequiredService<IReportDeliveryWorkflowService>();
 
         var result = await reporting.ExecuteAsync(
             payload.PluginId,
@@ -203,6 +211,10 @@ public sealed class BackgroundJobWorker : BackgroundService
             await jobs.MarkFailedAsync(job.Id, result.ErrorMessage ?? $"Report '{payload.PluginId}' failed.", ct);
             return;
         }
+
+        string? outputFilePath = null;
+        string? outputFileName = null;
+        string? outputContentType = result.ContentType;
 
         if (result.OutputType == ReportOutputType.FileDownload && result.FileContent is not null)
         {
@@ -217,29 +229,142 @@ public sealed class BackgroundJobWorker : BackgroundService
                 result.ContentType,
                 ct);
 
-            await jobs.MarkSucceededAsync(
-                job.Id,
-                JsonSerializer.Serialize(new ReportExecutionPreviewResult(result.OutputType.ToString(), null, null), JsonOptions),
-                stored.RelativePath,
-                stored.FileName,
-                stored.ContentType,
+            outputFilePath = stored.RelativePath;
+            outputFileName = stored.FileName;
+            outputContentType = stored.ContentType;
+        }
+        else if (payload.DistributionListIds is { Count: > 0 }
+            && TryCreateArtifactFromPreview(payload.PluginId, job.Id, result, out var previewFileName, out var previewContentType, out var previewBytes))
+        {
+            var stored = await artifacts.SaveBytesAsync(
+                "reports",
+                previewFileName,
+                previewBytes,
+                previewContentType,
                 ct);
 
-            return;
+            outputFilePath = stored.RelativePath;
+            outputFileName = stored.FileName;
+            outputContentType = stored.ContentType;
+        }
+
+        IReadOnlyList<Guid>? deliveryIds = null;
+
+        if (payload.DistributionListIds is { Count: > 0 })
+        {
+            if (string.IsNullOrWhiteSpace(outputFilePath))
+            {
+                await jobs.MarkFailedAsync(
+                    job.Id,
+                    "The report rendered successfully but did not produce a deliverable artifact for the selected distribution lists.",
+                    ct);
+                return;
+            }
+
+            if (!payload.Parameters.TryGetValue("company", out var companyName) || string.IsNullOrWhiteSpace(companyName))
+            {
+                await jobs.MarkFailedAsync(
+                    job.Id,
+                    "The report rendered successfully but no company parameter was available for delivery orchestration.",
+                    ct);
+                return;
+            }
+
+            var deliveries = await deliveryWorkflow.QueueAsync(
+                job,
+                payload.DistributionListIds,
+                companyName,
+                outputFilePath,
+                outputFileName,
+                outputContentType,
+                payload.RequestedBy,
+                ct);
+
+            deliveryIds = deliveries.Select(delivery => delivery.Id).ToArray();
         }
 
         var preview = new ReportExecutionPreviewResult(
             result.OutputType.ToString(),
             result.HtmlContent,
-            result.ErrorMessage);
+            result.ErrorMessage,
+            deliveryIds);
 
         await jobs.MarkSucceededAsync(
             job.Id,
             JsonSerializer.Serialize(preview, JsonOptions),
-            null,
-            null,
-            result.ContentType,
+            outputFilePath,
+            outputFileName,
+            outputContentType,
             ct);
+    }
+
+    private async Task ProcessReportDeliveryAsync(
+        BackgroundJob job,
+        IServiceProvider services,
+        IBackgroundJobService jobs,
+        CancellationToken ct)
+    {
+        var payload = JsonSerializer.Deserialize<ReportDeliveryJobPayload>(job.PayloadJson, JsonOptions)
+            ?? throw new InvalidOperationException("Report delivery payload was empty or invalid.");
+
+        var deliveryWorkflow = services.GetRequiredService<IReportDeliveryWorkflowService>();
+        var result = await deliveryWorkflow.ProcessAsync(payload.DeliveryId, job.Id, ct);
+
+        if (!result.Success)
+        {
+            await jobs.MarkFailedAsync(job.Id, result.ErrorMessage ?? "Report delivery failed.", ct);
+            return;
+        }
+
+        await jobs.MarkSucceededAsync(
+            job.Id,
+            JsonSerializer.Serialize(new
+            {
+                deliveryId = payload.DeliveryId,
+                recipientCount = result.RecipientCount
+            }, JsonOptions),
+            null,
+            null,
+            null,
+            ct);
+    }
+
+    private static bool TryCreateArtifactFromPreview(
+        string pluginId,
+        Guid jobId,
+        ReportResult result,
+        out string fileName,
+        out string contentType,
+        out byte[] content)
+    {
+        fileName = $"{pluginId}-{jobId:N}.bin";
+        contentType = result.ContentType ?? "application/octet-stream";
+        content = Array.Empty<byte>();
+
+        if (string.IsNullOrWhiteSpace(result.HtmlContent))
+            return false;
+
+        if (result.OutputType == ReportOutputType.HtmlContent)
+        {
+            fileName = $"{pluginId}-{jobId:N}.html";
+            contentType = string.IsNullOrWhiteSpace(result.ContentType)
+                ? "text/html; charset=utf-8"
+                : result.ContentType!;
+            content = Encoding.UTF8.GetBytes(result.HtmlContent);
+            return true;
+        }
+
+        if (result.OutputType == ReportOutputType.PlainText)
+        {
+            fileName = $"{pluginId}-{jobId:N}.txt";
+            contentType = string.IsNullOrWhiteSpace(result.ContentType)
+                ? "text/plain; charset=utf-8"
+                : result.ContentType!;
+            content = Encoding.UTF8.GetBytes(result.HtmlContent);
+            return true;
+        }
+
+        return false;
     }
 }
 

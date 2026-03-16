@@ -2,7 +2,7 @@ import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { Alert, Box, Button, Chip, Grid, Link as MuiLink, Paper, Stack, TextField, Typography } from '@mui/material';
 import { Link, useNavigate } from 'react-router-dom';
 import { upmsApi } from '../api/client';
-import { ItsmSourceSummary, ReportParameter, ReportPlugin, ReportTemplate, ReportTemplateScope } from '../api/types';
+import { DistributionList, ItsmSourceSummary, ReportParameter, ReportPlugin, ReportTemplate, ReportTemplateScope } from '../api/types';
 import { ErrorAlert } from '../components/ErrorAlert';
 import { LoadingPanel } from '../components/LoadingPanel';
 import { PageSection } from '../components/PageSection';
@@ -41,6 +41,9 @@ export function ReportsPage() {
   const [runner, setRunner] = useState<ReportPlugin | null>(null);
   const [templates, setTemplates] = useState<ReportTemplate[]>([]);
   const [sources, setSources] = useState<ItsmSourceSummary[]>([]);
+  const [availableDistributionLists, setAvailableDistributionLists] = useState<DistributionList[]>([]);
+  const [selectedDistributionListIds, setSelectedDistributionListIds] = useState<string[]>([]);
+  const [distributionListsLoading, setDistributionListsLoading] = useState(false);
   const [selectedTemplateId, setSelectedTemplateId] = useState('');
   const [parameters, setParameters] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
@@ -142,6 +145,8 @@ export function ReportsPage() {
     [runnerParameters],
   );
 
+  const companyValue = (parameters.company ?? '').trim();
+
   useEffect(() => {
     if (!selectedTemplate) {
       return;
@@ -149,12 +154,54 @@ export function ReportsPage() {
 
     setParameters((current) => {
       const next = { ...current, template_id: selectedTemplate.id };
-      if (!next.output_mode) {
-        next.output_mode = selectedTemplate.kind === 'Email' ? 'Auto' : selectedTemplate.extension === '.html' ? 'Preview HTML' : 'Auto';
+      const defaultOutputMode = selectedTemplate.kind === 'Email' ? 'Auto' : selectedTemplate.extension === '.html' ? 'Preview HTML' : 'Auto';
+
+      if (selectedDistributionListIds.length > 0) {
+        next.output_mode = 'Download Filled File';
+      } else if (!next.output_mode) {
+        next.output_mode = defaultOutputMode;
       }
+
       return next;
     });
-  }, [selectedTemplate]);
+  }, [selectedTemplate, selectedDistributionListIds.length]);
+
+  useEffect(() => {
+    const normalizedCompany = companyValue;
+    if (!normalizedCompany) {
+      setAvailableDistributionLists([]);
+      setSelectedDistributionListIds([]);
+      return;
+    }
+
+    setDistributionListsLoading(true);
+    upmsApi
+      .getDistributionLists({ company: normalizedCompany })
+      .then((lists) => {
+        const activeLists = lists.filter((list) => list.isActive && list.activeRecipientCount > 0);
+        setAvailableDistributionLists(activeLists);
+        setSelectedDistributionListIds((current) => current.filter((id) => activeLists.some((list) => list.id === id)));
+      })
+      .catch((err: any) => setError(err.message ?? 'Failed to load distribution lists.'))
+      .finally(() => setDistributionListsLoading(false));
+  }, [companyValue]);
+
+  useEffect(() => {
+    if (selectedDistributionListIds.length === 0) {
+      return;
+    }
+
+    setParameters((current) => {
+      if (current.output_mode === 'Download Filled File') {
+        return current;
+      }
+
+      return {
+        ...current,
+        output_mode: 'Download Filled File',
+      };
+    });
+  }, [selectedDistributionListIds]);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -170,7 +217,9 @@ export function ReportsPage() {
         parameters: {
           ...parameters,
           template_id: selectedTemplate.id,
+          ...(selectedDistributionListIds.length > 0 ? { output_mode: 'Download Filled File' } : {}),
         },
+        distributionListIds: selectedDistributionListIds.length > 0 ? selectedDistributionListIds : undefined,
       });
       navigate(`/jobs?jobId=${encodeURIComponent(job.id)}`);
     } catch (err: any) {
@@ -284,6 +333,12 @@ export function ReportsPage() {
         fullWidth
         helperText={parameter.description ?? parameter.type}
       />
+    );
+  };
+
+  const toggleDistributionList = (listId: string) => {
+    setSelectedDistributionListIds((current) =>
+      current.includes(listId) ? current.filter((id) => id !== listId) : [...current, listId],
     );
   };
 
@@ -408,6 +463,58 @@ export function ReportsPage() {
                     </Grid>
                   ))}
                 </Grid>
+
+                <Paper variant="outlined" sx={{ p: 2, mb: 2 }}>
+                  <Typography variant="subtitle1" sx={{ mb: 1 }}>
+                    Delivery lists
+                  </Typography>
+                  <Typography color="text.secondary" sx={{ mb: 2 }}>
+                    Rendering and sending are separate. Choose one or more company lists to queue delivery after the report artifact is generated.
+                  </Typography>
+                  {!companyValue ? (
+                    <Alert severity="info">
+                      Enter a company value above to load that company&apos;s available distribution lists. Manage lists from the{' '}
+                      <MuiLink component={Link} to="/distribution-lists" underline="hover">
+                        Distribution Lists
+                      </MuiLink>{' '}
+                      page.
+                    </Alert>
+                  ) : distributionListsLoading ? (
+                    <LoadingPanel label="Loading distribution lists" />
+                  ) : availableDistributionLists.length === 0 ? (
+                    <Alert severity="warning">
+                      No active distribution lists were found for {companyValue}. You can still queue the report without delivery, or create a list in the{' '}
+                      <MuiLink component={Link} to="/distribution-lists" underline="hover">
+                        Distribution Lists
+                      </MuiLink>{' '}
+                      page.
+                    </Alert>
+                  ) : (
+                    <>
+                      <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" sx={{ mb: 1.5 }}>
+                        {availableDistributionLists.map((list) => {
+                          const selected = selectedDistributionListIds.includes(list.id);
+                          return (
+                            <Chip
+                              key={list.id}
+                              label={`${list.name} (${list.activeRecipientCount})`}
+                              color={selected ? 'primary' : 'default'}
+                              variant={selected ? 'filled' : 'outlined'}
+                              onClick={() => toggleDistributionList(list.id)}
+                              clickable
+                            />
+                          );
+                        })}
+                      </Stack>
+                      {selectedDistributionListIds.length > 0 ? (
+                        <Alert severity="info" sx={{ mt: 1 }}>
+                          {selectedDistributionListIds.length} distribution list{selectedDistributionListIds.length === 1 ? '' : 's'} selected. The worker will render first, store a single artifact, then queue separate delivery jobs without re-rendering the report.
+                        </Alert>
+                      ) : null}
+                    </>
+                  )}
+                </Paper>
+
                 <Button type="submit" variant="contained" disabled={submitting || templatesLoading || !templateContextReady || !selectedTemplateId}>
                   Queue report job
                 </Button>

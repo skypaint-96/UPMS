@@ -3,12 +3,15 @@ import {
   BackgroundJob,
   BulkJobSubmission,
   CanonicalField,
+  CompanyProfile,
+  DistributionList,
   FieldChange,
   FileSharePollingRunResponse,
   FileSharePollingSettings,
   FileSharePollingSource,
   ItsmSourceDefinition,
   ItsmSourceSummary,
+  ReportDelivery,
   ReportPlugin,
   ReportTemplate,
   ReportTemplateDetail,
@@ -171,7 +174,63 @@ export const upmsApi = {
   getReportTemplateDownloadUrl(id: string) {
     return buildApiUrl(`/report-templates/${encodeURIComponent(id)}/download`);
   },
-  async queueReport(payload: { pluginId: string; parameters: Record<string, string> }) {
+  async getCompanyProfiles() {
+    const { data } = await api.get<CompanyProfile[]>('/company-profiles');
+    return data;
+  },
+  async getDistributionLists(params?: { company?: string }) {
+    const { data } = await api.get<DistributionList[]>('/distribution-lists', { params });
+    return data;
+  },
+  async createDistributionList(payload: {
+    companyName: string;
+    name: string;
+    description?: string | null;
+    isActive?: boolean;
+    recipients: Array<{
+      channel?: string | null;
+      endpoint: string;
+      displayName?: string | null;
+      metadataJson?: string | null;
+      isActive?: boolean;
+      sortOrder?: number;
+    }>;
+  }) {
+    const { data } = await api.post<DistributionList>('/distribution-lists', payload);
+    return data;
+  },
+  async updateDistributionList(
+    id: string,
+    payload: {
+      companyName: string;
+      name: string;
+      description?: string | null;
+      isActive?: boolean;
+      recipients: Array<{
+        channel?: string | null;
+        endpoint: string;
+        displayName?: string | null;
+        metadataJson?: string | null;
+        isActive?: boolean;
+        sortOrder?: number;
+      }>;
+    },
+  ) {
+    const { data } = await api.put<DistributionList>(`/distribution-lists/${encodeURIComponent(id)}`, payload);
+    return data;
+  },
+  async deleteDistributionList(id: string) {
+    await api.delete(`/distribution-lists/${encodeURIComponent(id)}`);
+  },
+  async getReportDeliveries(params?: { company?: string; reportJobId?: string; take?: number }) {
+    const { data } = await api.get<ReportDelivery[]>('/report-deliveries', { params });
+    return data;
+  },
+  async retryReportDelivery(id: string) {
+    const { data } = await api.post<ReportDelivery>(`/report-deliveries/${encodeURIComponent(id)}/retry`);
+    return data;
+  },
+  async queueReport(payload: { pluginId: string; parameters: Record<string, string>; distributionListIds?: string[] }) {
     const { data } = await api.post<BackgroundJob>('/jobs/report-execution', payload);
     return data;
   },

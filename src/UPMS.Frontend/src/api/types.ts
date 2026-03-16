@@ -172,6 +172,71 @@ export type ReportTemplateDetail = ReportTemplate & {
   editableTextContent?: string | null;
 };
 
+
+
+export type CompanyProfile = {
+  id: string;
+  companyKey: string;
+  displayName: string;
+  distributionListCount: number;
+};
+
+export type DistributionRecipient = {
+  id: string;
+  channel: string;
+  endpoint: string;
+  displayName?: string | null;
+  metadataJson?: string | null;
+  isActive: boolean;
+  sortOrder: number;
+};
+
+export type DistributionList = {
+  id: string;
+  companyProfileId: string;
+  companyKey: string;
+  companyName: string;
+  name: string;
+  description?: string | null;
+  isActive: boolean;
+  recipientCount: number;
+  activeRecipientCount: number;
+  recipients: DistributionRecipient[];
+  createdAt: string;
+  createdBy: string;
+  updatedAt: string;
+  updatedBy?: string | null;
+};
+
+export type ReportDelivery = {
+  id: string;
+  reportJobId: string;
+  lastBackgroundJobId?: string | null;
+  companyKey: string;
+  companyName: string;
+  distributionListId: string;
+  distributionListName: string;
+  channel: string;
+  status: string;
+  subject: string;
+  artifactFileName?: string | null;
+  artifactContentType?: string | null;
+  recipientCount: number;
+  attemptCount: number;
+  requestedBy?: string | null;
+  createdAt: string;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  lastAttemptedAt?: string | null;
+  lastErrorMessage?: string | null;
+  recipients: Array<{
+    channel: string;
+    endpoint: string;
+    displayName?: string | null;
+    metadataJson?: string | null;
+  }>;
+};
+
 export type BackgroundJob = {
   id: string;
   jobType: string;

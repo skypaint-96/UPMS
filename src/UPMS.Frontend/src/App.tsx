@@ -23,8 +23,10 @@ import Inventory2Outlined from '@mui/icons-material/Inventory2Outlined';
 import UploadFileOutlined from '@mui/icons-material/UploadFileOutlined';
 import WorkHistoryOutlined from '@mui/icons-material/WorkHistoryOutlined';
 import ArticleOutlined from '@mui/icons-material/ArticleOutlined';
+import AlternateEmailOutlined from '@mui/icons-material/AlternateEmailOutlined';
 import FolderSharedOutlined from '@mui/icons-material/FolderSharedOutlined';
 import { DashboardPage } from './pages/DashboardPage';
+import { DistributionListsPage } from './pages/DistributionListsPage';
 import { JobsPage } from './pages/JobsPage';
 import { ReportsPage } from './pages/ReportsPage';
 import { ReportTemplatesPage } from './pages/ReportTemplatesPage';
@@ -121,6 +123,7 @@ function AppShell() {
       { text: 'Jobs', route: '/jobs', icon: WorkHistoryOutlined, helper: 'Monitor worker jobs' },
       { text: 'File Share Polling', route: '/file-share-polling', icon: FolderSharedOutlined, helper: 'Manage watched locations' },
       { text: 'Report Templates', route: '/report-templates', icon: ArticleOutlined, helper: 'Curate template library' },
+      { text: 'Distribution Lists', route: '/distribution-lists', icon: AlternateEmailOutlined, helper: 'Manage outbound recipients' },
     ],
     [],
   );
@@ -177,6 +180,7 @@ function AppShell() {
             <Route path="/jobs" element={<JobsPage />} />
             <Route path="/file-share-polling" element={<FileSharePollingSourcesPage />} />
             <Route path="/report-templates" element={<ReportTemplatesPage />} />
+            <Route path="/distribution-lists" element={<DistributionListsPage />} />
           </Routes>
         </Box>
       </Box>
